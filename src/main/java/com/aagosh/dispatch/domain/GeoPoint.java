@@ -8,13 +8,13 @@ public record GeoPoint(double latitude, double longitude) {
         if (!Double.isFinite(latitude)
                 || latitude < -90 || latitude > 90) {
             throw new IllegalArgumentException(
-                    "Latitude must be between -90 and 90");
+                    "latitude must be a finite number between -90.0 and 90.0");
         }
 
         if (!Double.isFinite(longitude)
                 || longitude < -180 || longitude > 180) {
             throw new IllegalArgumentException(
-                    "Longitude must be between -180 and 180");
+                    "longitude must be a finite number between -180.0 and 180.0");
         }
     }
 

@@ -39,4 +39,44 @@ class GeoPointTest {
                 () -> new GeoPoint(16, 181)
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Message consistency — GeoPoint errors must match the API contract
+    // -------------------------------------------------------------------------
+
+    @Test
+    void latitudeValidationMessageMatchesApiContract() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> new GeoPoint(91.0, 0.0)
+        );
+        assertEquals("latitude must be a finite number between -90.0 and 90.0", ex.getMessage());
+    }
+
+    @Test
+    void longitudeValidationMessageMatchesApiContract() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> new GeoPoint(0.0, 181.0)
+        );
+        assertEquals("longitude must be a finite number between -180.0 and 180.0", ex.getMessage());
+    }
+
+    @Test
+    void nonFiniteLatitudeRejectedWithCorrectMessage() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> new GeoPoint(Double.NaN, 0.0)
+        );
+        assertEquals("latitude must be a finite number between -90.0 and 90.0", ex.getMessage());
+    }
+
+    @Test
+    void nonFiniteLongitudeRejectedWithCorrectMessage() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> new GeoPoint(0.0, Double.POSITIVE_INFINITY)
+        );
+        assertEquals("longitude must be a finite number between -180.0 and 180.0", ex.getMessage());
+    }
 }

@@ -231,6 +231,61 @@ Content-Type: application/json
 
 ---
 
+### 2.2 Matching Strategy & Matcher Selection
+
+The dispatch engine decodes ride requests and assigns candidate drivers using an implementation of `com.aagosh.dispatch.matching.Matcher`.
+
+#### Spring Bean Configuration
+The application configures matching beans in `com.aagosh.dispatch.config.DispatchConfig`:
+- **Default Matcher:** An instance of `AuctionMatcher` is registered with `@Fallback` and `@ConditionalOnMissingBean`.
+- **Custom Matcher Injection:** If a user or integration test declares an alternative `Matcher` bean (such as `GreedyMatcher` or a custom heuristic):
+  ```java
+  @Configuration
+  public class CustomDispatchConfig {
+      @Bean
+      public Matcher customMatcher() {
+          return new GreedyMatcher();
+      }
+  }
+  ```
+  Spring Boot's dependency injection supplies the custom bean to `RideController` without ambiguous injection errors or `@Primary` conflicts.
+
+#### Available Implementations
+1. **`AuctionMatcher` (Default):**
+   - Implements Bertsekas' Auction Algorithm for bipartite matching.
+   - Solves the assignment problem with ε-scaling to minimize overall global assignment cost.
+   - Ideal for batched or multi-candidate competitive assignment scenarios.
+2. **`GreedyMatcher`:**
+   - Evaluates candidate drivers in increasing order of cost using a progressive spatial window.
+   - Selects the single lowest-cost available driver per request.
+
+---
+
+### 2.3 Dispatch Cost Model & Configuration (`DispatchCostConfig`)
+
+Candidate drivers are ranked and priced using `DispatchCostFunction`, configured via the immutable record `DispatchCostConfig`:
+
+$$\text{Total Cost} = w_{\text{eta}} \cdot \text{Normalized ETA} + w_{\text{density}} \cdot \text{Normalized Density} + w_{\text{opportunity}} \cdot \text{Normalized Opportunity}$$
+
+#### Configuration Parameters & Weights
+
+| Parameter | Type | Default Value | Description |
+| :--- | :--- | :--- | :--- |
+| `wEta` | `double` | `1.0` | Weight applied to the normalized estimated time of arrival (ETA). |
+| `wDensity` | `double` | `1.0` | Weight applied to the normalized request competition density. |
+| `wOpportunity` | `double` | `1.0` | Weight applied to the normalized opportunity cost term. |
+| `avgSpeedKmh` | `double` | `60.0` | Assumed vehicle velocity ($km/h$) used to calculate Haversine travel time. |
+| `maxEtaHours` | `double` | `0.5` | Reference maximum ETA ($0.5\text{ h} = 30\text{ min}$) for $[0, 1]$ clamping. |
+| `densityRadiusKm` | `double` | `1.0` | Radius ($km$) around candidate driver to count competing pickup requests. |
+| `maxDensityCount` | `double` | `10.0` | Reference maximum count of competing requests for $[0, 1]$ clamping. |
+
+#### Deferred Opportunity-Cost Term
+- **Current Behavior:** The normalized opportunity component evaluates to **`0.0`** (neutral).
+- **Architectural Rationale:** The current in-memory domain entities (`Driver` and `RideRequest`) capture real-time locations but intentionally omit drop-off destinations, surge multipliers, and pricing tiers. Fabricating synthetic business values would corrupt real dispatch decisions.
+- **Forward Compatibility:** Setting $w_{\text{opportunity}} = 0.0$ is supported and recommended. Setting $w_{\text{opportunity}} > 0$ is permitted and produces zero effect until subsequent phases introduce destination-aware ride models.
+
+---
+
 ## 3. Error Handling and Validation
 
 All validation and parsing errors are intercepted by `GlobalExceptionHandler` and returned as standard `ApiErrorResponse` objects with HTTP 400 Bad Request.
