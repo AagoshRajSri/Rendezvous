@@ -1,4 +1,3 @@
-
 package com.aagosh.dispatch.domain;
 
 import org.junit.jupiter.api.Test;

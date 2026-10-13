@@ -1,5 +1,4 @@
 package com.aagosh.dispatch.domain;
-
 import org.junit.jupiter.api.RepeatedTest;
 
 import java.util.ArrayList;
