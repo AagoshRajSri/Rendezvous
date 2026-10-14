@@ -3,8 +3,11 @@ package com.aagosh.dispatch;
 import com.aagosh.dispatch.api.DriverController;
 import com.aagosh.dispatch.api.GlobalExceptionHandler;
 import com.aagosh.dispatch.api.RideController;
+import com.aagosh.dispatch.api.TripController;
 import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
+import com.aagosh.dispatch.persistence.TripLifecycleService;
+import com.aagosh.dispatch.persistence.TripTransitionPersistor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,6 +30,12 @@ class DispatchApplicationTests {
 
     @MockitoBean
     private AssignmentPersistenceService persistenceService;
+
+    @MockitoBean
+    private TripTransitionPersistor tripTransitionPersistor;
+
+    @MockitoBean
+    private TripLifecycleService tripLifecycleService;
 
     @MockitoBean
     private com.aagosh.dispatch.cache.RedisLocationCache redisLocationCache;
@@ -75,5 +84,11 @@ class DispatchApplicationTests {
     void rideRequestConsumerIsRegisteredInApplicationContext() {
         assertNotNull(context.getBean(com.aagosh.dispatch.messaging.RideRequestConsumer.class),
                 "RideRequestConsumer must be a Spring-managed @Component");
+    }
+
+    @Test
+    void tripControllerIsRegisteredInApplicationContext() {
+        assertNotNull(context.getBean(TripController.class),
+                "TripController must be a Spring-managed @RestController");
     }
 }
