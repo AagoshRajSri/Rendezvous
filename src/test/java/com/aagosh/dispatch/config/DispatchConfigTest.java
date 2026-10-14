@@ -1,5 +1,6 @@
 package com.aagosh.dispatch.config;
 
+import com.aagosh.dispatch.cache.RedisLocationCache;
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverRegistry;
@@ -27,7 +28,9 @@ class DispatchConfigTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(DispatchConfig.class, DriverRegistry.class, RideRequestConsumer.class)
-            .withBean(AssignmentPersistenceService.class, () -> Mockito.mock(AssignmentPersistenceService.class));
+            .withBean(AssignmentPersistenceService.class, () -> Mockito.mock(AssignmentPersistenceService.class))
+            .withBean(RedisLocationCache.class, () -> Mockito.mock(RedisLocationCache.class));
+
 
     @Test
     @DisplayName("Default configuration injects AuctionMatcher and default cost config when no custom beans exist")

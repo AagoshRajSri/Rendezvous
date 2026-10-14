@@ -21,18 +21,30 @@ import java.util.concurrent.atomic.AtomicReference;
  * object. The shared {@code DriverState} is the sole authority for claim status; it is
  * never recreated during a location update.
  *
+ * <h2>Timestamp-monotone and unversioned ordering</h2>
+ * <p>{@link #updateLocation(String, GeoPoint, long)} enforces strict monotone ordering for
+ * positive timestamps: an incoming update is accepted only if {@code newTimestamp} is strictly
+ * greater than the {@code updatedAt} stored in the current snapshot. If the driver is currently
+ * unversioned ({@code updatedAt == 0L}), any positive timestamp promotes the driver to versioned.
+ * If the driver already has a positive timestamp, equal or older timestamps are rejected.
+ *
+ * <p>Unversioned updates via {@link #updateLocation(String, GeoPoint)} (or non-positive timestamps):
+ * <ul>
+ *   <li>If the driver is unversioned ({@code updatedAt == 0L}), unversioned updates succeed
+ *       and preserve legacy last-write-wins behavior.</li>
+ *   <li>If the driver has already been updated with a known positive timestamp ({@code updatedAt > 0L}),
+ *       unversioned updates cannot overwrite it and are rejected.</li>
+ * </ul>
+ *
  * <h2>Concurrency guarantees</h2>
  * <ul>
  *   <li><strong>Registration</strong> – guaranteed by {@link ConcurrentHashMap#putIfAbsent},
  *       which is atomic. Duplicate registration is rejected deterministically: the second
  *       call returns the existing entry without touching its state or claim.</li>
  *   <li><strong>Location updates</strong> – performed with a CAS loop on the
- *       {@link AtomicReference}. Every published location is guaranteed to be one of the
- *       values actually submitted. If two updates race, one wins and the other retries;
- *       neither is silently lost. Because the implementation has no timestamp or sequence
- *       number, it makes <em>no chronological-ordering guarantee</em>: the final stored
- *       location is whichever update was the last to succeed its CAS, which is not
- *       necessarily the one that arrived latest on the clock.</li>
+ *       {@link AtomicReference}. Every accepted location is guaranteed to be one of the
+ *       values actually submitted. If two updates race, only the one with the strictly
+ *       larger timestamp will eventually win; stale updates are silently rejected.</li>
  *   <li><strong>Claim preservation</strong> – the CAS loop always reads the current
  *       {@link AtomicReference} value, extracts its {@link DriverState}, and builds the
  *       replacement snapshot from that same state object. A location update can therefore
@@ -108,11 +120,20 @@ public final class DriverRegistry {
     }
 
     // -------------------------------------------------------------------------
-    // Location update
+    // Location update (timestamp-aware)
     // -------------------------------------------------------------------------
 
     /**
-     * Atomically updates the location of a registered driver.
+     * Atomically updates the location of a registered driver using a timestamped fix.
+     *
+     * <p><strong>Timestamped ordering:</strong> If {@code newTimestamp > 0}, the update is
+     * accepted only if {@code newTimestamp} is strictly greater than the stored {@code updatedAt}.
+     * If the driver is currently unversioned ({@code updatedAt == 0L}), any positive timestamp
+     * promotes the driver to versioned. If the driver already has a positive timestamp and
+     * {@code current.updatedAt() >= newTimestamp}, the update is rejected as stale or duplicate.
+     *
+     * <p><strong>Unversioned fallback:</strong> If {@code newTimestamp <= 0}, this method delegates
+     * to {@link #updateLocation(String, GeoPoint)}, treating the update as unversioned.
      *
      * <p>The update is performed with a compare-and-set loop on the driver's
      * {@link AtomicReference}. The replacement {@link Driver} snapshot is built by
@@ -124,18 +145,19 @@ public final class DriverRegistry {
      *   <li>The authoritative {@link DriverState} reference is preserved.</li>
      * </ul>
      *
-     * <p><strong>No chronological ordering guarantee.</strong> If two location updates race
-     * for the same driver, both will eventually succeed their respective CAS (one may retry),
-     * and the final stored location will be whichever committed last. No timestamp or
-     * sequence number is used to resolve ordering.
-     *
-     * @param driverId    the ID of the driver to update; must not be {@code null} or blank
-     * @param newLocation the new location; must not be {@code null}
-     * @throws IllegalArgumentException if {@code driverId} is blank or {@code newLocation}
-     *                                  is {@code null}
+     * @param driverId     the ID of the driver to update; must not be {@code null} or blank
+     * @param newLocation  the new location; must not be {@code null}
+     * @param newTimestamp epoch-millisecond timestamp for this location fix; &le; 0 for unversioned
+     * @return {@code true} if the location was accepted and stored;
+     *         {@code false} if the update was rejected (stale/duplicate timestamp or unversioned write to versioned driver)
+     * @throws IllegalArgumentException if {@code driverId} is blank or {@code newLocation} is {@code null}
      * @throws IllegalStateException    if no driver with {@code driverId} is registered
      */
-    public void updateLocation(String driverId, GeoPoint newLocation) {
+    public boolean updateLocation(String driverId, GeoPoint newLocation, long newTimestamp) {
+        if (newTimestamp <= 0L) {
+            return updateLocation(driverId, newLocation);
+        }
+
         requireNonBlank(driverId, "driverId");
         Objects.requireNonNull(newLocation, "newLocation");
 
@@ -145,14 +167,66 @@ public final class DriverRegistry {
                     "No driver registered with ID: " + driverId);
         }
 
-        // CAS loop: read current snapshot, build replacement preserving state, swap.
+        // CAS loop: read current snapshot; reject if stale or duplicate; otherwise swap.
         Driver current;
         Driver updated;
         do {
             current = ref.get();
+            // Reject if the driver already has an equal or newer timestamp.
+            // If current.updatedAt() == 0L, 0L >= newTimestamp is false, so it is accepted.
+            if (current.updatedAt() >= newTimestamp) {
+                return false;
+            }
             // Reuse the exact same DriverState object — never recreate it.
-            updated = new Driver(current.id(), newLocation, current.state());
+            updated = new Driver(current.id(), newLocation, current.state(), newTimestamp);
         } while (!ref.compareAndSet(current, updated));
+
+        return true;
+    }
+
+    /**
+     * Unversioned location update, preserved for legacy callers and callers that have
+     * no ordering information.
+     *
+     * <p><strong>Semantics:</strong>
+     * <ul>
+     *   <li>If the driver is unversioned ({@code current.updatedAt() == 0L}), the update succeeds
+     *       and the driver remains unversioned ({@code updatedAt == 0L}). Repeated unversioned updates
+     *       preserve the legacy last-write-wins behavior.</li>
+     *   <li>If the driver has already been updated with a known positive timestamp
+     *       ({@code current.updatedAt() > 0L}), an unversioned update cannot prove freshness and is
+     *       rejected (returns {@code false}) without modifying the stored location.</li>
+     * </ul>
+     *
+     * @param driverId    the ID of the driver to update; must not be {@code null} or blank
+     * @param newLocation the new location; must not be {@code null}
+     * @return {@code true} if the update was accepted; {@code false} if rejected because the driver is versioned
+     * @throws IllegalArgumentException if {@code driverId} is blank or {@code newLocation} is {@code null}
+     * @throws IllegalStateException    if no driver with {@code driverId} is registered
+     */
+    public boolean updateLocation(String driverId, GeoPoint newLocation) {
+        requireNonBlank(driverId, "driverId");
+        Objects.requireNonNull(newLocation, "newLocation");
+
+        AtomicReference<Driver> ref = registry.get(driverId);
+        if (ref == null) {
+            throw new IllegalStateException(
+                    "No driver registered with ID: " + driverId);
+        }
+
+        Driver current;
+        Driver updated;
+        do {
+            current = ref.get();
+            // An unversioned update cannot overwrite a versioned location (updatedAt > 0L).
+            if (current.updatedAt() > 0L) {
+                return false;
+            }
+            // While unversioned (updatedAt == 0L), accept update preserving legacy last-write-wins.
+            updated = new Driver(current.id(), newLocation, current.state(), 0L);
+        } while (!ref.compareAndSet(current, updated));
+
+        return true;
     }
 
     // -------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.cache.RedisLocationCache;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
@@ -142,7 +143,8 @@ class AdditionalControllerTest {
     @Test
     @DisplayName("Concurrent AUTO driver ping events for same unregistered driver: safely registers once")
     void concurrentAutoRegistrationInConsumer() throws Exception {
-        DriverPingConsumer consumer = new DriverPingConsumer(driverRegistry);
+        RedisLocationCache redisCache = mock(RedisLocationCache.class);
+        DriverPingConsumer consumer = new DriverPingConsumer(driverRegistry, redisCache);
         Acknowledgment ack = mock(Acknowledgment.class);
 
         int threads = 16;

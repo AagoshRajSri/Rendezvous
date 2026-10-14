@@ -1,6 +1,7 @@
 package com.aagosh.dispatch.domain;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +21,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for {@link DriverRegistry}: basic functionality, claim-state preservation,
- * concurrency, and regression against existing driver-state behaviour.
+ * timestamp-monotone ordering, concurrency, and regression against existing driver-state
+ * behaviour.
  */
 class DriverRegistryTest {
 
@@ -56,7 +58,8 @@ class DriverRegistryTest {
         Driver d = driver("D1", 17.0, 78.0);
         registry.register(d);
 
-        registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1L);
+        assertTrue(accepted, "First timestamped update must be accepted");
 
         Driver updated = registry.findById("D1").orElseThrow();
         assertEquals(new GeoPoint(18.0, 79.0), updated.location());
@@ -108,7 +111,7 @@ class DriverRegistryTest {
     @Test
     void updateLocationThrowsForUnknownDriver() {
         assertThrows(IllegalStateException.class,
-                () -> registry.updateLocation("GHOST", new GeoPoint(0.0, 0.0)));
+                () -> registry.updateLocation("GHOST", new GeoPoint(0.0, 0.0), 1L));
     }
 
     @Test
@@ -121,15 +124,15 @@ class DriverRegistryTest {
         assertThrows(IllegalArgumentException.class, () -> registry.findById(""));
         assertThrows(IllegalArgumentException.class, () -> registry.findById("  "));
         assertThrows(IllegalArgumentException.class,
-                () -> registry.updateLocation(null, new GeoPoint(0, 0)));
+                () -> registry.updateLocation(null, new GeoPoint(0, 0), 1L));
         assertThrows(IllegalArgumentException.class,
-                () -> registry.updateLocation("", new GeoPoint(0, 0)));
+                () -> registry.updateLocation("", new GeoPoint(0, 0), 1L));
 
         // updateLocation with null location — Objects.requireNonNull throws NPE.
         // Driver must be registered first so the NPE is reached (not IllegalStateException).
         registry.register(driver("D_NULL_LOC", 0.0, 0.0));
         assertThrows(NullPointerException.class,
-                () -> registry.updateLocation("D_NULL_LOC", null));
+                () -> registry.updateLocation("D_NULL_LOC", null, 1L));
     }
 
     // =========================================================================
@@ -142,7 +145,8 @@ class DriverRegistryTest {
         registry.register(d);
         assertTrue(d.state().tryClaim("REQ-1"));
 
-        registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1L);
+        assertTrue(accepted);
 
         Driver updated = registry.findById("D1").orElseThrow();
         assertEquals(MatchStatus.CLAIMED, updated.state().getStatus(),
@@ -158,7 +162,7 @@ class DriverRegistryTest {
         assertTrue(d.state().tryClaim("REQ-1"));
 
         // Attempt a further claim after location update — must fail because still CLAIMED
-        registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1L);
 
         Driver updated = registry.findById("D1").orElseThrow();
         assertFalse(updated.state().tryClaim("REQ-2"),
@@ -171,7 +175,7 @@ class DriverRegistryTest {
         registry.register(original);
         DriverState originalState = original.state();
 
-        registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1L);
 
         Driver updated = registry.findById("D1").orElseThrow();
         assertSame(originalState, updated.state(),
@@ -185,7 +189,7 @@ class DriverRegistryTest {
         assertTrue(d.state().tryClaim("REQ-42"));
 
         for (int i = 0; i < 10; i++) {
-            registry.updateLocation("D1", new GeoPoint(17.0 + i * 0.01, 78.0));
+            registry.updateLocation("D1", new GeoPoint(17.0 + i * 0.01, 78.0), i + 1L);
         }
 
         Driver updated = registry.findById("D1").orElseThrow();
@@ -194,18 +198,112 @@ class DriverRegistryTest {
     }
 
     // =========================================================================
+    // Timestamp-monotone and unversioned ordering
+    // =========================================================================
+
+    @Test
+    @DisplayName("1. An unversioned update succeeds for a driver whose current timestamp is 0L")
+    void unversionedUpdateSucceedsForDriverWithZeroTimestamp() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState());
+        registry.register(d);
+        assertEquals(0L, registry.findById("D1").orElseThrow().updatedAt());
+
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        assertTrue(accepted, "Unversioned update must succeed for a driver with updatedAt=0L");
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(18.0, 79.0), stored.location());
+        assertEquals(0L, stored.updatedAt(), "Driver must remain unversioned (updatedAt=0L)");
+    }
+
+    @Test
+    @DisplayName("2. Repeated unversioned updates preserve legacy last-write-wins behavior while driver remains unversioned")
+    void repeatedUnversionedUpdatesPreserveLastWriteWinsWhileUnversioned() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState());
+        registry.register(d);
+
+        for (int i = 1; i <= 5; i++) {
+            boolean accepted = registry.updateLocation("D1", new GeoPoint(17.0 + i * 0.1, 78.0));
+            assertTrue(accepted, "Repeated unversioned update " + i + " must succeed");
+        }
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(17.5, 78.0), stored.location(),
+                "Final location must reflect the last unversioned update");
+        assertEquals(0L, stored.updatedAt());
+    }
+
+    @Test
+    @DisplayName("3. An unversioned update cannot overwrite a versioned location (updatedAt > 0L)")
+    void unversionedUpdateCannotOverwriteVersionedLocation() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState(), 1000L);
+        registry.register(d);
+
+        // 1-arg unversioned overload
+        boolean accepted1 = registry.updateLocation("D1", new GeoPoint(18.0, 79.0));
+        assertFalse(accepted1, "1-arg unversioned update must not overwrite a versioned location");
+
+        // 2-arg overload with timestamp 0L
+        boolean accepted2 = registry.updateLocation("D1", new GeoPoint(19.0, 80.0), 0L);
+        assertFalse(accepted2, "0L timestamp update must not overwrite a versioned location");
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(17.0, 78.0), stored.location(),
+                "Stored location must remain unchanged");
+        assertEquals(1000L, stored.updatedAt());
+    }
+
+    @Test
+    @DisplayName("4. A timestamped update cannot overwrite a newer timestamp")
+    void timestampedUpdateCannotOverwriteNewerTimestamp() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState(), 2000L);
+        registry.register(d);
+
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1000L);
+        assertFalse(accepted, "Stale timestamped update must be rejected");
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(17.0, 78.0), stored.location(),
+                "Registry must retain the fresher location");
+        assertEquals(2000L, stored.updatedAt());
+    }
+
+    @Test
+    @DisplayName("5. Equal timestamp updates remain rejected")
+    void equalTimestampUpdatesRemainRejected() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState(), 2000L);
+        registry.register(d);
+
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 2000L);
+        assertFalse(accepted, "Equal timestamp update must be rejected");
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(17.0, 78.0), stored.location());
+        assertEquals(2000L, stored.updatedAt());
+    }
+
+    @Test
+    @DisplayName("Strictly newer timestamp is accepted and promotes unversioned driver")
+    void strictlyNewerTimestampPromotesUnversionedDriver() {
+        Driver d = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState());
+        registry.register(d);
+        assertEquals(0L, registry.findById("D1").orElseThrow().updatedAt());
+
+        boolean accepted = registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 100L);
+        assertTrue(accepted, "Timestamped update must promote unversioned driver");
+
+        Driver stored = registry.findById("D1").orElseThrow();
+        assertEquals(new GeoPoint(18.0, 79.0), stored.location());
+        assertEquals(100L, stored.updatedAt());
+    }
+
+    // =========================================================================
     // Concurrency
     // =========================================================================
 
     /**
-     * 50 threads fire concurrent location updates for the same driver.
-     * Each update uses a valid, distinct GeoPoint.
-     *
-     * Guarantees verified:
-     * - No exception propagates from the registry.
-     * - The final stored location is one of the submitted values.
-     * - Claim state is never reset.
-     * - No chronological-ordering guarantee is asserted (implementation has none).
+     * 50 threads fire concurrent location updates for the same driver using strictly
+     * increasing timestamps. Only the one with the highest timestamp survives.
      */
     @RepeatedTest(5)
     void concurrentLocationUpdatesForSameDriverAreAllAtomic() throws Exception {
@@ -227,10 +325,11 @@ class DriverRegistryTest {
         try {
             for (int i = 0; i < threads; i++) {
                 final GeoPoint loc = submittedLocations.get(i);
+                final long ts = i + 1L; // strictly increasing
                 futures.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
-                    registry.updateLocation("D1", loc);
+                    registry.updateLocation("D1", loc, ts);
                     return null;
                 }));
             }
@@ -282,7 +381,7 @@ class DriverRegistryTest {
                     try {
                         String id = "DRIVER-" + idx;
                         registry.register(new Driver(id, new GeoPoint(idx * 0.1 % 90, 0.0), new DriverState()));
-                        registry.updateLocation(id, new GeoPoint((idx * 0.1 + 0.01) % 90, 1.0));
+                        registry.updateLocation(id, new GeoPoint((idx * 0.1 + 0.01) % 90, 1.0), 1L);
                     } catch (Exception e) {
                         errors.incrementAndGet();
                     }
@@ -318,10 +417,10 @@ class DriverRegistryTest {
      */
     @RepeatedTest(3)
     void snapshotIsStableDuringConcurrentRegistrationsAndUpdates() throws Exception {
-        // Pre-register and claim 10 drivers
+        // Pre-register and claim 10 drivers (each with a real timestamp so updates work)
         List<Driver> claimed = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            Driver d = driver("PRE-" + i, i * 0.1, 0.0);
+            Driver d = new Driver("PRE-" + i, new GeoPoint(i * 0.1, 0.0), new DriverState(), 0L);
             registry.register(d);
             assertTrue(d.state().tryClaim("REQ-" + i));
             claimed.add(d);
@@ -340,11 +439,12 @@ class DriverRegistryTest {
             // Updater threads fire location updates for the pre-registered drivers
             for (int i = 0; i < updaters; i++) {
                 final int idx = i % 10;
+                final long ts = i + 1L;
                 futures.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
                     try {
-                        registry.updateLocation("PRE-" + idx, new GeoPoint(idx * 0.1 + 0.001, 1.0));
+                        registry.updateLocation("PRE-" + idx, new GeoPoint(idx * 0.1 + 0.001, 1.0), ts);
                     } catch (Exception e) {
                         errors.incrementAndGet();
                     }

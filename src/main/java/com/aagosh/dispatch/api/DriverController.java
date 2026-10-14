@@ -88,12 +88,14 @@ public class DriverController {
         }
         request.validate();
 
-        // Force REGISTER semantics regardless of what the caller supplied in the action field.
+        // Force REGISTER semantics regardless of what the caller supplied in the action field,
+        // while preserving client-provided capturedAt timestamp.
         DriverPingRequest registerRequest = new DriverPingRequest(
                 request.driverId(),
                 request.latitude(),
                 request.longitude(),
-                PingAction.REGISTER);
+                PingAction.REGISTER,
+                request.capturedAt());
         publish(registerRequest.driverId(), registerRequest);
         return ResponseEntity
                 .status(HttpStatus.ACCEPTED)

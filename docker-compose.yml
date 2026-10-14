@@ -7,7 +7,9 @@
 # In Phase 5 Step 2, PostgreSQL is active for durable ride request and assignment
 # persistence via Spring Data JPA and Flyway.
 #
-# Redis remains a blueprint stub for future distributed caching / spatial pub-sub.
+# In Phase 5 Step 3, Redis is active as a non-authoritative driver location cache.
+# The local DriverRegistry remains the matching source of truth; Redis stores
+# driver:{id}:location hashes with a 30-second TTL and conditional Lua writes.
 # =============================================================================
 
 services:
@@ -21,7 +23,7 @@ services:
     ports:
       - "5432:5432"
 
-  # Declared for future distributed caching / spatial pub-sub (currently unused)
+  # Phase 5 Step 3: Non-authoritative driver location cache (30s TTL, Lua conditional writes)
   redis:
     image: redis:7
     ports:

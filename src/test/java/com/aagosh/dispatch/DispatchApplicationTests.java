@@ -18,12 +18,18 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
         "spring.autoconfigure.exclude="
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
-                + "org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration"
+                + "org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration"
 })
 class DispatchApplicationTests {
 
     @MockitoBean
     private AssignmentPersistenceService persistenceService;
+
+    @MockitoBean
+    private com.aagosh.dispatch.cache.RedisLocationCache redisLocationCache;
 
     @Autowired
     private ApplicationContext context;

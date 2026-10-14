@@ -2,6 +2,7 @@ package com.aagosh.dispatch.messaging;
 
 import com.aagosh.dispatch.api.DriverPingRequest;
 import com.aagosh.dispatch.api.PingAction;
+import com.aagosh.dispatch.cache.RedisLocationCache;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverRegistry;
@@ -39,16 +40,42 @@ import java.util.Optional;
  *       already registered. Preserves claim state. Safe to retry.</li>
  * </ul>
  *
+ * <h2>Timestamp handling and ordering guarantees</h2>
+ * <p>Location ordering is resolved by {@link #resolveTimestamp(DriverPingRequest, long)} in priority order:
+ * <ol>
+ *   <li><strong>Client-provided {@code capturedAt}</strong> (preferred) – epoch milliseconds indicating
+ *       when the GPS fix was acquired on the mobile device.</li>
+ *   <li><strong>Kafka record timestamp</strong> (best-effort fallback) – used when {@code capturedAt}
+ *       is absent or non-positive. <em>Limitation:</em> This timestamp reflects broker append or producer
+ *       transmission time, <strong>not</strong> GPS capture time. Under network delays, client reconnection,
+ *       or producer retries, records may reach Kafka out of chronological order. Chronological ordering
+ *       for legacy events relying on this fallback is therefore strictly best-effort.</li>
+ *   <li><strong>{@code 0L} (unversioned)</strong> – used when neither client {@code capturedAt} nor
+ *       a positive Kafka record timestamp is present. Indicates that no chronological ordering is available.
+ *       An unversioned event can update a driver in the local {@link DriverRegistry} only while the driver
+ *       remains unversioned ({@code updatedAt == 0L}); it <em>cannot</em> overwrite a location that has
+ *       already been updated with a known positive timestamp. Unversioned events are not written to Redis.</li>
+ * </ol>
+ *
  * <h2>At-least-once delivery and idempotency</h2>
  * <p>Driver ping events are naturally idempotent:
  * <ul>
  *   <li>A duplicate REGISTER event for an already-registered driver is logged and
  *       acknowledged without resetting state.</li>
- *   <li>Duplicate location UPDATE events converge the registry to a known location.
- *       Because the registry has no event-time ordering guarantee, a duplicate may commit
- *       a slightly stale coordinate, but this matches the existing documented behaviour.</li>
+ *   <li>Duplicate or out-of-order location UPDATE events are rejected by the
+ *       {@code DriverRegistry}'s timestamp-monotone CAS: only strictly newer coordinates
+ *       replace stored ones.</li>
  *   <li>AUTO events behave identically across retries.</li>
  * </ul>
+ *
+ * <h2>Redis location cache</h2>
+ * <p>After the local {@code DriverRegistry} accepts a location update, the new coordinates
+ * are written to Redis via {@link RedisLocationCache}. Redis is a non-authoritative cache
+ * and its write is best-effort: any Redis failure is logged and swallowed without affecting
+ * Kafka offset acknowledgement.
+ *
+ * <p>A location update rejected by the local registry (stale timestamp) is also not written
+ * to Redis, ensuring the cache never holds older data than the registry.
  *
  * <h2>Acknowledgement</h2>
  * <p>Offset acknowledgement ({@link Acknowledgment#acknowledge()}) is called after
@@ -59,17 +86,20 @@ import java.util.Optional;
  * <h2>Claim preservation invariant</h2>
  * <p>This consumer <em>never</em> creates a new {@link DriverState} for an existing
  * driver. All update paths reuse the existing {@link DriverState} via
- * {@link DriverRegistry#updateLocation(String, GeoPoint)}.
+ * {@link DriverRegistry#updateLocation(String, GeoPoint, long)}.
  */
 @Component
 public class DriverPingConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DriverPingConsumer.class);
 
-    private final DriverRegistry driverRegistry;
+    private final DriverRegistry    driverRegistry;
+    private final RedisLocationCache redisLocationCache;
 
-    public DriverPingConsumer(DriverRegistry driverRegistry) {
-        this.driverRegistry = Objects.requireNonNull(driverRegistry, "driverRegistry");
+    public DriverPingConsumer(DriverRegistry driverRegistry,
+                              RedisLocationCache redisLocationCache) {
+        this.driverRegistry    = Objects.requireNonNull(driverRegistry,    "driverRegistry");
+        this.redisLocationCache = Objects.requireNonNull(redisLocationCache, "redisLocationCache");
     }
 
     /**
@@ -106,14 +136,19 @@ public class DriverPingConsumer {
             return;
         }
 
+        // Resolve the best available location timestamp:
+        //  1. Client-provided capturedAt (preferred — reflects actual GPS fix time).
+        //  2. Kafka broker-append timestamp (fallback — see class Javadoc for limitations).
+        long timestamp = resolveTimestamp(event, record.timestamp());
+
         GeoPoint location = new GeoPoint(event.latitude(), event.longitude());
         PingAction action = event.resolveAction();
 
         try {
             switch (action) {
-                case REGISTER -> processRegister(event.driverId(), location, record);
-                case UPDATE   -> processUpdate(event.driverId(), location, record);
-                case AUTO     -> processAuto(event.driverId(), location, record);
+                case REGISTER -> processRegister(event.driverId(), location, timestamp, record);
+                case UPDATE   -> processUpdate(event.driverId(), location, timestamp, record);
+                case AUTO     -> processAuto(event.driverId(), location, timestamp, record);
             }
             ack.acknowledge();
         } catch (Exception ex) {
@@ -128,12 +163,14 @@ public class DriverPingConsumer {
     // Action handlers
     // -------------------------------------------------------------------------
 
-    private void processRegister(String driverId, GeoPoint location,
+    private void processRegister(String driverId, GeoPoint location, long timestamp,
                                  ConsumerRecord<?, ?> record) {
         try {
-            driverRegistry.register(new Driver(driverId, location, new DriverState()));
+            driverRegistry.register(new Driver(driverId, location, new DriverState(), timestamp));
             log.debug("Registered driver {} via consumer (partition={} offset={})",
                     driverId, record.partition(), record.offset());
+            // Write initial location to Redis for newly registered drivers.
+            updateRedisCacheSafe(driverId, location, timestamp);
         } catch (IllegalStateException ex) {
             // Driver already registered — treat as idempotent success.
             log.warn("Duplicate REGISTER event for already-registered driver {}; acknowledging",
@@ -141,12 +178,19 @@ public class DriverPingConsumer {
         }
     }
 
-    private void processUpdate(String driverId, GeoPoint location,
+    private void processUpdate(String driverId, GeoPoint location, long timestamp,
                                ConsumerRecord<?, ?> record) {
         try {
-            driverRegistry.updateLocation(driverId, location);
-            log.debug("Updated location for driver {} via consumer (partition={} offset={})",
-                    driverId, record.partition(), record.offset());
+            boolean accepted = driverRegistry.updateLocation(driverId, location, timestamp);
+            if (accepted) {
+                log.debug("Updated location for driver {} via consumer (partition={} offset={})",
+                        driverId, record.partition(), record.offset());
+                // Only write to Redis if the local registry accepted the update.
+                updateRedisCacheSafe(driverId, location, timestamp);
+            } else {
+                log.debug("Stale location update rejected for driver {} (timestamp={}); skipping Redis write",
+                        driverId, timestamp);
+            }
         } catch (IllegalStateException ex) {
             // Driver not found. This can happen if a REGISTER event has not been processed yet
             // (e.g., partition reassignment or consumer restart). Log and acknowledge;
@@ -155,22 +199,63 @@ public class DriverPingConsumer {
         }
     }
 
-    private void processAuto(String driverId, GeoPoint location,
-                              ConsumerRecord<?, ?> record) {
+    private void processAuto(String driverId, GeoPoint location, long timestamp,
+                             ConsumerRecord<?, ?> record) {
         Optional<Driver> existing = driverRegistry.findById(driverId);
         if (existing.isPresent()) {
-            processUpdate(driverId, location, record);
+            processUpdate(driverId, location, timestamp, record);
         } else {
             try {
-                driverRegistry.register(new Driver(driverId, location, new DriverState()));
+                driverRegistry.register(new Driver(driverId, location, new DriverState(), timestamp));
                 log.debug("Auto-registered driver {} via consumer (partition={} offset={})",
                         driverId, record.partition(), record.offset());
+                updateRedisCacheSafe(driverId, location, timestamp);
             } catch (IllegalStateException ex) {
                 // Race: another consumer thread registered between findById and register.
-                processUpdate(driverId, location, record);
+                processUpdate(driverId, location, timestamp, record);
             }
         }
     }
+
+    private void updateRedisCacheSafe(String driverId, GeoPoint location, long timestamp) {
+        if (timestamp <= 0L) {
+            // Unversioned events (no client capturedAt and no positive broker timestamp)
+            // are not written to Redis to ensure they cannot overwrite versioned cached locations.
+            return;
+        }
+        try {
+            redisLocationCache.updateLocation(driverId, location.latitude(), location.longitude(), timestamp);
+        } catch (Exception ex) {
+            log.warn("Redis location cache update failed for driver {} at timestamp {}: {}",
+                    driverId, timestamp, ex.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Timestamp resolution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolves the effective location timestamp for this ping event.
+     *
+     * @param event           the validated ping payload
+     * @param kafkaTimestamp  the broker-append timestamp from the Kafka record (millis)
+     * @return the client-provided {@code capturedAt} if present and valid, otherwise
+     *         the Kafka record timestamp if positive, otherwise 0 (no ordering available)
+     */
+    static long resolveTimestamp(DriverPingRequest event, long kafkaTimestamp) {
+        if (event.capturedAt() != null && event.capturedAt() > 0) {
+            return event.capturedAt();
+        }
+        if (kafkaTimestamp > 0) {
+            return kafkaTimestamp;
+        }
+        return 0L;
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private String extractDeserializationError(ConsumerRecord<?, ?> record) {
         if (record.headers() == null) {

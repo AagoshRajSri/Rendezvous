@@ -86,8 +86,8 @@ class DriverControllerTest {
     }
 
     @Test
-    @DisplayName("2. POST /register forces REGISTER action and publishes to driver-pings returning HTTP 202 Accepted")
-    void validDriverRegistrationPublishesToKafka() throws Exception {
+    @DisplayName("2. POST /register forces REGISTER action and publishes to driver-pings returning HTTP 202 Accepted (backward-compatible without capturedAt)")
+    void validDriverRegistrationWithoutCapturedAtPublishesToKafka() throws Exception {
         setupSuccessfulSend();
 
         String json = """
@@ -111,6 +111,37 @@ class DriverControllerTest {
         DriverPingRequest sent = captor.getValue();
         assertEquals("D_REG", sent.driverId());
         assertEquals(PingAction.REGISTER, sent.action());
+        org.junit.jupiter.api.Assertions.assertNull(sent.capturedAt(), "capturedAt must be null when omitted by client");
+    }
+
+    @Test
+    @DisplayName("2b. POST /register preserves client-provided capturedAt timestamp in published event")
+    void validDriverRegistrationWithCapturedAtPublishesToKafka() throws Exception {
+        setupSuccessfulSend();
+
+        String json = """
+                {
+                    "driverId": "D_REG_TS",
+                    "latitude": 17.4400,
+                    "longitude": 78.3489,
+                    "capturedAt": 1728900000000
+                }
+                """;
+
+        mockMvc.perform(post("/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.driverId").value("D_REG_TS"))
+                .andExpect(jsonPath("$.message").value("Driver registration accepted and queued for processing"));
+
+        ArgumentCaptor<DriverPingRequest> captor = ArgumentCaptor.forClass(DriverPingRequest.class);
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_PINGS), eq("D_REG_TS"), captor.capture());
+
+        DriverPingRequest sent = captor.getValue();
+        assertEquals("D_REG_TS", sent.driverId());
+        assertEquals(PingAction.REGISTER, sent.action());
+        assertEquals(1728900000000L, sent.capturedAt(), "capturedAt must be preserved through registration");
     }
 
     @Test

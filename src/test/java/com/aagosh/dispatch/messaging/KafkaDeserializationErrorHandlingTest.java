@@ -2,6 +2,7 @@ package com.aagosh.dispatch.messaging;
 
 import com.aagosh.dispatch.api.DriverPingRequest;
 import com.aagosh.dispatch.api.RideRequestDto;
+import com.aagosh.dispatch.cache.RedisLocationCache;
 import com.aagosh.dispatch.config.KafkaConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.DriverRegistry;
@@ -95,7 +96,8 @@ class KafkaDeserializationErrorHandlingTest {
     @DisplayName("3. DriverPingConsumer safely skips and acknowledges null/failed-deserialization payload")
     void driverPingConsumerHandlesDeserializationFailureRecord() {
         DriverRegistry driverRegistry = new DriverRegistry();
-        DriverPingConsumer consumer = new DriverPingConsumer(driverRegistry);
+        RedisLocationCache redisCache = mock(RedisLocationCache.class);
+        DriverPingConsumer consumer = new DriverPingConsumer(driverRegistry, redisCache);
         Acknowledgment ack = mock(Acknowledgment.class);
 
         RecordHeaders headers = new RecordHeaders();
