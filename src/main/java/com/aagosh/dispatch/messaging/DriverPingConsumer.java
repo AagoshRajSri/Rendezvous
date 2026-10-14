@@ -8,15 +8,20 @@ import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.domain.DriverState;
 import com.aagosh.dispatch.domain.GeoPoint;
+import com.aagosh.dispatch.domain.MatchStatus;
+import com.aagosh.dispatch.domain.TripStatus;
+import com.aagosh.dispatch.persistence.TripRepository;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.kafka.support.serializer.SerializationUtils;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -39,6 +44,13 @@ import java.util.Optional;
  *   <li>{@link PingAction#AUTO} (or absent): registers if new; updates location if
  *       already registered. Preserves claim state. Safe to retry.</li>
  * </ul>
+ *
+ * <h2>Driver State Recovery</h2>
+ * <p>Drivers are maintained in-memory in {@link DriverRegistry}. When a driver registers or
+ * reconnects after a service restart or reconnection, {@link #recoverDriverStateIfActive(String)}
+ * lazily queries PostgreSQL for any active trip ({@code ASSIGNED}, {@code EN_ROUTE}, or {@code IN_PROGRESS})
+ * and restores the in-memory {@link DriverState} claim. This avoids any blocking scan of trip state
+ * during application startup and does not assume driver rows exist in PostgreSQL.
  *
  * <h2>Timestamp handling and ordering guarantees</h2>
  * <p>Location ordering is resolved by {@link #resolveTimestamp(DriverPingRequest, long)} in priority order:
@@ -93,13 +105,25 @@ public class DriverPingConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DriverPingConsumer.class);
 
-    private final DriverRegistry    driverRegistry;
+    private static final List<TripStatus> ACTIVE_TRIP_STATUSES =
+            List.of(TripStatus.ASSIGNED, TripStatus.EN_ROUTE, TripStatus.IN_PROGRESS);
+
+    private final DriverRegistry     driverRegistry;
     private final RedisLocationCache redisLocationCache;
+    private final TripRepository     tripRepository;
+
+    @Autowired
+    public DriverPingConsumer(DriverRegistry driverRegistry,
+                              RedisLocationCache redisLocationCache,
+                              @Autowired(required = false) TripRepository tripRepository) {
+        this.driverRegistry     = Objects.requireNonNull(driverRegistry,     "driverRegistry");
+        this.redisLocationCache = Objects.requireNonNull(redisLocationCache, "redisLocationCache");
+        this.tripRepository     = tripRepository;
+    }
 
     public DriverPingConsumer(DriverRegistry driverRegistry,
                               RedisLocationCache redisLocationCache) {
-        this.driverRegistry    = Objects.requireNonNull(driverRegistry,    "driverRegistry");
-        this.redisLocationCache = Objects.requireNonNull(redisLocationCache, "redisLocationCache");
+        this(driverRegistry, redisLocationCache, null);
     }
 
     /**
@@ -165,14 +189,16 @@ public class DriverPingConsumer {
 
     private void processRegister(String driverId, GeoPoint location, long timestamp,
                                  ConsumerRecord<?, ?> record) {
+        DriverState state = createOrRecoverState(driverId);
         try {
-            driverRegistry.register(new Driver(driverId, location, new DriverState(), timestamp));
+            driverRegistry.register(new Driver(driverId, location, state, timestamp));
             log.debug("Registered driver {} via consumer (partition={} offset={})",
                     driverId, record.partition(), record.offset());
             // Write initial location to Redis for newly registered drivers.
             updateRedisCacheSafe(driverId, location, timestamp);
         } catch (IllegalStateException ex) {
-            // Driver already registered — treat as idempotent success.
+            // Driver already registered — ensure state recovery if currently AVAILABLE
+            recoverDriverStateIfActive(driverId);
             log.warn("Duplicate REGISTER event for already-registered driver {}; acknowledging",
                     driverId);
         }
@@ -203,17 +229,75 @@ public class DriverPingConsumer {
                              ConsumerRecord<?, ?> record) {
         Optional<Driver> existing = driverRegistry.findById(driverId);
         if (existing.isPresent()) {
+            recoverDriverStateIfActive(driverId);
             processUpdate(driverId, location, timestamp, record);
         } else {
+            DriverState state = createOrRecoverState(driverId);
             try {
-                driverRegistry.register(new Driver(driverId, location, new DriverState(), timestamp));
+                driverRegistry.register(new Driver(driverId, location, state, timestamp));
                 log.debug("Auto-registered driver {} via consumer (partition={} offset={})",
                         driverId, record.partition(), record.offset());
                 updateRedisCacheSafe(driverId, location, timestamp);
             } catch (IllegalStateException ex) {
                 // Race: another consumer thread registered between findById and register.
+                recoverDriverStateIfActive(driverId);
                 processUpdate(driverId, location, timestamp, record);
             }
+        }
+    }
+
+    /**
+     * Creates a {@link DriverState} for a newly registering driver, pre-populating
+     * it with any active persistent trip BEFORE the driver is published to {@link DriverRegistry}.
+     * This guarantees that a driver with an active trip is never exposed to concurrent matching
+     * as {@code AVAILABLE}.
+     */
+    private DriverState createOrRecoverState(String driverId) {
+        DriverState state = new DriverState();
+        if (tripRepository != null) {
+            try {
+                tripRepository.findFirstByDriverIdAndStatusIn(driverId, ACTIVE_TRIP_STATUSES)
+                        .ifPresent(trip -> {
+                            boolean restored = state.restoreActiveTrip(trip.getRequestId(), trip.getStatus());
+                            if (restored) {
+                                log.info("Restored active trip {} for driver {} with status {} prior to registration",
+                                        trip.getRequestId(), driverId, trip.getStatus());
+                            }
+                        });
+            } catch (Exception ex) {
+                log.warn("Failed to check active trip state before registering driver {}: {}", driverId, ex.getMessage());
+            }
+        }
+        return state;
+    }
+
+    /**
+     * Lazily recovers in-memory driver state from PostgreSQL if an active trip
+     * (ASSIGNED, EN_ROUTE, or IN_PROGRESS) exists for this driver.
+     *
+     * <p>Only queries PostgreSQL if the driver is currently {@link MatchStatus#AVAILABLE}
+     * in memory, avoiding redundant database lookups during normal operation.
+     * Never overwrites an unrelated active claim.
+     */
+    private void recoverDriverStateIfActive(String driverId) {
+        if (tripRepository == null) {
+            return;
+        }
+        try {
+            driverRegistry.findById(driverId).ifPresent(driver -> {
+                if (driver.state().getStatus() == MatchStatus.AVAILABLE) {
+                    tripRepository.findFirstByDriverIdAndStatusIn(driverId, ACTIVE_TRIP_STATUSES)
+                            .ifPresent(trip -> {
+                                boolean restored = driver.state().restoreActiveTrip(trip.getRequestId(), trip.getStatus());
+                                if (restored) {
+                                    log.info("Recovered active trip {} for driver {} with status {}",
+                                            trip.getRequestId(), driverId, trip.getStatus());
+                                }
+                            });
+                }
+            });
+        } catch (Exception ex) {
+            log.warn("Failed to recover active trip state for driver {}: {}", driverId, ex.getMessage());
         }
     }
 

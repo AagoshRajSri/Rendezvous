@@ -71,6 +71,12 @@ class AssignmentPersistenceServiceIT {
     @Autowired
     private AssignmentRepository assignmentRepository;
 
+    @Autowired
+    private TripRepository tripRepository;
+
+    @Autowired
+    private jakarta.persistence.EntityManager entityManager;
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -199,9 +205,8 @@ class AssignmentPersistenceServiceIT {
     }
 
     @Test
-    @DisplayName("8. Flyway migrations created both tables with the correct schema")
-    void flywayMigrations_bothTablesExist() {
-        // If Flyway ran correctly, we can persist and retrieve from both tables
+    @DisplayName("8. Flyway migrations created ride_requests, assignments, and trips tables")
+    void flywayMigrations_tablesExist() {
         RideRequest request = makeRequest("REQ-IT-SCHEMA");
         assertEquals(PersistOutcome.PERSISTED, service.persistRequest(request));
         Assignment assignment = makeAssignment("REQ-IT-SCHEMA", "D-SCHEMA", 0.99);
@@ -209,5 +214,124 @@ class AssignmentPersistenceServiceIT {
 
         assertTrue(rideRequestRepository.existsByRequestId("REQ-IT-SCHEMA"));
         assertTrue(assignmentRepository.existsByRequestId("REQ-IT-SCHEMA"));
+        assertTrue(tripRepository.existsByRequestId("REQ-IT-SCHEMA"));
+    }
+
+    @Test
+    @DisplayName("9. persistMatchedAssignment creates RideRequestEntity, AssignmentEntity, and TripEntity(ASSIGNED) atomically")
+    void persistMatchedAssignment_createsTripEntity() {
+        RideRequest request = makeRequest("REQ-IT-MATCH-01");
+        Assignment assignment = makeAssignment("REQ-IT-MATCH-01", "D-MATCH-01", 3.50);
+
+        service.persistMatchedAssignment(request, assignment);
+
+        assertTrue(rideRequestRepository.existsByRequestId("REQ-IT-MATCH-01"));
+        assertEquals(AssignmentPersistenceService.STATUS_MATCHED,
+                rideRequestRepository.findByRequestId("REQ-IT-MATCH-01").orElseThrow().getStatus());
+
+        assertTrue(assignmentRepository.existsByRequestId("REQ-IT-MATCH-01"));
+        assertEquals("D-MATCH-01",
+                assignmentRepository.findByRequestId("REQ-IT-MATCH-01").orElseThrow().getDriverId());
+
+        assertTrue(tripRepository.existsByRequestId("REQ-IT-MATCH-01"));
+        TripEntity trip = tripRepository.findByRequestId("REQ-IT-MATCH-01").orElseThrow();
+        assertEquals("D-MATCH-01", trip.getDriverId());
+        assertEquals(com.aagosh.dispatch.domain.TripStatus.ASSIGNED, trip.getStatus());
+    }
+
+    @Test
+    @DisplayName("10. trips partial unique index prevents two active trips for the same driver")
+    void activeDriverConstraint_preventsDuplicateActiveTrips() {
+        RideRequest req1 = makeRequest("REQ-IT-ACTIVE-1");
+        RideRequest req2 = makeRequest("REQ-IT-ACTIVE-2");
+        service.persistRequest(req1);
+        service.persistRequest(req2);
+
+        TripEntity trip1 = new TripEntity("REQ-IT-ACTIVE-1", "D-COMMON", com.aagosh.dispatch.domain.TripStatus.ASSIGNED);
+        tripRepository.saveAndFlush(trip1);
+
+        // Attempting to save a second active trip for D-COMMON must violate the partial unique index
+        TripEntity trip2 = new TripEntity("REQ-IT-ACTIVE-2", "D-COMMON", com.aagosh.dispatch.domain.TripStatus.EN_ROUTE);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.dao.DataIntegrityViolationException.class,
+                () -> tripRepository.saveAndFlush(trip2));
+    }
+
+    @Test
+    @DisplayName("11. ride_requests check constraint rejects invalid status string")
+    void rideRequestsStatusCheckConstraint_rejectsInvalidStatus() {
+        RideRequestEntity invalid = new RideRequestEntity("REQ-IT-INVALID", 17.0, 78.0, "UNKNOWN_STATUS");
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.dao.DataIntegrityViolationException.class,
+                () -> rideRequestRepository.saveAndFlush(invalid));
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @DisplayName("12. Transaction boundary: trip failure in persistMatchedAssignment rolls back assignment and request status")
+    void transactionBoundary_tripFailureRollsBackAllEntities() {
+        // First, create an existing active trip for driver D-BUSY
+        RideRequest req1 = makeRequest("REQ-IT-TX-1");
+        service.persistRequest(req1);
+        TripEntity activeTrip = new TripEntity("REQ-IT-TX-1", "D-BUSY", com.aagosh.dispatch.domain.TripStatus.ASSIGNED);
+        tripRepository.saveAndFlush(activeTrip);
+
+        // Now attempt to persist a matched assignment for a NEW request claiming the same driver D-BUSY
+        RideRequest req2 = makeRequest("REQ-IT-TX-2");
+        service.persistRequest(req2);
+        assertEquals(AssignmentPersistenceService.STATUS_PENDING,
+                rideRequestRepository.findByRequestId("REQ-IT-TX-2").orElseThrow().getStatus());
+
+        Assignment assignment2 = makeAssignment("REQ-IT-TX-2", "D-BUSY", 4.50);
+
+        // persistMatchedAssignment must fail on uq_trips_active_driver and trigger rollback
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.dao.DataIntegrityViolationException.class,
+                () -> service.persistMatchedAssignment(req2, assignment2));
+
+        // Verify transaction boundary: NO assignment entity was committed for REQ-IT-TX-2
+        assertFalse(assignmentRepository.existsByRequestId("REQ-IT-TX-2"),
+                "Assignment must be rolled back");
+        assertFalse(tripRepository.existsByRequestId("REQ-IT-TX-2"),
+                "Trip must be rolled back");
+
+        // Request status was not permanently mutated to MATCHED
+        RideRequestEntity reqEntity = rideRequestRepository.findByRequestId("REQ-IT-TX-2").orElseThrow();
+        assertEquals(AssignmentPersistenceService.STATUS_PENDING, reqEntity.getStatus(),
+                "Request status must be rolled back to PENDING");
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @DisplayName("13. Database race protection: losing concurrent assignment rollback leaves winning assignment and trip intact")
+    void concurrentRaceProtection_winningAssignmentRemainsIntact() {
+        // Winner: REQ-WIN gets assigned D-SHARED
+        RideRequest winReq = makeRequest("REQ-WIN");
+        Assignment winAssignment = makeAssignment("REQ-WIN", "D-SHARED", 1.50);
+        service.persistMatchedAssignment(winReq, winAssignment);
+
+        assertTrue(assignmentRepository.existsByRequestId("REQ-WIN"));
+        assertTrue(tripRepository.existsByRequestId("REQ-WIN"));
+
+        // Loser: REQ-LOSE attempts to assign same driver D-SHARED
+        RideRequest loseReq = makeRequest("REQ-LOSE");
+        Assignment loseAssignment = makeAssignment("REQ-LOSE", "D-SHARED", 2.00);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.dao.DataIntegrityViolationException.class,
+                () -> service.persistMatchedAssignment(loseReq, loseAssignment));
+
+        // Winning assignment and trip in PostgreSQL are completely intact and undisturbed
+        AssignmentEntity winningAssignment = assignmentRepository.findByRequestId("REQ-WIN").orElseThrow();
+        assertEquals("D-SHARED", winningAssignment.getDriverId());
+        assertEquals(1.50, winningAssignment.getCost(), 1e-6);
+
+        TripEntity winningTrip = tripRepository.findByRequestId("REQ-WIN").orElseThrow();
+        assertEquals("D-SHARED", winningTrip.getDriverId());
+        assertEquals(com.aagosh.dispatch.domain.TripStatus.ASSIGNED, winningTrip.getStatus());
+
+        // Losing request has no assignment or trip
+        assertFalse(assignmentRepository.existsByRequestId("REQ-LOSE"));
+        assertFalse(tripRepository.existsByRequestId("REQ-LOSE"));
     }
 }

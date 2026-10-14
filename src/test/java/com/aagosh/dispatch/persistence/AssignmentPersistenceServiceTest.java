@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import com.aagosh.dispatch.domain.TripStatus;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,13 +30,15 @@ class AssignmentPersistenceServiceTest {
 
     private RideRequestRepository rideRequestRepository;
     private AssignmentRepository assignmentRepository;
+    private TripRepository tripRepository;
     private AssignmentPersistenceService service;
 
     @BeforeEach
     void setUp() {
         rideRequestRepository = mock(RideRequestRepository.class);
         assignmentRepository  = mock(AssignmentRepository.class);
-        service = new AssignmentPersistenceService(rideRequestRepository, assignmentRepository);
+        tripRepository        = mock(TripRepository.class);
+        service = new AssignmentPersistenceService(rideRequestRepository, assignmentRepository, tripRepository);
     }
 
     private RideRequest sampleRequest(String id) {
@@ -50,7 +53,7 @@ class AssignmentPersistenceServiceTest {
     }
 
     @Test
-    @DisplayName("1. persistMatchedAssignment creates new RideRequestEntity with MATCHED and saves AssignmentEntity")
+    @DisplayName("1. persistMatchedAssignment creates new RideRequestEntity with MATCHED, saves AssignmentEntity and TripEntity(ASSIGNED)")
     void persistMatchedAssignment_whenRequestNew_createsBothEntities() {
         RideRequest request = sampleRequest("REQ-100");
         Assignment assignment = sampleAssignment("REQ-100", "D-1", 1.50);
@@ -69,10 +72,16 @@ class AssignmentPersistenceServiceTest {
         assertEquals("REQ-100", assignCaptor.getValue().getRequestId());
         assertEquals("D-1", assignCaptor.getValue().getDriverId());
         assertEquals(1.50, assignCaptor.getValue().getCost(), 1e-6);
+
+        ArgumentCaptor<TripEntity> tripCaptor = ArgumentCaptor.forClass(TripEntity.class);
+        verify(tripRepository).saveAndFlush(tripCaptor.capture());
+        assertEquals("REQ-100", tripCaptor.getValue().getRequestId());
+        assertEquals("D-1", tripCaptor.getValue().getDriverId());
+        assertEquals(TripStatus.ASSIGNED, tripCaptor.getValue().getStatus());
     }
 
     @Test
-    @DisplayName("2. persistMatchedAssignment updates existing pending RideRequestEntity to MATCHED")
+    @DisplayName("2. persistMatchedAssignment updates existing pending RideRequestEntity to MATCHED and saves TripEntity")
     void persistMatchedAssignment_whenRequestExists_updatesStatus() {
         RideRequest request = sampleRequest("REQ-101");
         Assignment assignment = sampleAssignment("REQ-101", "D-2", 2.0);
@@ -85,6 +94,7 @@ class AssignmentPersistenceServiceTest {
         verify(rideRequestRepository).saveAndFlush(existing);
         assertEquals(AssignmentPersistenceService.STATUS_MATCHED, existing.getStatus());
         verify(assignmentRepository).saveAndFlush(any(AssignmentEntity.class));
+        verify(tripRepository).saveAndFlush(any(TripEntity.class));
     }
 
     @Test
@@ -164,5 +174,18 @@ class AssignmentPersistenceServiceTest {
         // Second release is no-op
         assertFalse(state.releaseClaim("REQ-A"));
         assertEquals(MatchStatus.AVAILABLE, state.getStatus());
+    }
+
+    @Test
+    @DisplayName("8. findTrip and isTripPersisted delegate to tripRepository")
+    void tripQueries_delegateToRepository() {
+        TripEntity entity = new TripEntity("REQ-TRIP", "D-1", TripStatus.ASSIGNED);
+        when(tripRepository.findByRequestId("REQ-TRIP")).thenReturn(Optional.of(entity));
+        when(tripRepository.existsByRequestId("REQ-TRIP")).thenReturn(true);
+        when(tripRepository.existsByRequestId("REQ-TRIP-MISS")).thenReturn(false);
+
+        assertEquals(Optional.of(entity), service.findTrip("REQ-TRIP"));
+        assertTrue(service.isTripPersisted("REQ-TRIP"));
+        assertFalse(service.isTripPersisted("REQ-TRIP-MISS"));
     }
 }

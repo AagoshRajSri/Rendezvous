@@ -9,6 +9,7 @@ import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.domain.DriverState;
 import com.aagosh.dispatch.domain.GeoPoint;
 import com.aagosh.dispatch.domain.MatchStatus;
+import com.aagosh.dispatch.domain.TripStatus;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,13 +19,16 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class DriverPingConsumerTest {
 
@@ -304,5 +308,81 @@ class DriverPingConsumerTest {
         Driver driverFinal = driverRegistry.findById(driverId).orElseThrow();
         assertEquals(18.0, driverFinal.location().latitude(), "Delayed update with older broker timestamp must be rejected");
         assertEquals(2000L, driverFinal.updatedAt());
+    }
+
+    @Test
+    @DisplayName("14. Driver registration triggers lazy recovery of active trip from PostgreSQL")
+    void driverRegistration_recoversActiveTripState() {
+        String driverId = "D_RECOVER";
+        com.aagosh.dispatch.persistence.TripRepository mockTripRepo = mock(com.aagosh.dispatch.persistence.TripRepository.class);
+        DriverPingConsumer recoveringConsumer = new DriverPingConsumer(driverRegistry, redisLocationCache, mockTripRepo);
+
+        com.aagosh.dispatch.persistence.TripEntity activeTrip =
+                new com.aagosh.dispatch.persistence.TripEntity("REQ-REC-1", driverId, TripStatus.EN_ROUTE);
+        when(mockTripRepo.findFirstByDriverIdAndStatusIn(org.mockito.ArgumentMatchers.eq(driverId), any()))
+                .thenReturn(Optional.of(activeTrip));
+
+        DriverPingRequest request = new DriverPingRequest(driverId, 17.3850, 78.4867, PingAction.REGISTER);
+        recoveringConsumer.onDriverPing(record(driverId, request), acknowledgment);
+
+        Driver recovered = driverRegistry.findById(driverId).orElseThrow();
+        assertEquals(MatchStatus.EN_ROUTE, recovered.state().getStatus(), "Driver state must be recovered to EN_ROUTE");
+        assertEquals("REQ-REC-1", recovered.state().getClaimedByRequestId());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    @DisplayName("15. Driver cannot be dispatched between registration and active-trip recovery")
+    void driverCannotBeDispatchedBetweenRegistrationAndRecovery() {
+        String driverId = "D_ATOMIC_REC";
+        com.aagosh.dispatch.persistence.TripRepository mockTripRepo = mock(com.aagosh.dispatch.persistence.TripRepository.class);
+        DriverPingConsumer recoveringConsumer = new DriverPingConsumer(driverRegistry, redisLocationCache, mockTripRepo);
+
+        com.aagosh.dispatch.persistence.TripEntity activeTrip =
+                new com.aagosh.dispatch.persistence.TripEntity("REQ-EXISTING-TRIP", driverId, TripStatus.ASSIGNED);
+        when(mockTripRepo.findFirstByDriverIdAndStatusIn(org.mockito.ArgumentMatchers.eq(driverId), any()))
+                .thenReturn(Optional.of(activeTrip));
+
+        DriverPingRequest request = new DriverPingRequest(driverId, 17.3850, 78.4867, PingAction.REGISTER);
+        recoveringConsumer.onDriverPing(record(driverId, request), acknowledgment);
+
+        // At the moment registration completes, driver is already CLAIMED with the active trip.
+        // A concurrent matcher attempting to claim this driver must fail!
+        Driver registered = driverRegistry.findById(driverId).orElseThrow();
+        assertEquals(MatchStatus.CLAIMED, registered.state().getStatus());
+        assertEquals("REQ-EXISTING-TRIP", registered.state().getClaimedByRequestId());
+
+        // A new request CANNOT claim this driver
+        assertFalse(registered.state().tryClaim("NEW-INCOMING-REQUEST"),
+                "Driver with active trip in DB must not be claimable upon registration");
+    }
+
+    @Test
+    @DisplayName("16. Recovery does not overwrite an unrelated active claim")
+    void recoveryDoesNotOverwriteUnrelatedActiveClaim() {
+        String driverId = "D_ACTIVE_MEM";
+        com.aagosh.dispatch.persistence.TripRepository mockTripRepo = mock(com.aagosh.dispatch.persistence.TripRepository.class);
+        DriverPingConsumer recoveringConsumer = new DriverPingConsumer(driverRegistry, redisLocationCache, mockTripRepo);
+
+        // Driver already in memory and CLAIMED by REQ-IN-MEMORY
+        DriverState inMemState = new DriverState();
+        inMemState.tryClaim("REQ-IN-MEMORY");
+        driverRegistry.register(new Driver(driverId, new GeoPoint(17.0, 78.0), inMemState));
+
+        // DB returns a different active trip (e.g. stale row or concurrent event)
+        com.aagosh.dispatch.persistence.TripEntity dbTrip =
+                new com.aagosh.dispatch.persistence.TripEntity("REQ-FROM-DB", driverId, TripStatus.ASSIGNED);
+        when(mockTripRepo.findFirstByDriverIdAndStatusIn(org.mockito.ArgumentMatchers.eq(driverId), any()))
+                .thenReturn(Optional.of(dbTrip));
+
+        // Trigger an UPDATE ping (reconnect telemetry)
+        DriverPingRequest request = new DriverPingRequest(driverId, 17.1, 78.1, PingAction.UPDATE);
+        recoveringConsumer.onDriverPing(record(driverId, request), acknowledgment);
+
+        // Active claim REQ-IN-MEMORY must NOT be overwritten
+        Driver driver = driverRegistry.findById(driverId).orElseThrow();
+        assertEquals(MatchStatus.CLAIMED, driver.state().getStatus());
+        assertEquals("REQ-IN-MEMORY", driver.state().getClaimedByRequestId(),
+                "Active in-memory claim must not be overwritten by DB recovery");
     }
 }

@@ -2,6 +2,7 @@ package com.aagosh.dispatch.persistence;
 
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.RideRequest;
+import com.aagosh.dispatch.domain.TripStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,14 +13,14 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Transactional service responsible for durably persisting ride-request events
- * and driver assignments into PostgreSQL.
+ * Transactional service responsible for durably persisting ride-request events,
+ * driver assignments, and trip execution entities into PostgreSQL.
  *
  * <h2>Outcome semantics & Invariants</h2>
  * <ul>
  *   <li>Atomic finalization: {@link #persistMatchedAssignment(RideRequest, Assignment)}
- *       writes the {@code assignments} record and updates the {@code ride_requests}
- *       status to {@code MATCHED} in a single database transaction.</li>
+ *       writes the {@code assignments} record, the initial {@code trips} record (in state {@code ASSIGNED}),
+ *       and updates the {@code ride_requests} status to {@code MATCHED} in a single database transaction.</li>
  *   <li>Terminal no-driver state: {@link #persistNoDrivers(RideRequest)} records
  *       {@code NO_DRIVERS} durably so redeliveries do not rematch.</li>
  *   <li>Exception propagation: Transactional methods allow database exceptions
@@ -45,15 +46,24 @@ public class AssignmentPersistenceService {
 
     private final RideRequestRepository rideRequestRepository;
     private final AssignmentRepository  assignmentRepository;
+    private final TripRepository        tripRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AssignmentPersistenceService(RideRequestRepository rideRequestRepository,
+                                        AssignmentRepository assignmentRepository,
+                                        @org.springframework.beans.factory.annotation.Autowired(required = false) TripRepository tripRepository) {
+        this.rideRequestRepository = Objects.requireNonNull(rideRequestRepository, "rideRequestRepository");
+        this.assignmentRepository  = Objects.requireNonNull(assignmentRepository, "assignmentRepository");
+        this.tripRepository        = tripRepository;
+    }
 
     public AssignmentPersistenceService(RideRequestRepository rideRequestRepository,
                                         AssignmentRepository assignmentRepository) {
-        this.rideRequestRepository = Objects.requireNonNull(rideRequestRepository, "rideRequestRepository");
-        this.assignmentRepository  = Objects.requireNonNull(assignmentRepository, "assignmentRepository");
+        this(rideRequestRepository, assignmentRepository, null);
     }
 
     // -------------------------------------------------------------------------
-    // Phase 5 Step 2 Core Transactional Operations
+    // Core Transactional Operations
     // -------------------------------------------------------------------------
 
     /**
@@ -110,8 +120,39 @@ public class AssignmentPersistenceService {
     }
 
     /**
-     * Atomically records the ride request as {@code MATCHED} and inserts the
-     * assignment record within a single database transaction.
+     * Reconciles trip persistence: fetches the persisted trip entity if one exists.
+     *
+     * @param requestId the logical request identifier
+     * @return an {@link Optional} containing the persisted {@link TripEntity}
+     */
+    @Transactional(readOnly = true)
+    public Optional<TripEntity> findTrip(String requestId) {
+        Objects.requireNonNull(requestId, "requestId");
+        if (tripRepository == null) {
+            return Optional.empty();
+        }
+        return tripRepository.findByRequestId(requestId);
+    }
+
+    /**
+     * Checks whether a trip entity for the given requestId is durably persisted.
+     *
+     * @param requestId the logical request identifier
+     * @return {@code true} if a trip row exists
+     */
+    @Transactional(readOnly = true)
+    public boolean isTripPersisted(String requestId) {
+        Objects.requireNonNull(requestId, "requestId");
+        if (tripRepository == null) {
+            return false;
+        }
+        return tripRepository.existsByRequestId(requestId);
+    }
+
+    /**
+     * Atomically records the ride request as {@code MATCHED}, inserts the
+     * assignment record, and inserts the initial trip record in state {@code ASSIGNED}
+     * within a single database transaction.
      *
      * <p>Database exceptions (such as unique constraint violations on duplicate
      * delivery or connection drops) are NOT caught here, allowing Spring's transaction
@@ -142,6 +183,15 @@ public class AssignmentPersistenceService {
                 assignment.cost()
         );
         assignmentRepository.saveAndFlush(assignmentEntity);
+
+        if (tripRepository != null) {
+            TripEntity tripEntity = new TripEntity(
+                    requestId,
+                    assignment.driver().id(),
+                    TripStatus.ASSIGNED
+            );
+            tripRepository.saveAndFlush(tripEntity);
+        }
 
         log.info("Persisted matched assignment: request={} driver={} cost={}",
                 requestId, assignment.driver().id(), assignment.cost());
@@ -209,8 +259,8 @@ public class AssignmentPersistenceService {
     }
 
     /**
-     * Persists the matched assignment and updates the ride-request status to
-     * {@code MATCHED} within a single transaction.
+     * Persists the matched assignment, updates the ride-request status to
+     * {@code MATCHED}, and inserts the initial {@link TripEntity} within a single transaction.
      *
      * @param assignment the matched assignment to record
      * @return {@link PersistOutcome#PERSISTED} on new insert,
@@ -237,6 +287,15 @@ public class AssignmentPersistenceService {
                 req.setStatus(STATUS_MATCHED);
                 rideRequestRepository.save(req);
             });
+
+            if (tripRepository != null && !tripRepository.existsByRequestId(requestId)) {
+                TripEntity tripEntity = new TripEntity(
+                        requestId,
+                        assignment.driver().id(),
+                        TripStatus.ASSIGNED
+                );
+                tripRepository.saveAndFlush(tripEntity);
+            }
 
             log.info("Persisted assignment: request={} driver={} cost={}",
                     requestId, assignment.driver().id(), assignment.cost());
@@ -285,7 +344,8 @@ public class AssignmentPersistenceService {
     private PersistOutcome disambiguateAssignmentDuplicate(String requestId,
                                                            DataIntegrityViolationException ex) {
         String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
-        if (msg.contains("uq_assignments_request_id") || msg.contains("duplicate key") || msg.contains("unique constraint")) {
+        if (msg.contains("uq_assignments_request_id") || msg.contains("uq_trips_request_id")
+                || msg.contains("duplicate key") || msg.contains("unique constraint")) {
             log.info("Concurrent insert for assignment {} hit unique constraint; treating as duplicate", requestId);
             return PersistOutcome.DUPLICATE;
         }
