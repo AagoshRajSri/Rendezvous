@@ -1,17 +1,74 @@
-# Dispatch Service REST API Documentation
+# Dispatch Service REST API & Event Ingestion Documentation
 
-This document specifies the REST API endpoints exposed by the dispatch matching service (`com.aagosh.dispatch.api`).
+This document specifies the REST API endpoints and asynchronous Kafka event ingestion contracts for the dispatch matching service (`com.aagosh.dispatch`).
 
 ---
 
-## 1. Driver Endpoints
+## 1. Architecture Overview (Phase 5: Asynchronous Ingestion)
 
-### 1.1 Ingest Location Telemetry / Ping
+In Phase 5 Step 1, the REST API acts as an event ingestion gateway (Kafka producers). Incoming HTTP requests are validated synchronously, published to dedicated Kafka topics, and acknowledged with **HTTP 202 Accepted**.
+
+Dedicated consumers process the queued events asynchronously using the thread-safe `DriverRegistry` and the configured `Matcher` domain engine.
+
+```
++------------------+         HTTP POST         +------------------+
+|  Mobile Client   | ------------------------> | DriverController |
+|  (Driver Ping)   | <------------------------ | (REST Producer)  |
++------------------+      202 Accepted         +--------+---------+
+                                                        |
+                                                        | driver-pings
+                                                        v
+                                               [  Kafka Broker  ]
+                                                        |
+                                                        v
+                                               +--------+---------+
+                                               |DriverPingConsumer|
+                                               | (Async Consumer) |
+                                               +--------+---------+
+                                                        |
+                                                        v
+                                               +------------------+
+                                               |  DriverRegistry  |
+                                               +------------------+
+
++------------------+         HTTP POST         +------------------+
+|  Rider Client    | ------------------------> |  RideController  |
+|  (Ride Request)  | <------------------------ | (REST Producer)  |
++------------------+      202 Accepted         +--------+---------+
+                                                        |
+                                                        | ride-requests
+                                                        v
+                                               [  Kafka Broker  ]
+                                                        |
+                                                        v
+                                               +--------+---------+
+                                               |RideReqConsumer   |
+                                               | (Async Consumer) |
+                                               +--------+---------+
+                                                        |
+                                       +----------------+----------------+
+                                       |                                 |
+                                       v                                 v
+                              +------------------+             +-------------------+
+                              |  DriverRegistry  |             |  Matcher Engine   |
+                              +------------------+             +-------------------+
+```
+
+---
+
+## 2. Driver Telemetry Endpoints
+
+### 2.1 Ingest Location Telemetry / Ping
 
 - **URL:** `POST /ping`
 - **Content-Type:** `application/json`
-- **Description:** Ingests driver location telemetry. By default (`action: "AUTO"` or omitted), registers a new driver if absent, or atomically updates the driver's coordinates if already registered while strictly preserving the driver's authoritative `DriverState` (and any active ride claim).
-- **Caveat on Telemetry Ordering:** **Concurrent location updates have no chronological or event-time ordering guarantee.** Coordinates are updated via an atomic CAS loop on memory references. If network packets arrive out of order, the last update to succeed its CAS will commit as the active location. Sequence numbers or event timestamps are deferred to subsequent phases.
+- **HTTP Status on Success:** `202 Accepted`
+- **Description:** Validates driver coordinates and publishes the telemetry ping to the `driver-pings` Kafka topic with `driverId` as the message key.
+- **Asynchronous Processing:** `DriverPingConsumer` processes the event:
+  - If `action` is `AUTO` (default): registers the driver if absent, or updates location while strictly preserving existing `DriverState` and active ride claims.
+  - If `action` is `REGISTER`: registers the driver if absent; duplicate events are acknowledged idempotently.
+  - If `action` is `UPDATE`: updates location if registered; unknown drivers are logged and acknowledged.
+- **Caveat on Telemetry Ordering:** Location telemetry has no chronological or event-time ordering guarantee. Stored driver coordinates reflect whichever compare-and-set committed last.
 
 #### Request Schema (`DriverPingRequest`)
 
@@ -22,7 +79,7 @@ This document specifies the REST API endpoints exposed by the dispatch matching 
 | `longitude` | `Double` | Yes | Finite longitude between `-180.0` and `180.0`. |
 | `action` | `String` | No | Optional action mode: `"AUTO"` (default), `"UPDATE"`, or `"REGISTER"`. |
 
-#### Example 1: Location Update (Existing Driver)
+#### Example: Location Telemetry Ping
 
 **Request:**
 ```http
@@ -36,103 +93,24 @@ Content-Type: application/json
 }
 ```
 
-**Response (200 OK):**
+**Response (202 Accepted):**
 ```json
 {
   "driverId": "D1",
-  "status": "UPDATED",
-  "latitude": 17.3850,
-  "longitude": 78.4867,
-  "matchStatus": "AVAILABLE",
-  "message": "Driver location updated successfully"
-}
-```
-
-#### Example 2: Automatic Registration (New Driver)
-
-**Request:**
-```http
-POST /ping HTTP/1.1
-Content-Type: application/json
-
-{
-  "driverId": "D2",
-  "latitude": 17.4400,
-  "longitude": 78.3489
-}
-```
-
-**Response (201 Created):**
-```json
-{
-  "driverId": "D2",
-  "status": "REGISTERED",
-  "latitude": 17.4400,
-  "longitude": 78.3489,
-  "matchStatus": "AVAILABLE",
-  "message": "Driver registered successfully"
-}
-```
-
-#### Example 3: Explicit Update for Unknown Driver
-
-**Request:**
-```http
-POST /ping HTTP/1.1
-Content-Type: application/json
-
-{
-  "driverId": "D_UNKNOWN",
-  "latitude": 17.4400,
-  "longitude": 78.3489,
-  "action": "UPDATE"
-}
-```
-
-**Response (404 Not Found):**
-```json
-{
-  "status": 404,
-  "error": "Not Found",
-  "message": "No driver registered with ID: D_UNKNOWN"
+  "message": "Driver ping accepted and queued for processing"
 }
 ```
 
 ---
 
-### 1.2 Explicit Driver Registration
+### 2.2 Explicit Driver Registration
 
 - **URL:** `POST /register`
 - **Content-Type:** `application/json`
-- **Description:** Explicitly registers a new driver with an initial location. Returns HTTP 201 on success, or HTTP 409 Conflict if the driver ID is already registered.
+- **HTTP Status on Success:** `202 Accepted`
+- **Description:** Validates input and publishes an event with `action: "REGISTER"` to the `driver-pings` Kafka topic.
 
-#### Example 1: Successful Registration
-
-**Request:**
-```http
-POST /register HTTP/1.1
-Content-Type: application/json
-
-{
-  "driverId": "D10",
-  "latitude": 17.3900,
-  "longitude": 78.4900
-}
-```
-
-**Response (201 Created):**
-```json
-{
-  "driverId": "D10",
-  "status": "REGISTERED",
-  "latitude": 17.3900,
-  "longitude": 78.4900,
-  "matchStatus": "AVAILABLE",
-  "message": "Driver registered successfully"
-}
-```
-
-#### Example 2: Duplicate Registration Error
+#### Example: Driver Registration
 
 **Request:**
 ```http
@@ -146,24 +124,29 @@ Content-Type: application/json
 }
 ```
 
-**Response (409 Conflict):**
+**Response (202 Accepted):**
 ```json
 {
-  "status": 409,
-  "error": "Conflict",
-  "message": "Driver already registered: D10"
+  "driverId": "D10",
+  "message": "Driver registration accepted and queued for processing"
 }
 ```
 
 ---
 
-## 2. Ride Dispatch Endpoint
+## 3. Ride Dispatch Endpoint
 
-### 2.1 Request a Ride Match
+### 3.1 Submit Ride Request
 
 - **URL:** `POST /request`
 - **Content-Type:** `application/json`
-- **Description:** Evaluates available fleet drivers against the ride request pickup location using the injected `Matcher` (`AuctionMatcher` by default) and normalized `DispatchCostFunction`. If a driver is assigned, the driver is atomically claimed with `MatchStatus.CLAIMED`.
+- **HTTP Status on Success:** `202 Accepted`
+- **Description:** Validates pickup coordinates and publishes the request to the `ride-requests` Kafka topic with `requestId` as the message key.
+- **Asynchronous Match Processing:**
+  - `RideRequestConsumer` receives the event and verifies the in-memory idempotency set.
+  - The configured `Matcher` (`AuctionMatcher` or `GreedyMatcher`) is invoked with a snapshot of registered drivers.
+  - If a driver is assigned, the driver is atomically claimed using `DriverState.tryClaim(requestId)`.
+- **Contractual Limitation:** The `202 Accepted` response confirms durable receipt by Kafka, **not** that a driver was assigned. Result query endpoints or push notifications are deferred to subsequent architectural phases.
 
 #### Request Schema (`RideRequestDto`)
 
@@ -173,7 +156,7 @@ Content-Type: application/json
 | `latitude` | `Double` | Yes | Finite pickup latitude between `-90.0` and `90.0`. |
 | `longitude` | `Double` | Yes | Finite pickup longitude between `-180.0` and `180.0`. |
 
-#### Example 1: Successful Match
+#### Example: Ride Request Submission
 
 **Request:**
 ```http
@@ -187,58 +170,22 @@ Content-Type: application/json
 }
 ```
 
-**Response (200 OK):**
+**Response (202 Accepted):**
 ```json
 {
   "requestId": "REQ-101",
-  "matched": true,
-  "driverId": "D1",
-  "driverLatitude": 17.3850,
-  "driverLongitude": 78.4867,
-  "driverStatus": "CLAIMED",
-  "cost": 0.04523,
-  "message": "Driver assigned successfully"
-}
-```
-
-#### Example 2: No-Match Outcome (Empty Fleet or All Claimed)
-
-**Request:**
-```http
-POST /request HTTP/1.1
-Content-Type: application/json
-
-{
-  "requestId": "REQ-102",
-  "latitude": 17.3860,
-  "longitude": 78.4870
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "requestId": "REQ-102",
-  "matched": false,
-  "driverId": null,
-  "driverLatitude": null,
-  "driverLongitude": null,
-  "driverStatus": null,
-  "cost": null,
-  "message": "No available driver could be matched"
+  "message": "Ride request accepted and queued for matching"
 }
 ```
 
 ---
 
-### 2.2 Matching Strategy & Matcher Selection
+## 4. Matching Strategy & Matcher Selection
 
-The dispatch engine decodes ride requests and assigns candidate drivers using an implementation of `com.aagosh.dispatch.matching.Matcher`.
+Matching is executed asynchronously by `RideRequestConsumer`. The matching engine utilizes Spring bean configuration in `com.aagosh.dispatch.config.DispatchConfig`:
 
-#### Spring Bean Configuration
-The application configures matching beans in `com.aagosh.dispatch.config.DispatchConfig`:
-- **Default Matcher:** An instance of `AuctionMatcher` is registered with `@Fallback` and `@ConditionalOnMissingBean`.
-- **Custom Matcher Injection:** If a user or integration test declares an alternative `Matcher` bean (such as `GreedyMatcher` or a custom heuristic):
+- **Default Matcher:** `AuctionMatcher` is registered with `@Fallback` and `@ConditionalOnMissingBean`.
+- **Custom Matcher Injection:** If an alternative `Matcher` bean (e.g., `GreedyMatcher`) is supplied:
   ```java
   @Configuration
   public class CustomDispatchConfig {
@@ -248,63 +195,41 @@ The application configures matching beans in `com.aagosh.dispatch.config.Dispatc
       }
   }
   ```
-  Spring Boot's dependency injection supplies the custom bean to `RideController` without ambiguous injection errors or `@Primary` conflicts.
+  Spring injects the custom matcher into `RideRequestConsumer` without ambiguity.
 
-#### Available Implementations
+### Available Matchers
 1. **`AuctionMatcher` (Default):**
-   - Implements Bertsekas' Auction Algorithm for bipartite matching.
-   - Solves the assignment problem with ε-scaling to minimize overall global assignment cost.
-   - Ideal for batched or multi-candidate competitive assignment scenarios.
+   - Implements Bertsekas' Auction Algorithm for bipartite matching with $\varepsilon$-scaling.
+   - Computes global cost-optimal assignments across batched candidates.
 2. **`GreedyMatcher`:**
    - Evaluates candidate drivers in increasing order of cost using a progressive spatial window.
-   - Selects the single lowest-cost available driver per request.
+   - Selects the single lowest-cost available driver.
 
 ---
 
-### 2.3 Dispatch Cost Model & Configuration (`DispatchCostConfig`)
+## 5. Dispatch Cost Model & Configuration (`DispatchCostConfig`)
 
-Candidate drivers are ranked and priced using `DispatchCostFunction`, configured via the immutable record `DispatchCostConfig`:
+Candidate drivers are evaluated using `DispatchCostFunction`:
 
 $$\text{Total Cost} = w_{\text{eta}} \cdot \text{Normalized ETA} + w_{\text{density}} \cdot \text{Normalized Density} + w_{\text{opportunity}} \cdot \text{Normalized Opportunity}$$
 
-#### Configuration Parameters & Weights
-
 | Parameter | Type | Default Value | Description |
 | :--- | :--- | :--- | :--- |
-| `wEta` | `double` | `1.0` | Weight applied to the normalized estimated time of arrival (ETA). |
-| `wDensity` | `double` | `1.0` | Weight applied to the normalized request competition density. |
-| `wOpportunity` | `double` | `1.0` | Weight applied to the normalized opportunity cost term. |
-| `avgSpeedKmh` | `double` | `60.0` | Assumed vehicle velocity ($km/h$) used to calculate Haversine travel time. |
-| `maxEtaHours` | `double` | `0.5` | Reference maximum ETA ($0.5\text{ h} = 30\text{ min}$) for $[0, 1]$ clamping. |
-| `densityRadiusKm` | `double` | `1.0` | Radius ($km$) around candidate driver to count competing pickup requests. |
-| `maxDensityCount` | `double` | `10.0` | Reference maximum count of competing requests for $[0, 1]$ clamping. |
-
-#### Deferred Opportunity-Cost Term
-- **Current Behavior:** The normalized opportunity component evaluates to **`0.0`** (neutral).
-- **Architectural Rationale:** The current in-memory domain entities (`Driver` and `RideRequest`) capture real-time locations but intentionally omit drop-off destinations, surge multipliers, and pricing tiers. Fabricating synthetic business values would corrupt real dispatch decisions.
-- **Forward Compatibility:** Setting $w_{\text{opportunity}} = 0.0$ is supported and recommended. Setting $w_{\text{opportunity}} > 0$ is permitted and produces zero effect until subsequent phases introduce destination-aware ride models.
+| `wEta` | `double` | `1.0` | Weight applied to normalized travel ETA. |
+| `wDensity` | `double` | `1.0` | Weight applied to normalized competing request density. |
+| `wOpportunity` | `double` | `1.0` | Weight applied to normalized opportunity cost ($0.0$ placeholder). |
+| `avgSpeedKmh` | `double` | `60.0` | Assumed vehicle velocity ($km/h$). |
+| `maxEtaHours` | `double` | `0.5` | Reference maximum ETA ($30\text{ min}$) for $[0, 1]$ clamping. |
+| `densityRadiusKm` | `double` | `1.0` | Radius ($km$) around driver for counting competing requests. |
+| `maxDensityCount` | `double` | `10.0` | Reference maximum competing requests for $[0, 1]$ clamping. |
 
 ---
 
-## 3. Error Handling and Validation
+## 6. Error Handling & Broker Failures
 
-All validation and parsing errors are intercepted by `GlobalExceptionHandler` and returned as standard `ApiErrorResponse` objects with HTTP 400 Bad Request.
+### 6.1 Validation Errors (HTTP 400 Bad Request)
+Synchronous validation errors prevent publishing to Kafka:
 
-#### Example: Invalid Latitude
-
-**Request:**
-```http
-POST /request HTTP/1.1
-Content-Type: application/json
-
-{
-  "requestId": "REQ-999",
-  "latitude": 95.0,
-  "longitude": 78.0
-}
-```
-
-**Response (400 Bad Request):**
 ```json
 {
   "status": 400,
@@ -313,43 +238,27 @@ Content-Type: application/json
 }
 ```
 
-#### Example: Missing Request ID
+### 6.2 Broker Unavailability (HTTP 503 Service Unavailable)
+If the Kafka broker is offline or fails to acknowledge within 5 seconds:
 
-**Request:**
-```http
-POST /request HTTP/1.1
-Content-Type: application/json
-
-{
-  "latitude": 17.3850,
-  "longitude": 78.4867
-}
-```
-
-**Response (400 Bad Request):**
 ```json
 {
-  "status": 400,
-  "error": "Bad Request",
-  "message": "requestId must not be null or blank"
+  "status": 503,
+  "error": "Service Unavailable",
+  "message": "Event could not be published; the message broker is temporarily unavailable"
 }
 ```
 
-#### Example: Malformed JSON Syntax
+---
 
-**Request:**
-```http
-POST /ping HTTP/1.1
-Content-Type: application/json
+## 7. Delivery Semantics, Idempotency, and Limitations
 
-{invalid json}
-```
-
-**Response (400 Bad Request):**
-```json
-{
-  "status": 400,
-  "error": "Bad Request",
-  "message": "Malformed or unreadable JSON request body"
-}
-```
+1. **At-Least-Once Delivery:** Kafka ensures at-least-once delivery. Redelivered messages may occur on network partitions or consumer restarts.
+2. **In-Memory Idempotency (Ride Consumer):** `RideRequestConsumer` maintains a bounded in-memory `ConcurrentHashMap` set of processed `requestId`s (up to 10,000 entries). Duplicate requests within the running process are acknowledged without re-matching.
+3. **Restart Limitation:** The in-memory idempotency set does not survive application restarts. Durable, database-backed idempotency is deferred to Phase 5 Step 2.
+4. **Manual Acknowledgment:** `AckMode.MANUAL_IMMEDIATE` is used. Offsets are committed only after successful processing. On failure, the error handler retries twice at 1-second intervals before advancing the offset.
+5. **Local Kafka Startup:**
+   ```bash
+   docker compose up -d kafka
+   mvn spring-boot:run
+   ```

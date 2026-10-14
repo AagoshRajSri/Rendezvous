@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
 
 /**
  * Centralized exception handler mapping domain and validation exceptions
@@ -45,6 +46,16 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleDriverAlreadyExists(DriverAlreadyExistsException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ApiErrorResponse(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage()));
+    }
+
+    @ExceptionHandler(KafkaPublishException.class)
+    public ResponseEntity<ApiErrorResponse> handleKafkaPublishFailure(KafkaPublishException ex) {
+        log.error("Kafka publish failed", ex);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ApiErrorResponse(
+                        HttpStatus.SERVICE_UNAVAILABLE.value(),
+                        "Service Unavailable",
+                        "Event could not be published; the message broker is temporarily unavailable"));
     }
 
     @ExceptionHandler(Exception.class)

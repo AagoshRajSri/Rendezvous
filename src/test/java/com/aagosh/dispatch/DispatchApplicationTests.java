@@ -47,4 +47,16 @@ class DispatchApplicationTests {
         assertNotNull(context.getBean(GlobalExceptionHandler.class),
                 "GlobalExceptionHandler must be a Spring-managed @RestControllerAdvice");
     }
+
+    @Test
+    void driverPingConsumerIsRegisteredInApplicationContext() {
+        assertNotNull(context.getBean(com.aagosh.dispatch.messaging.DriverPingConsumer.class),
+                "DriverPingConsumer must be a Spring-managed @Component");
+    }
+
+    @Test
+    void rideRequestConsumerIsRegisteredInApplicationContext() {
+        assertNotNull(context.getBean(com.aagosh.dispatch.messaging.RideRequestConsumer.class),
+                "RideRequestConsumer must be a Spring-managed @Component");
+    }
 }

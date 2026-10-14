@@ -1,30 +1,41 @@
 # Real-Time Ride Dispatch Matching Engine
 
-A high-performance, concurrency-safe dispatch matching service implemented in Java 17 and Spring Boot. The system models a two-sided mobility platform that ingests high-throughput driver location telemetry, maintains spatial indexes, computes multi-objective dispatch costs, and solves the driver-rider bipartite assignment problem while preventing double-booking races under extreme concurrency.
+A high-performance, concurrency-safe dispatch matching service implemented in Java 17 and Spring Boot. The system models a two-sided mobility platform with asynchronous event ingestion via Apache Kafka for high-throughput driver location telemetry and ride requests, maintains spatial indexes, computes multi-objective dispatch costs, and solves the driver-rider bipartite assignment problem while preventing double-booking races under extreme concurrency.
 
 ---
 
 ## 1. Problem Statement & Architecture
 
-In real-time ride-hailing networks, dispatching rides involves three competing requirements:
-1. **Low Latency & Spatial Indexing:** Finding candidate drivers near a pickup location without full fleet $O(N)$ linear scans.
-2. **Global Assignment Optimality:** Minimizing deadhead travel time and balancing fleet distribution rather than greedily consuming suboptimal drivers.
-3. **Strict Concurrency Safety:** Guaranteeing that under thousands of concurrent dispatch requests, no driver can ever be double-booked to two distinct ride requests (lost-update anomaly), and driver location telemetry updates never overwrite or clear active ride claims.
+In real-time ride-hailing networks, dispatching rides involves four competing requirements:
+1. **Asynchronous High-Throughput Ingestion:** Decoupling HTTP submission from matching computation using Kafka message queues, returning immediate `202 Accepted` receipts to clients.
+2. **Low Latency & Spatial Indexing:** Finding candidate drivers near a pickup location without full fleet $O(N)$ linear scans.
+3. **Global Assignment Optimality:** Minimizing deadhead travel time and balancing fleet distribution rather than greedily consuming suboptimal drivers.
+4. **Strict Concurrency Safety:** Guaranteeing that under thousands of concurrent dispatch requests, no driver can ever be double-booked to two distinct ride requests (lost-update anomaly), and driver location telemetry updates never overwrite or clear active ride claims.
 
 ### System Architecture
 
 ```mermaid
 graph TD
-    subgraph Client["API Clients & Drivers"]
+    subgraph Clients["API Clients & Mobile Drivers"]
         Ping["POST /ping (Telemetry)"]
         Reg["POST /register (Onboard)"]
         Req["POST /request (Ride Match)"]
     end
 
-    subgraph API["REST Layer (Spring Boot Web)"]
-        DC["DriverController"]
-        RC["RideController"]
-        GEH["GlobalExceptionHandler"]
+    subgraph API["REST Producer Layer (Spring Boot Web)"]
+        DC["DriverController (Producer)"]
+        RC["RideController (Producer)"]
+        GEH["GlobalExceptionHandler (HTTP 400/503/500)"]
+    end
+
+    subgraph Kafka["Event Streaming (Apache Kafka)"]
+        TP1["Topic: driver-pings (Key: driverId)"]
+        TP2["Topic: ride-requests (Key: requestId)"]
+    end
+
+    subgraph Messaging["Consumer Layer"]
+        DPC["DriverPingConsumer"]
+        RRC["RideRequestConsumer (In-Memory Idempotency)"]
     end
 
     subgraph Domain["In-Memory Domain & Concurrency"]
@@ -42,11 +53,15 @@ graph TD
     Ping --> DC
     Reg --> DC
     Req --> RC
-    DC --> DR
-    RC --> DR
+    DC -->|Publish| TP1
+    RC -->|Publish| TP2
+    TP1 -->|Consume| DPC
+    TP2 -->|Consume| RRC
+    DPC --> DR
     DR --> DS
-    RC --> AM
-    RC --> GM
+    RRC --> DR
+    RRC --> AM
+    RRC --> GM
     AM --> QT
     AM --> CF
 ```
@@ -58,14 +73,23 @@ graph TD
 - **Java Development Kit (JDK):** Version 17 or higher
 - **Build Tool:** Apache Maven 3.9+ (or the included `./mvnw` / `mvnw.cmd` wrapper)
 - **Spring Boot:** 4.1.1
+- **Apache Kafka:** Local broker or Docker container (see below)
+
+### Local Kafka Startup
+
+To run Kafka locally using KRaft mode:
+
+```bash
+# Start local Kafka broker (port 9092)
+docker compose up -d kafka
+
+# Check service status
+docker compose ps
+```
 
 ### Build & Run
 
 ```bash
-# Clone the repository
-git clone https://github.com/AagoshRajSri/Rendezvous.git
-cd Rendezvous
-
 # Compile and package application
 ./mvnw clean package
 
@@ -75,8 +99,10 @@ cd Rendezvous
 
 ### Running Tests
 
+Unit and integration tests run self-contained without requiring an external Kafka broker:
+
 ```bash
-# Run full regression test suite (232 tests)
+# Run full regression test suite (240 tests)
 ./mvnw clean test
 ```
 
@@ -89,17 +115,20 @@ The project is structured under the root package `com.aagosh.dispatch`:
 ```
 src/main/java/com/aagosh/dispatch/
 ├── DispatchApplication.java            # Spring Boot application bootstrap
-├── api/                                # REST controllers, DTOs, and global exception handling
-│   ├── DriverController.java          # Endpoints for /ping and /register
-│   ├── RideController.java            # Endpoints for /request
-│   ├── DriverPingRequest.java         # Telemetry ingestion payload DTO
-│   ├── DriverPingResponse.java        # Telemetry ingestion response DTO
+├── api/                                # REST controllers (Kafka producers) and DTOs
+│   ├── DriverController.java          # REST producer for /ping and /register (202 Accepted)
+│   ├── RideController.java            # REST producer for /request (202 Accepted)
+│   ├── DriverPingRequest.java         # Driver telemetry payload DTO
+│   ├── DriverPingAcceptedResponse.java# Async 202 response for telemetry
 │   ├── RideRequestDto.java            # Ride match request payload DTO
-│   ├── RideMatchResponse.java         # Ride match assignment response DTO
+│   ├── RideAcceptedResponse.java      # Async 202 response for ride submission
+│   ├── KafkaPublishException.java     # Exception mapped to HTTP 503 on broker failure
 │   ├── ApiErrorResponse.java          # RFC 7807-style error payload DTO
 │   └── GlobalExceptionHandler.java    # @RestControllerAdvice for validation & runtime exceptions
 ├── config/                             # Spring configuration and bean wiring
-│   └── DispatchConfig.java            # Fallback beans for Matcher and DispatchCostConfig
+│   ├── DispatchConfig.java            # Fallback beans for Matcher and DispatchCostConfig
+│   ├── KafkaConfig.java               # KafkaAdmin, ProducerFactory, ConsumerFactory, Topics
+│   └── KafkaTopics.java               # Central constants for topic names
 ├── domain/                             # Core domain entities and concurrency primitives
 │   ├── Driver.java                    # Driver record with ID, GeoPoint, and DriverState
 │   ├── DriverRegistry.java            # Thread-safe in-memory registry (ConcurrentHashMap)
@@ -114,6 +143,9 @@ src/main/java/com/aagosh/dispatch/
 │   ├── DispatchCostFunction.java      # Multi-objective normalized cost calculator
 │   ├── GreedyMatcher.java             # Progressive-radius nearest-neighbor matcher
 │   └── Matcher.java                   # Core matching strategy interface
+├── messaging/                          # Kafka consumers
+│   ├── DriverPingConsumer.java        # Consumes driver-pings, updates DriverRegistry
+│   └── RideRequestConsumer.java       # Consumes ride-requests, matches via Matcher
 └── spatial/                            # Spatial indexing and geometric primitives
     ├── BoundingBox.java               # Coordinate bounding box with intersection logic
     └── QuadTree.java                  # Hierarchical 2D spatial index for proximity pruning
@@ -125,21 +157,23 @@ src/main/java/com/aagosh/dispatch/
 
 ### Flow 1: Driver Ingestion & Telemetry (`POST /ping`)
 1. Client submits driver ID and current GPS coordinates.
-2. In `DriverController`, if the driver exists, `DriverRegistry.updateLocation` performs an atomic CAS update on `AtomicReference<Driver>`.
-3. The coordinate is updated while preserving the authoritative `DriverState` instance (preventing active ride claim resets).
-4. If the driver is new and mode is `AUTO` (default), the driver is registered with `MatchStatus.AVAILABLE`.
+2. `DriverController` synchronously validates coordinates (`[-90, 90]`, `[-180, 180]`).
+3. Payload is published to Kafka topic `driver-pings` using `driverId` as message key (preserving partition affinity).
+4. On durable broker confirmation, HTTP `202 Accepted` is returned. If Kafka fails, HTTP `503 Service Unavailable` is returned.
+5. `DriverPingConsumer` processes the event asynchronously:
+   - Updates coordinates via atomic CAS loop on `AtomicReference<Driver>`.
+   - Strictly preserves the authoritative `DriverState` instance, ensuring that telemetry never resets an active ride claim.
 
 ### Flow 2: Ride Dispatch Matching (`POST /request`)
 1. Client submits pickup location and request ID.
-2. `RideController` queries `DriverRegistry.snapshot()` to snapshot active drivers.
-3. The active `Matcher` (`AuctionMatcher` by default) identifies candidate drivers:
-   - Candidates are indexed into a `QuadTree` spatial index.
-   - Proximity search prunes drivers outside the operational radius.
-   - `DispatchCostFunction` computes normalized composite costs for each (driver, request) pair.
-4. If an assignment is computed, `RideController` invokes `driver.state().tryClaim(requestId)`:
-   - Uses an atomic CAS transition (`AVAILABLE` $\to$ `CLAIMED`).
-   - If the claim succeeds, HTTP `200 OK` is returned with `matched: true`.
-   - If a concurrent request claimed the driver first, the claim returns `false`, aborting the stale assignment and returning HTTP `200 OK` with `matched: false`.
+2. `RideController` synchronously validates input and publishes to `ride-requests` with `requestId` as message key.
+3. On broker confirmation, HTTP `202 Accepted` is returned.
+4. `RideRequestConsumer` receives the event:
+   - Checks the in-memory idempotency set (ignoring duplicate deliveries).
+   - Snapshots registered drivers from `DriverRegistry`.
+   - Invokes the configured `Matcher` (`AuctionMatcher` by default).
+   - If an assignment is computed, claims the driver atomically via `DriverState.tryClaim(requestId)`.
+   - Acknowledges the Kafka offset (`MANUAL_IMMEDIATE`).
 
 ---
 
@@ -170,7 +204,7 @@ $$\text{Total Cost} = w_{\text{eta}} \cdot \text{Normalized ETA} + w_{\text{dens
 
 ---
 
-## 6. Concurrency Architecture & Thread Safety
+## 6. Concurrency Architecture & Delivery Semantics
 
 ### 6.1 Atomic Driver Claiming (CAS)
 In high-demand scenarios, multiple ride requests simultaneously compete for the nearest available driver. The system enforces zero double-booking via `AtomicReference<State>` in `DriverState`:
@@ -191,9 +225,11 @@ When a driver's GPS device pings `/ping`, their location updates in memory:
 - The new `Driver` record reuses the existing `DriverState` reference.
 - **Invariant:** A telemetry ping arriving while a driver is in the `CLAIMED` status **never** resets them back to `AVAILABLE`.
 
-### 6.3 Concurrency Limitations & Out-of-Order Telemetry
-- **No Event-Time Ordering:** In-memory CAS loops commit whichever coordinate arrives last at the HTTP server. If UDP/cellular network packets arrive out-of-order, a stale physical location can overwrite a fresher one. Sequence numbers and Lamport clocks are planned for subsequent milestones.
-- **Single-Node In-Memory State:** Current concurrency safety is guaranteed within a single JVM. Distributed coordination across multi-node clusters requires external distributed locks or partition-keyed event routing.
+### 6.3 Kafka Delivery & Idempotency
+- **At-Least-Once Delivery:** Kafka ensures messages are not lost, but redeliveries can occur on consumer crash or network partitions.
+- **In-Memory Idempotency:** `RideRequestConsumer` maintains a thread-safe bounded `ConcurrentHashMap` set (capped at 10,000 entries) tracking processed `requestId`s. Duplicate events within the running application instance are acknowledged without re-executing matching.
+- **Restart Limitation:** The in-memory idempotency set does not survive application restarts. Persistent, database-backed idempotency is deferred to Phase 5 Step 2.
+- **No Event-Time Ordering:** In-memory CAS loops commit whichever coordinate arrives last. Cellular out-of-order delivery is addressed in subsequent phases via sequence numbers.
 
 ---
 
@@ -211,15 +247,11 @@ curl -X POST http://localhost:8080/register \
   }'
 ```
 
-**Response (`201 Created`):**
+**Response (`202 Accepted`):**
 ```json
 {
   "driverId": "D101",
-  "status": "REGISTERED",
-  "latitude": 17.385044,
-  "longitude": 78.486671,
-  "matchStatus": "AVAILABLE",
-  "message": "Driver registered successfully"
+  "message": "Driver registration accepted and queued for processing"
 }
 ```
 
@@ -236,15 +268,11 @@ curl -X POST http://localhost:8080/ping \
   }'
 ```
 
-**Response (`200 OK`):**
+**Response (`202 Accepted`):**
 ```json
 {
   "driverId": "D101",
-  "status": "UPDATED",
-  "latitude": 17.3892,
-  "longitude": 78.4891,
-  "matchStatus": "AVAILABLE",
-  "message": "Driver location updated successfully"
+  "message": "Driver ping accepted and queued for processing"
 }
 ```
 
@@ -260,17 +288,11 @@ curl -X POST http://localhost:8080/request \
   }'
 ```
 
-**Response (`200 OK`):**
+**Response (`202 Accepted`):**
 ```json
 {
   "requestId": "REQ-789",
-  "matched": true,
-  "driverId": "D101",
-  "driverLatitude": 17.3892,
-  "driverLongitude": 78.4891,
-  "driverStatus": "CLAIMED",
-  "cost": 0.04381,
-  "message": "Driver assigned successfully"
+  "message": "Ride request accepted and queued for matching"
 }
 ```
 
@@ -278,13 +300,13 @@ curl -X POST http://localhost:8080/request \
 
 ## 8. Testing & Verification
 
-The project enforces comprehensive test coverage across unit, spatial, mathematical, concurrency, and REST layers.
+The project enforces comprehensive test coverage across unit, spatial, mathematical, concurrency, and REST/messaging layers.
 
 ```bash
 ./mvnw clean test
 ```
 
-### Verified Test Suite Breakdown (232 Tests, 0 Failures)
+### Verified Test Suite Breakdown (240 Tests, 0 Failures)
 
 | Test Class | Category | Test Count | Scope Verified |
 | :--- | :--- | :---: | :--- |
@@ -298,12 +320,14 @@ The project enforces comprehensive test coverage across unit, spatial, mathemati
 | `DriverStateConcurrencyTest` | Concurrency | 20 | Multi-threaded CAS claims, state preservation during updates |
 | `DriverRegistryTest` | Concurrency | 24 | Concurrent registrations, CAS location updates, snapshot isolation |
 | `GeoPointTest` | Validation | 8 | Latitude/longitude bounds, NaN/infinite rejection, error messages |
-| `RideControllerTest` | REST API | 7 | Endpoints `/request`, HTTP status mapping, 16-thread claim races |
-| `DriverControllerTest` | REST API | 10 | Endpoints `/ping`, `/register`, conflict handling, invalid payload |
-| `AdditionalControllerTest` | REST / Errors | 3 | HTTP 500 error handling, 16-thread Greedy claims, concurrent `/ping` auto-fallback |
+| `DriverControllerTest` | Kafka Producer | 5 | Endpoints `/ping`, `/register`, topic routing, 202 Accepted, 503 error |
+| `RideControllerTest` | Kafka Producer | 5 | Endpoint `/request`, `requestId` key partitioning, 202 Accepted, 503 error |
+| `AdditionalControllerTest` | Controller / Concurrency | 3 | HTTP 500 error handling, 16-thread Greedy claims, concurrent `/ping` auto-fallback |
+| `DriverPingConsumerTest` | Kafka Consumer | 6 | REGISTER/UPDATE/AUTO handling, claim state preservation, duplicate idempotency |
+| `RideRequestConsumerTest` | Kafka Consumer | 6 | Matching delegation, atomic claim verification, in-memory duplicate filter |
 | `DispatchConfigTest` | Spring Boot | 3 | Bean fallback resolution and custom Matcher bean override |
-| `DispatchApplicationTests` | Smoke | 5 | ApplicationContext initialization and @RestController bean discovery |
-| **Total** | | **232** | **100% Passing (0 failures, 0 errors, 0 skipped)** |
+| `DispatchApplicationTests` | Smoke / Context | 7 | ApplicationContext initialization and bean discovery |
+| **Total** | | **240** | **100% Passing (0 failures, 0 errors, 0 skipped)** |
 
 ---
 
@@ -319,13 +343,14 @@ To demonstrate the concrete failure mode of non-atomic state updates, a reproduc
 
 ## 10. Architectural Stubs & Current Limitations
 
-1. **Declared but Unused Infrastructure:** `docker-compose.yml` declares PostgreSQL, Redis, and Kafka containers as architectural blueprints for future persistence, distributed caching, and event streaming. The current service runs completely in-memory and does not connect to these containers.
-2. **Absence of Road Network Routing:** ETA estimates are derived using spherical Haversine straight-line distance at a nominal $60\text{ km/h}$. Turn penalties, one-way streets, and real-time traffic congestion are not modeled.
-3. **Single-Node In-Memory Footprint:** The spatial index and driver registry reside entirely in JVM heap. Scaling across multiple replicas requires distributed spatial indexing (e.g., Uber H3 or Redis GEO) and distributed consensus.
+1. **Declared Architectural Services:** `docker-compose.yml` configures Apache Kafka for asynchronous telemetry and ride event streaming in Phase 5. PostgreSQL and Redis remain blueprint stubs for future milestones (database persistence and distributed caching).
+2. **In-Memory Idempotency Lifecycle:** Bounded to 10,000 entries and single JVM lifecycle. Application restarts do not preserve processed request IDs. Durable persistence is planned for Phase 5 Step 2.
+3. **Absence of Road Network Routing:** ETA estimates are derived using spherical Haversine straight-line distance at a nominal $60\text{ km/h}$. Turn penalties, one-way streets, and real-time traffic congestion are not modeled.
+4. **Single-Node In-Memory Footprint:** The spatial index and driver registry reside entirely in JVM heap. Scaling across multiple replicas requires distributed spatial indexing (e.g., Uber H3 or Redis GEO) and distributed consensus.
 
 ---
 
 ## 11. Reference Documentation
 
-- [REST API Specification](API_DOCUMENTATION.md) — Complete endpoint schemas, parameter matrices, and error response examples.
+- [REST API Specification](API_DOCUMENTATION.md) — Complete endpoint schemas, parameter matrices, error response examples, and Kafka event ingestion details.
 - [Double-Booking Experiment Documentation](docs/double-booking-experiment.md) — In-depth concurrency race condition analysis and atomic CAS verification using Java's `AtomicReference`.

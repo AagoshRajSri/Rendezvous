@@ -1,17 +1,25 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.config.KafkaTopics;
+import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.domain.DriverState;
 import com.aagosh.dispatch.domain.GeoPoint;
 import com.aagosh.dispatch.domain.MatchStatus;
+import com.aagosh.dispatch.domain.RideRequest;
+import com.aagosh.dispatch.matching.CostFunction;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
+import com.aagosh.dispatch.matching.DispatchCostFunction;
 import com.aagosh.dispatch.matching.GreedyMatcher;
-import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.messaging.DriverPingConsumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -33,18 +41,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Additional controller-layer tests covering previously untested paths.
- *
+ * Additional controller and concurrency tests covering:
  * <ul>
  *   <li>HTTP 500 generic exception path in {@link GlobalExceptionHandler}</li>
- *   <li>GreedyMatcher 16-thread claim contention (single driver, one winner)</li>
- *   <li>AUTO-mode concurrent registration storm for the same driver ID</li>
+ *   <li>GreedyMatcher 16-thread claim contention (single driver, exactly one winner)</li>
+ *   <li>DriverPingConsumer AUTO-mode concurrent registration race for the same driver ID</li>
  * </ul>
  */
 class AdditionalControllerTest {
 
     private DriverRegistry driverRegistry;
-    private MockMvc rideMvc;
 
     @BeforeEach
     void setUp() {
@@ -56,14 +62,14 @@ class AdditionalControllerTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("Unhandled runtime exception from Matcher surfaces as HTTP 500")
-    void matcherThrowingRuntimeExceptionReturnsHttp500() throws Exception {
-        Matcher explosiveMatcher = mock(Matcher.class);
-        when(explosiveMatcher.match(any(), any(), any()))
-                .thenThrow(new RuntimeException("Simulated internal failure"));
+    @DisplayName("Unhandled runtime exception surfaces as HTTP 500")
+    @SuppressWarnings("unchecked")
+    void unhandledRuntimeExceptionReturnsHttp500() throws Exception {
+        KafkaTemplate<String, RideRequestDto> explosiveKafka = mock(KafkaTemplate.class);
+        when(explosiveKafka.send(any(), any(), any()))
+                .thenThrow(new NullPointerException("Unexpected runtime null"));
 
-        RideController controller = new RideController(
-                explosiveMatcher, driverRegistry, DispatchCostConfig.DEFAULT);
+        RideController controller = new RideController(explosiveKafka);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -84,34 +90,27 @@ class AdditionalControllerTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("Concurrent /request via GreedyMatcher: exactly one winner for a single driver")
+    @DisplayName("Concurrent matching via GreedyMatcher: exactly one winner for a single driver")
     void greedyMatcherConcurrentRequestsYieldExactlyOneWinner() throws Exception {
         Driver driver = new Driver("D_GREEDY", new GeoPoint(17.3850, 78.4867), new DriverState());
         driverRegistry.register(driver);
 
-        RideController controller = new RideController(
-                new GreedyMatcher(), driverRegistry, DispatchCostConfig.DEFAULT);
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
+        GreedyMatcher matcher = new GreedyMatcher();
+        DispatchCostConfig config = DispatchCostConfig.DEFAULT;
 
         int threads = 16;
         CyclicBarrier barrier = new CyclicBarrier(threads);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
-        List<Future<String>> futures = new ArrayList<>();
+        List<Future<List<Assignment>>> futures = new ArrayList<>();
 
         for (int i = 0; i < threads; i++) {
             final String reqId = "REQ-G-" + i;
             futures.add(pool.submit(() -> {
                 barrier.await();
-                return mvc.perform(post("/request")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(String.format(
-                                        "{\"requestId\":\"%s\",\"latitude\":17.3855,\"longitude\":78.4870}",
-                                        reqId)))
-                        .andReturn()
-                        .getResponse()
-                        .getContentAsString();
+                RideRequest domainReq = new RideRequest(reqId, new GeoPoint(17.3855, 78.4870));
+                List<Driver> snapshot = driverRegistry.snapshot();
+                CostFunction costFn = new DispatchCostFunction(config, List.of(domainReq));
+                return matcher.match(List.of(domainReq), snapshot, costFn);
             }));
         }
 
@@ -120,12 +119,11 @@ class AdditionalControllerTest {
 
         int winners = 0;
         String winningRequestId = null;
-        for (Future<String> f : futures) {
-            String body = f.get();
-            boolean matched = com.jayway.jsonpath.JsonPath.read(body, "$.matched");
-            if (matched) {
+        for (Future<List<Assignment>> f : futures) {
+            List<Assignment> assignments = f.get();
+            if (!assignments.isEmpty()) {
                 winners++;
-                winningRequestId = com.jayway.jsonpath.JsonPath.read(body, "$.requestId");
+                winningRequestId = assignments.get(0).request().id();
             }
         }
 
@@ -142,51 +140,38 @@ class AdditionalControllerTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("Concurrent AUTO /ping for same unregistered driver: exactly 1×201, rest 200")
-    void concurrentAutoRegistrationFallbackForSameDriverId() throws Exception {
-        DriverController controller = new DriverController(driverRegistry);
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
+    @DisplayName("Concurrent AUTO driver ping events for same unregistered driver: safely registers once")
+    void concurrentAutoRegistrationInConsumer() throws Exception {
+        DriverPingConsumer consumer = new DriverPingConsumer(driverRegistry);
+        Acknowledgment ack = mock(Acknowledgment.class);
 
         int threads = 16;
         CyclicBarrier barrier = new CyclicBarrier(threads);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
-        List<Future<Integer>> futures = new ArrayList<>();
+        List<Future<Void>> futures = new ArrayList<>();
 
         for (int i = 0; i < threads; i++) {
             final double lat = 17.3850 + (i * 0.0001);
             futures.add(pool.submit(() -> {
                 barrier.await();
-                return mvc.perform(post("/ping")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(String.format(
-                                        "{\"driverId\":\"D_AUTO_RACE\",\"latitude\":%f,\"longitude\":78.4867}",
-                                        lat)))
-                        .andReturn()
-                        .getResponse()
-                        .getStatus();
+                DriverPingRequest req = new DriverPingRequest("D_AUTO_RACE", lat, 78.4867, PingAction.AUTO);
+                ConsumerRecord<String, DriverPingRequest> record =
+                        new ConsumerRecord<>(KafkaTopics.DRIVER_PINGS, 0, 0, "D_AUTO_RACE", req);
+                consumer.onDriverPing(record, ack);
+                return null;
             }));
         }
 
         pool.shutdown();
         assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS));
 
-        int count201 = 0;
-        int count200 = 0;
-        for (Future<Integer> f : futures) {
-            int status = f.get();
-            if (status == 201) count201++;
-            else if (status == 200) count200++;
+        for (Future<Void> f : futures) {
+            f.get(); // Ensure no exceptions thrown
         }
 
-        assertEquals(1, count201,
-                "Exactly one AUTO request must succeed registration (201)");
-        assertEquals(threads - 1, count200,
-                "All other AUTO requests must fall back to location update (200)");
-
-        // Driver exists exactly once
+        // Driver exists exactly once in registry
         assertTrue(driverRegistry.findById("D_AUTO_RACE").isPresent());
         assertEquals(1, driverRegistry.snapshot().size());
+        assertEquals(MatchStatus.AVAILABLE, driverRegistry.findById("D_AUTO_RACE").get().state().getStatus());
     }
 }

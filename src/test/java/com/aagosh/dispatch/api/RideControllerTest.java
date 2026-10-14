@@ -1,38 +1,27 @@
 package com.aagosh.dispatch.api;
 
-import com.aagosh.dispatch.domain.Assignment;
-import com.aagosh.dispatch.domain.Driver;
-import com.aagosh.dispatch.domain.DriverRegistry;
-import com.aagosh.dispatch.domain.DriverState;
-import com.aagosh.dispatch.domain.GeoPoint;
-import com.aagosh.dispatch.domain.MatchStatus;
-import com.aagosh.dispatch.domain.RideRequest;
-import com.aagosh.dispatch.matching.AuctionMatcher;
-import com.aagosh.dispatch.matching.CostFunction;
-import com.aagosh.dispatch.matching.DispatchCostConfig;
-import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.config.KafkaTopics;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,36 +30,39 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class RideControllerTest {
 
-    private DriverRegistry driverRegistry;
-    private Matcher mockMatcher;
+    private KafkaTemplate<String, RideRequestDto> kafkaTemplate;
     private MockMvc mockMvc;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
-        driverRegistry = new DriverRegistry();
-        mockMatcher = mock(Matcher.class);
-        RideController controller = new RideController(mockMatcher, driverRegistry, DispatchCostConfig.DEFAULT);
+        kafkaTemplate = mock(KafkaTemplate.class);
+        RideController controller = new RideController(kafkaTemplate);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
 
+    private void setupSuccessfulSend() {
+        @SuppressWarnings("unchecked")
+        SendResult<String, RideRequestDto> sendResult = mock(SendResult.class);
+        RecordMetadata metadata = new RecordMetadata(
+                new TopicPartition(KafkaTopics.RIDE_REQUESTS, 0), 0, 0, 0, 0, 0);
+        when(sendResult.getRecordMetadata()).thenReturn(metadata);
+        CompletableFuture<SendResult<String, RideRequestDto>> future =
+                CompletableFuture.completedFuture(sendResult);
+        when(kafkaTemplate.send(eq(KafkaTopics.RIDE_REQUESTS), anyString(), any(RideRequestDto.class)))
+                .thenReturn(future);
+    }
+
     @Test
-    @DisplayName("1. Valid ride request delegates to injected Matcher and returns assignment")
-    void validRideRequestReachesInjectedMatcher() throws Exception {
-        Driver driver = new Driver("D100", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(driver);
-        driver.state().tryClaim("REQ-1");
-
-        RideRequest expectedDomainRequest = new RideRequest("REQ-1", new GeoPoint(17.3860, 78.4870));
-        Assignment assignment = new Assignment(expectedDomainRequest, driver, 0.052);
-
-        when(mockMatcher.match(any(), any(), any()))
-                .thenReturn(List.of(assignment));
+    @DisplayName("1. Valid ride request publishes to ride-requests topic with requestId as key and returns HTTP 202 Accepted")
+    void validRideRequestPublishesToKafka() throws Exception {
+        setupSuccessfulSend();
 
         String requestJson = """
                 {
-                    "requestId": "REQ-1",
+                    "requestId": "REQ-100",
                     "latitude": 17.3860,
                     "longitude": 78.4870
                 }
@@ -79,39 +71,27 @@ class RideControllerTest {
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value("REQ-1"))
-                .andExpect(jsonPath("$.matched").value(true))
-                .andExpect(jsonPath("$.driverId").value("D100"))
-                .andExpect(jsonPath("$.driverLatitude").value(17.3850))
-                .andExpect(jsonPath("$.driverLongitude").value(78.4867))
-                .andExpect(jsonPath("$.driverStatus").value("CLAIMED"))
-                .andExpect(jsonPath("$.cost").value(0.052))
-                .andExpect(jsonPath("$.message").value("Driver assigned successfully"));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.requestId").value("REQ-100"))
+                .andExpect(jsonPath("$.message").value("Ride request accepted and queued for matching"));
 
-        // Verify boundary: Matcher was invoked with the exact domain RideRequest and registered driver snapshot
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<RideRequest>> reqCaptor = ArgumentCaptor.forClass(List.class);
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Driver>> driverCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<RideRequestDto> captor = ArgumentCaptor.forClass(RideRequestDto.class);
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDE_REQUESTS), eq("REQ-100"), captor.capture());
 
-        verify(mockMatcher).match(reqCaptor.capture(), driverCaptor.capture(), any(CostFunction.class));
-
-        assertEquals(1, reqCaptor.getValue().size());
-        assertEquals("REQ-1", reqCaptor.getValue().get(0).id());
-        assertEquals(1, driverCaptor.getValue().size());
-        assertEquals("D100", driverCaptor.getValue().get(0).id());
+        RideRequestDto sent = captor.getValue();
+        assertEquals("REQ-100", sent.resolveId());
+        assertEquals(17.3860, sent.latitude());
+        assertEquals(78.4870, sent.longitude());
     }
 
     @Test
-    @DisplayName("2. No-match outcome returns matched: false with informative message")
-    void noMatchOutcomeReturnsStructuredPayload() throws Exception {
-        when(mockMatcher.match(any(), any(), any()))
-                .thenReturn(List.of());
+    @DisplayName("2. Valid ride request with legacy 'id' field publishes to ride-requests using resolved id")
+    void legacyIdFieldResolvesAndPublishes() throws Exception {
+        setupSuccessfulSend();
 
         String requestJson = """
                 {
-                    "requestId": "REQ-NO-FLEET",
+                    "id": "REQ-LEGACY",
                     "latitude": 17.3860,
                     "longitude": 78.4870
                 }
@@ -120,52 +100,15 @@ class RideControllerTest {
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value("REQ-NO-FLEET"))
-                .andExpect(jsonPath("$.matched").value(false))
-                .andExpect(jsonPath("$.driverId").doesNotExist())
-                .andExpect(jsonPath("$.message").value("No available driver could be matched"));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.requestId").value("REQ-LEGACY"));
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDE_REQUESTS), eq("REQ-LEGACY"), any(RideRequestDto.class));
     }
 
     @Test
-    @DisplayName("3. End-to-end integration: Real AuctionMatcher with real DriverRegistry")
-    void endToEndMatchingWithRealAuctionMatcher() throws Exception {
-        Driver d1 = new Driver("D_REAL", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(d1);
-
-        // Real AuctionMatcher injected
-        RideController realController = new RideController(new AuctionMatcher(), driverRegistry);
-        MockMvc realMvc = MockMvcBuilders.standaloneSetup(realController)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
-
-        String requestJson = """
-                {
-                    "requestId": "REQ-REAL",
-                    "latitude": 17.3860,
-                    "longitude": 78.4870
-                }
-                """;
-
-        realMvc.perform(post("/request")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value("REQ-REAL"))
-                .andExpect(jsonPath("$.matched").value(true))
-                .andExpect(jsonPath("$.driverId").value("D_REAL"))
-                .andExpect(jsonPath("$.driverStatus").value("CLAIMED"))
-                .andExpect(jsonPath("$.cost").isNumber());
-
-        // Verify driver in registry is now CLAIMED by REQ-REAL
-        Driver stored = driverRegistry.findById("D_REAL").orElseThrow();
-        assertEquals(MatchStatus.CLAIMED, stored.state().getStatus());
-        assertEquals("REQ-REAL", stored.state().getClaimedByRequestId());
-    }
-
-    @Test
-    @DisplayName("4. Invalid pickup coordinates reject with HTTP 400 Bad Request")
-    void invalidPickupCoordinatesRejected() throws Exception {
+    @DisplayName("3. Invalid pickup coordinates reject with HTTP 400 Bad Request without publishing")
+    void invalidCoordinatesRejectedWithoutPublishing() throws Exception {
         // Latitude > 90
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -199,11 +142,13 @@ class RideControllerTest {
                                 {"requestId": "R1", "latitude": 17.0, "longitude": -185.0}
                                 """))
                 .andExpect(status().isBadRequest());
+
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
     }
 
     @Test
-    @DisplayName("5. Malformed ride requests reject with HTTP 400 Bad Request")
-    void malformedRideRequestsRejected() throws Exception {
+    @DisplayName("4. Malformed ride requests reject with HTTP 400 Bad Request without publishing")
+    void malformedRideRequestsRejectedWithoutPublishing() throws Exception {
         // Blank requestId
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -213,7 +158,7 @@ class RideControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("requestId must not be null or blank"));
 
-        // Missing requestId
+        // Missing requestId and id
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -235,90 +180,33 @@ class RideControllerTest {
                         .content("not json"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Malformed or unreadable JSON request body"));
+
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
     }
 
     @Test
-    @DisplayName("6. Unclaimed driver assignment from non-compliant matcher is safely rejected with matched: false")
-    void unclaimedDriverAssignmentIsRejected() throws Exception {
-        Driver unclaimedDriver = new Driver("D_UNCLAIMED", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(unclaimedDriver);
+    @DisplayName("5. Kafka publication failure returns HTTP 503 Service Unavailable")
+    void publicationFailureReturnsServiceUnavailable() throws Exception {
+        CompletableFuture<SendResult<String, RideRequestDto>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new TimeoutException("Kafka broker unreachable"));
+        when(kafkaTemplate.send(eq(KafkaTopics.RIDE_REQUESTS), anyString(), any(RideRequestDto.class)))
+                .thenReturn(failedFuture);
 
-        RideRequest domainRequest = new RideRequest("REQ-UNCLAIMED", new GeoPoint(17.3860, 78.4870));
-        // Non-compliant matcher returns an assignment without atomically claiming the driver
-        Assignment bogusAssignment = new Assignment(domainRequest, unclaimedDriver, 0.05);
-
-        when(mockMatcher.match(any(), any(), any()))
-                .thenReturn(List.of(bogusAssignment));
+        String requestJson = """
+                {
+                    "requestId": "REQ-FAIL",
+                    "latitude": 17.3860,
+                    "longitude": 78.4870
+                }
+                """;
 
         mockMvc.perform(post("/request")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"requestId": "REQ-UNCLAIMED", "latitude": 17.3860, "longitude": 78.4870}
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value("REQ-UNCLAIMED"))
-                .andExpect(jsonPath("$.matched").value(false))
-                .andExpect(jsonPath("$.message").value("No available driver could be matched"));
-    }
-
-    @Test
-    @DisplayName("7. Concurrent /request calls competing for a single driver yield exactly one winner")
-    void concurrentRideRequestsCompeteForSingleDriver() throws Exception {
-        Driver driver = new Driver("D_CONCURRENT", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(driver);
-
-        RideController realController = new RideController(new AuctionMatcher(), driverRegistry);
-        MockMvc realMvc = MockMvcBuilders.standaloneSetup(realController)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
-
-        int numThreads = 16;
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CyclicBarrier barrier = new CyclicBarrier(numThreads);
-        List<Future<String>> futures = new ArrayList<>();
-
-        for (int i = 0; i < numThreads; i++) {
-            final String reqId = "REQ-CONC-" + i;
-            futures.add(executor.submit(() -> {
-                barrier.await();
-                return realMvc.perform(post("/request")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(String.format("{\"requestId\":\"%s\",\"latitude\":17.3850,\"longitude\":78.4867}", reqId)))
-                        .andReturn()
-                        .getResponse()
-                        .getContentAsString();
-            }));
-        }
-
-        executor.shutdown();
-        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-
-        int matchedCount = 0;
-        int unmatchedCount = 0;
-        String winningRequestId = null;
-
-        for (Future<String> future : futures) {
-            String responseBody = future.get();
-            boolean matched = com.jayway.jsonpath.JsonPath.read(responseBody, "$.matched");
-            if (matched) {
-                matchedCount++;
-                winningRequestId = com.jayway.jsonpath.JsonPath.read(responseBody, "$.requestId");
-                String driverId = com.jayway.jsonpath.JsonPath.read(responseBody, "$.driverId");
-                assertEquals("D_CONCURRENT", driverId);
-            } else {
-                unmatchedCount++;
-                String msg = com.jayway.jsonpath.JsonPath.read(responseBody, "$.message");
-                assertEquals("No available driver could be matched", msg);
-            }
-        }
-
-        assertEquals(1, matchedCount, "Exactly one request must be matched to the single available driver");
-        assertEquals(numThreads - 1, unmatchedCount, "All other requests must report no-match");
-        assertNotNull(winningRequestId);
-
-        // Verify driver state in registry: driver is CLAIMED by the winning request
-        Driver finalDriver = driverRegistry.findById("D_CONCURRENT").orElseThrow();
-        assertEquals(MatchStatus.CLAIMED, finalDriver.state().getStatus());
-        assertEquals(winningRequestId, finalDriver.state().getClaimedByRequestId());
+                        .content(requestJson))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.error").value("Service Unavailable"))
+                .andExpect(jsonPath("$.message").value(
+                        "Event could not be published; the message broker is temporarily unavailable"));
     }
 }

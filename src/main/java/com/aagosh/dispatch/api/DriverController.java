@@ -1,21 +1,37 @@
 package com.aagosh.dispatch.api;
 
-import com.aagosh.dispatch.domain.Driver;
-import com.aagosh.dispatch.domain.DriverRegistry;
-import com.aagosh.dispatch.domain.DriverState;
-import com.aagosh.dispatch.domain.GeoPoint;
-import com.aagosh.dispatch.domain.MatchStatus;
+import com.aagosh.dispatch.config.KafkaTopics;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Objects;
-import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * REST controller for driver registration and location telemetry.
+ *
+ * <h2>Asynchronous event publication</h2>
+ * <p>Both {@code POST /ping} and {@code POST /register} now publish the validated
+ * {@link DriverPingRequest} to the {@value KafkaTopics#DRIVER_PINGS} Kafka topic after
+ * input validation. The response is <em>HTTP 202 Accepted</em>, indicating that the event
+ * was durably received by the broker. The actual driver registration or location update
+ * is performed asynchronously by {@code DriverPingConsumer}.
+ *
+ * <h2>Synchronous publication acknowledgement</h2>
+ * <p>The controller blocks on the Kafka {@link java.util.concurrent.Future} up to
+ * {@value #SEND_TIMEOUT_SECONDS} seconds. If the broker does not acknowledge within that
+ * window, a {@link KafkaPublishException} is raised, which is mapped to HTTP 503 by
+ * {@link GlobalExceptionHandler}. This ensures the controller never silently absorbs a
+ * failed publish.
  *
  * <h2>Caveat: Chronological ordering</h2>
  * <p>Location telemetry updates have no chronological or event-time ordering guarantee.
@@ -26,105 +42,96 @@ import java.util.Optional;
 @RestController
 public class DriverController {
 
-    private final DriverRegistry driverRegistry;
+    private static final Logger log = LoggerFactory.getLogger(DriverController.class);
+    private static final long SEND_TIMEOUT_SECONDS = 5;
 
-    public DriverController(DriverRegistry driverRegistry) {
-        this.driverRegistry = Objects.requireNonNull(driverRegistry, "driverRegistry");
+    private final KafkaTemplate<String, DriverPingRequest> kafkaTemplate;
+
+    public DriverController(KafkaTemplate<String, DriverPingRequest> kafkaTemplate) {
+        this.kafkaTemplate = Objects.requireNonNull(kafkaTemplate, "kafkaTemplate");
     }
 
     /**
-     * Ingests a driver location ping.
+     * Ingests a driver location ping and publishes it to {@code driver-pings}.
      *
-     * <p>Behavior depends on the optional {@code action} field in the payload:
-     * <ul>
-     *   <li>{@link PingAction#REGISTER}: Attempts registration; returns 409 Conflict if duplicate.</li>
-     *   <li>{@link PingAction#UPDATE}: Attempts location update; returns 404 Not Found if unknown.</li>
-     *   <li>{@link PingAction#AUTO} (or omitted): Registers if new (201 Created), or updates
-     *       location while preserving authoritative {@link DriverState} (200 OK).</li>
-     * </ul>
+     * <p>Validates the payload, then publishes to Kafka. Returns HTTP 202 Accepted on
+     * successful publication, HTTP 400 on validation failure, HTTP 503 if the broker
+     * is unavailable.
+     *
+     * <p>The {@code action} field (AUTO / REGISTER / UPDATE) is forwarded as-is inside
+     * the published event and interpreted by {@code DriverPingConsumer}.
      */
     @PostMapping("/ping")
-    public ResponseEntity<DriverPingResponse> ping(@RequestBody DriverPingRequest request) {
+    public ResponseEntity<DriverPingAcceptedResponse> ping(@RequestBody DriverPingRequest request) {
         if (request == null) {
             throw new InvalidRequestException("Request body must not be null");
         }
         request.validate();
-
-        GeoPoint location = new GeoPoint(request.latitude(), request.longitude());
-        PingAction action = request.resolveAction();
-
-        return switch (action) {
-            case REGISTER -> executeRegistration(request.driverId(), location);
-            case UPDATE -> executeUpdate(request.driverId(), location);
-            case AUTO -> executeAuto(request.driverId(), location);
-        };
+        publish(request.driverId(), request);
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(new DriverPingAcceptedResponse(
+                        request.driverId(),
+                        "Driver ping accepted and queued for processing"));
     }
 
     /**
-     * Explicit driver registration endpoint.
+     * Explicit driver registration: publishes a REGISTER-action ping to {@code driver-pings}.
      *
-     * <p>Registers a driver with an initial location. Returns 201 Created on success,
-     * or 409 Conflict if a driver with the same ID already exists.
+     * <p>Returns HTTP 202 Accepted on successful publication, HTTP 400 on validation
+     * failure, HTTP 503 if the broker is unavailable.
      */
     @PostMapping("/register")
-    public ResponseEntity<DriverPingResponse> register(@RequestBody DriverPingRequest request) {
+    public ResponseEntity<DriverPingAcceptedResponse> register(@RequestBody DriverPingRequest request) {
         if (request == null) {
             throw new InvalidRequestException("Request body must not be null");
         }
         request.validate();
 
-        GeoPoint location = new GeoPoint(request.latitude(), request.longitude());
-        return executeRegistration(request.driverId(), location);
+        // Force REGISTER semantics regardless of what the caller supplied in the action field.
+        DriverPingRequest registerRequest = new DriverPingRequest(
+                request.driverId(),
+                request.latitude(),
+                request.longitude(),
+                PingAction.REGISTER);
+        publish(registerRequest.driverId(), registerRequest);
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(new DriverPingAcceptedResponse(
+                        request.driverId(),
+                        "Driver registration accepted and queued for processing"));
     }
 
-    private ResponseEntity<DriverPingResponse> executeRegistration(String driverId, GeoPoint location) {
-        try {
-            Driver newDriver = new Driver(driverId, location, new DriverState());
-            driverRegistry.register(newDriver);
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new DriverPingResponse(
-                            driverId,
-                            "REGISTERED",
-                            location.latitude(),
-                            location.longitude(),
-                            MatchStatus.AVAILABLE,
-                            "Driver registered successfully"
-                    ));
-        } catch (IllegalStateException ex) {
-            throw new DriverAlreadyExistsException("Driver already registered: " + driverId);
-        }
-    }
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
 
-    private ResponseEntity<DriverPingResponse> executeUpdate(String driverId, GeoPoint location) {
+    /**
+     * Publishes {@code event} to the {@code driver-pings} topic using {@code driverId}
+     * as the message key (ensures partition affinity per driver).
+     *
+     * <p>Blocks until the broker acknowledges the send (up to {@value #SEND_TIMEOUT_SECONDS}
+     * seconds). Throws {@link KafkaPublishException} on timeout or execution failure so
+     * that {@link GlobalExceptionHandler} can map it to HTTP 503.
+     *
+     * @param driverId partition key (driver ID)
+     * @param event    the validated ping payload to publish
+     * @throws KafkaPublishException if the broker does not acknowledge within the timeout
+     */
+    private void publish(String driverId, DriverPingRequest event) {
         try {
-            driverRegistry.updateLocation(driverId, location);
-            Driver updated = driverRegistry.findById(driverId)
-                    .orElseThrow(() -> new DriverNotFoundException("No driver registered with ID: " + driverId));
-            return ResponseEntity.ok(new DriverPingResponse(
+            SendResult<String, DriverPingRequest> result = kafkaTemplate
+                    .send(KafkaTopics.DRIVER_PINGS, driverId, event)
+                    .get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            log.debug("Published driver ping: driverId={}, partition={}, offset={}",
                     driverId,
-                    "UPDATED",
-                    location.latitude(),
-                    location.longitude(),
-                    updated.state().getStatus(),
-                    "Driver location updated successfully"
-            ));
-        } catch (IllegalStateException ex) {
-            throw new DriverNotFoundException("No driver registered with ID: " + driverId);
-        }
-    }
-
-    private ResponseEntity<DriverPingResponse> executeAuto(String driverId, GeoPoint location) {
-        Optional<Driver> existing = driverRegistry.findById(driverId);
-        if (existing.isPresent()) {
-            return executeUpdate(driverId, location);
-        } else {
-            try {
-                return executeRegistration(driverId, location);
-            } catch (DriverAlreadyExistsException ex) {
-                // If a race occurred and another thread registered between findById and register,
-                // fall back to update without resetting state.
-                return executeUpdate(driverId, location);
-            }
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new KafkaPublishException("Kafka send interrupted for driver: " + driverId, e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new KafkaPublishException("Kafka send failed for driver: " + driverId, e);
         }
     }
 }

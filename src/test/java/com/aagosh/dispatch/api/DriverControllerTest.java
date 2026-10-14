@@ -1,48 +1,65 @@
 package com.aagosh.dispatch.api;
 
-import com.aagosh.dispatch.domain.Driver;
-import com.aagosh.dispatch.domain.DriverRegistry;
-import com.aagosh.dispatch.domain.DriverState;
-import com.aagosh.dispatch.domain.GeoPoint;
-import com.aagosh.dispatch.domain.MatchStatus;
+import com.aagosh.dispatch.config.KafkaTopics;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class DriverControllerTest {
 
-    private DriverRegistry driverRegistry;
+    private KafkaTemplate<String, DriverPingRequest> kafkaTemplate;
     private MockMvc mockMvc;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
-        driverRegistry = new DriverRegistry();
-        DriverController controller = new DriverController(driverRegistry);
+        kafkaTemplate = mock(KafkaTemplate.class);
+        DriverController controller = new DriverController(kafkaTemplate);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
 
+    private void setupSuccessfulSend() {
+        @SuppressWarnings("unchecked")
+        SendResult<String, DriverPingRequest> sendResult = mock(SendResult.class);
+        RecordMetadata metadata = new RecordMetadata(
+                new TopicPartition(KafkaTopics.DRIVER_PINGS, 0), 0, 0, 0, 0, 0);
+        when(sendResult.getRecordMetadata()).thenReturn(metadata);
+        CompletableFuture<SendResult<String, DriverPingRequest>> future =
+                CompletableFuture.completedFuture(sendResult);
+        when(kafkaTemplate.send(eq(KafkaTopics.DRIVER_PINGS), anyString(), any(DriverPingRequest.class)))
+                .thenReturn(future);
+    }
+
     @Test
-    @DisplayName("1. POST /ping registers new driver when action is AUTO or omitted")
-    void validDriverRegistrationViaPing() throws Exception {
+    @DisplayName("1. POST /ping publishes valid ping to driver-pings and returns HTTP 202 Accepted")
+    void validDriverPingPublishesToKafka() throws Exception {
+        setupSuccessfulSend();
+
         String json = """
                 {
                     "driverId": "D1",
@@ -54,20 +71,25 @@ class DriverControllerTest {
         mockMvc.perform(post("/ping")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.driverId").value("D1"))
-                .andExpect(jsonPath("$.status").value("REGISTERED"))
-                .andExpect(jsonPath("$.latitude").value(17.3850))
-                .andExpect(jsonPath("$.longitude").value(78.4867))
-                .andExpect(jsonPath("$.matchStatus").value("AVAILABLE"));
+                .andExpect(jsonPath("$.message").value("Driver ping accepted and queued for processing"));
 
-        assertTrue(driverRegistry.findById("D1").isPresent());
-        assertEquals(17.3850, driverRegistry.findById("D1").get().location().latitude());
+        ArgumentCaptor<DriverPingRequest> captor = ArgumentCaptor.forClass(DriverPingRequest.class);
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_PINGS), eq("D1"), captor.capture());
+
+        DriverPingRequest sent = captor.getValue();
+        assertEquals("D1", sent.driverId());
+        assertEquals(17.3850, sent.latitude());
+        assertEquals(78.4867, sent.longitude());
+        assertEquals(PingAction.AUTO, sent.resolveAction());
     }
 
     @Test
-    @DisplayName("2. POST /register explicitly registers driver with HTTP 201 Created")
-    void validDriverRegistrationViaRegisterEndpoint() throws Exception {
+    @DisplayName("2. POST /register forces REGISTER action and publishes to driver-pings returning HTTP 202 Accepted")
+    void validDriverRegistrationPublishesToKafka() throws Exception {
+        setupSuccessfulSend();
+
         String json = """
                 {
                     "driverId": "D_REG",
@@ -79,96 +101,21 @@ class DriverControllerTest {
         mockMvc.perform(post("/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.driverId").value("D_REG"))
-                .andExpect(jsonPath("$.status").value("REGISTERED"))
-                .andExpect(jsonPath("$.matchStatus").value("AVAILABLE"));
+                .andExpect(jsonPath("$.message").value("Driver registration accepted and queued for processing"));
 
-        assertTrue(driverRegistry.findById("D_REG").isPresent());
+        ArgumentCaptor<DriverPingRequest> captor = ArgumentCaptor.forClass(DriverPingRequest.class);
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_PINGS), eq("D_REG"), captor.capture());
+
+        DriverPingRequest sent = captor.getValue();
+        assertEquals("D_REG", sent.driverId());
+        assertEquals(PingAction.REGISTER, sent.action());
     }
 
     @Test
-    @DisplayName("3. POST /ping updates location and preserves existing DriverState and claim")
-    void validLocationUpdatePreservesDriverState() throws Exception {
-        // Register driver and simulate an in-progress dispatch claim
-        Driver initial = new Driver("D_CLAIMED", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(initial);
-        assertTrue(initial.state().tryClaim("REQ-888"));
-        assertEquals(MatchStatus.CLAIMED, initial.state().getStatus());
-
-        String pingJson = """
-                {
-                    "driverId": "D_CLAIMED",
-                    "latitude": 17.3900,
-                    "longitude": 78.4900
-                }
-                """;
-
-        mockMvc.perform(post("/ping")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(pingJson))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.driverId").value("D_CLAIMED"))
-                .andExpect(jsonPath("$.status").value("UPDATED"))
-                .andExpect(jsonPath("$.latitude").value(17.3900))
-                .andExpect(jsonPath("$.longitude").value(78.4900))
-                .andExpect(jsonPath("$.matchStatus").value("CLAIMED"));
-
-        Driver updated = driverRegistry.findById("D_CLAIMED").orElseThrow();
-        assertEquals(17.3900, updated.location().latitude());
-        assertEquals(78.4900, updated.location().longitude());
-        // Crucial guarantee: state object and claim status were preserved across location telemetry
-        assertEquals(MatchStatus.CLAIMED, updated.state().getStatus());
-        assertEquals("REQ-888", updated.state().getClaimedByRequestId());
-    }
-
-    @Test
-    @DisplayName("4. Explicit registration of duplicate driver returns HTTP 409 Conflict")
-    void duplicateRegistrationReturnsConflict() throws Exception {
-        driverRegistry.register(new Driver("D_EXISTS", new GeoPoint(17.0, 78.0), new DriverState()));
-
-        String duplicateJson = """
-                {
-                    "driverId": "D_EXISTS",
-                    "latitude": 17.1,
-                    "longitude": 78.1,
-                    "action": "REGISTER"
-                }
-                """;
-
-        mockMvc.perform(post("/ping")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(duplicateJson))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.status").value(409))
-                .andExpect(jsonPath("$.error").value("Conflict"))
-                .andExpect(jsonPath("$.message").value("Driver already registered: D_EXISTS"));
-    }
-
-    @Test
-    @DisplayName("5. Explicit location update for unknown driver returns HTTP 404 Not Found")
-    void unknownDriverUpdateReturnsNotFound() throws Exception {
-        String updateJson = """
-                {
-                    "driverId": "D_UNKNOWN",
-                    "latitude": 17.1,
-                    "longitude": 78.1,
-                    "action": "UPDATE"
-                }
-                """;
-
-        mockMvc.perform(post("/ping")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateJson))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.error").value("Not Found"))
-                .andExpect(jsonPath("$.message").value("No driver registered with ID: D_UNKNOWN"));
-    }
-
-    @Test
-    @DisplayName("6. Invalid coordinates reject with HTTP 400 Bad Request")
-    void invalidCoordinatesRejected() throws Exception {
+    @DisplayName("3. Invalid coordinates reject with HTTP 400 Bad Request without publishing to Kafka")
+    void invalidCoordinatesRejectedWithoutPublishing() throws Exception {
         // Latitude > 90
         mockMvc.perform(post("/ping")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -202,11 +149,13 @@ class DriverControllerTest {
                                 {"driverId": "D1", "latitude": 17.0, "longitude": -185.0}
                                 """))
                 .andExpect(status().isBadRequest());
+
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
     }
 
     @Test
-    @DisplayName("7. Malformed request input rejects with HTTP 400 Bad Request")
-    void malformedInputRejected() throws Exception {
+    @DisplayName("4. Malformed request input rejects with HTTP 400 Bad Request without publishing")
+    void malformedInputRejectedWithoutPublishing() throws Exception {
         // Blank driverId
         mockMvc.perform(post("/ping")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -238,83 +187,33 @@ class DriverControllerTest {
                         .content("{invalid json}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Malformed or unreadable JSON request body"));
+
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
     }
 
     @Test
-    @DisplayName("8. Concurrent /ping registration calls for the same unregistered driver yield exactly one 201 and remaining 200s")
-    void concurrentPingRegistrationStorm() throws Exception {
-        int numThreads = 16;
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CyclicBarrier barrier = new CyclicBarrier(numThreads);
-        List<Future<Integer>> statusFutures = new ArrayList<>();
+    @DisplayName("5. Kafka publication failure returns HTTP 503 Service Unavailable")
+    void publicationFailureReturnsServiceUnavailable() throws Exception {
+        CompletableFuture<SendResult<String, DriverPingRequest>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new TimeoutException("Kafka broker timeout"));
+        when(kafkaTemplate.send(eq(KafkaTopics.DRIVER_PINGS), anyString(), any(DriverPingRequest.class)))
+                .thenReturn(failedFuture);
 
-        for (int i = 0; i < numThreads; i++) {
-            final double lat = 17.3850 + (i * 0.0001);
-            statusFutures.add(executor.submit(() -> {
-                barrier.await();
-                return mockMvc.perform(post("/ping")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(String.format("{\"driverId\":\"D_STORM\",\"latitude\":%f,\"longitude\":78.4867}", lat)))
-                        .andReturn()
-                        .getResponse()
-                        .getStatus();
-            }));
-        }
+        String json = """
+                {
+                    "driverId": "D_FAIL",
+                    "latitude": 17.3850,
+                    "longitude": 78.4867
+                }
+                """;
 
-        executor.shutdown();
-        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-
-        int count201 = 0;
-        int count200 = 0;
-        for (Future<Integer> f : statusFutures) {
-            int status = f.get();
-            if (status == 201) count201++;
-            else if (status == 200) count200++;
-        }
-
-        assertEquals(1, count201, "Exactly one request must report registration with HTTP 201");
-        assertEquals(numThreads - 1, count200, "All other requests must report location update with HTTP 200");
-
-        // Driver must exist exactly once in the registry
-        assertTrue(driverRegistry.findById("D_STORM").isPresent());
-        assertEquals(1, driverRegistry.snapshot().size());
-    }
-
-    @Test
-    @DisplayName("9. Concurrent /ping updates on an already claimed driver never reset its claim state")
-    void concurrentPingOnClaimedDriverPreservesClaimState() throws Exception {
-        Driver claimedDriver = new Driver("D_PRECLAIMED", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(claimedDriver);
-        assertTrue(claimedDriver.state().tryClaim("JOB-42"));
-
-        int numThreads = 16;
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CyclicBarrier barrier = new CyclicBarrier(numThreads);
-        List<Future<Integer>> statusFutures = new ArrayList<>();
-
-        for (int i = 0; i < numThreads; i++) {
-            final double lat = 17.3850 + (i * 0.0001);
-            statusFutures.add(executor.submit(() -> {
-                barrier.await();
-                return mockMvc.perform(post("/ping")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(String.format("{\"driverId\":\"D_PRECLAIMED\",\"latitude\":%f,\"longitude\":78.4867}", lat)))
-                        .andReturn()
-                        .getResponse()
-                        .getStatus();
-            }));
-        }
-
-        executor.shutdown();
-        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-
-        for (Future<Integer> f : statusFutures) {
-            assertEquals(200, f.get());
-        }
-
-        // Must still be CLAIMED by JOB-42
-        Driver finalDriver = driverRegistry.findById("D_PRECLAIMED").orElseThrow();
-        assertEquals(MatchStatus.CLAIMED, finalDriver.state().getStatus());
-        assertEquals("JOB-42", finalDriver.state().getClaimedByRequestId());
+        mockMvc.perform(post("/ping")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.error").value("Service Unavailable"))
+                .andExpect(jsonPath("$.message").value(
+                        "Event could not be published; the message broker is temporarily unavailable"));
     }
 }

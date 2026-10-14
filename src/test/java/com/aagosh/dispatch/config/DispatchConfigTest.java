@@ -1,6 +1,5 @@
 package com.aagosh.dispatch.config;
 
-import com.aagosh.dispatch.api.RideController;
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverRegistry;
@@ -9,6 +8,7 @@ import com.aagosh.dispatch.matching.AuctionMatcher;
 import com.aagosh.dispatch.matching.CostFunction;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.messaging.RideRequestConsumer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -23,16 +23,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DispatchConfigTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(DispatchConfig.class, DriverRegistry.class, RideController.class);
+            .withUserConfiguration(DispatchConfig.class, DriverRegistry.class, RideRequestConsumer.class);
 
     @Test
     @DisplayName("Default configuration injects AuctionMatcher and default cost config when no custom beans exist")
     void defaultConfigurationInjectsDefaults() {
         contextRunner.run(context -> {
             assertThat(context).hasNotFailed();
-            RideController controller = context.getBean(RideController.class);
-            Matcher injectedMatcher = (Matcher) ReflectionTestUtils.getField(controller, "matcher");
-            DispatchCostConfig injectedCostConfig = (DispatchCostConfig) ReflectionTestUtils.getField(controller, "costConfig");
+            RideRequestConsumer consumer = context.getBean(RideRequestConsumer.class);
+            Matcher injectedMatcher = (Matcher) ReflectionTestUtils.getField(consumer, "matcher");
+            DispatchCostConfig injectedCostConfig = (DispatchCostConfig) ReflectionTestUtils.getField(consumer, "costConfig");
 
             assertThat(injectedMatcher).isInstanceOf(AuctionMatcher.class);
             assertThat(injectedCostConfig).isEqualTo(DispatchCostConfig.DEFAULT);
@@ -44,8 +44,8 @@ class DispatchConfigTest {
     void customMatcherOverridesDefaultWithoutAmbiguity() {
         contextRunner.withUserConfiguration(CustomMatcherConfig.class).run(context -> {
             assertThat(context).hasNotFailed();
-            RideController controller = context.getBean(RideController.class);
-            Matcher injectedMatcher = (Matcher) ReflectionTestUtils.getField(controller, "matcher");
+            RideRequestConsumer consumer = context.getBean(RideRequestConsumer.class);
+            Matcher injectedMatcher = (Matcher) ReflectionTestUtils.getField(consumer, "matcher");
 
             assertThat(injectedMatcher).isInstanceOf(CustomTestMatcher.class);
         });
@@ -56,8 +56,8 @@ class DispatchConfigTest {
     void customCostConfigOverridesDefaultWithoutAmbiguity() {
         contextRunner.withUserConfiguration(CustomCostConfig.class).run(context -> {
             assertThat(context).hasNotFailed();
-            RideController controller = context.getBean(RideController.class);
-            DispatchCostConfig injectedCostConfig = (DispatchCostConfig) ReflectionTestUtils.getField(controller, "costConfig");
+            RideRequestConsumer consumer = context.getBean(RideRequestConsumer.class);
+            DispatchCostConfig injectedCostConfig = (DispatchCostConfig) ReflectionTestUtils.getField(consumer, "costConfig");
 
             assertThat(injectedCostConfig).isNotEqualTo(DispatchCostConfig.DEFAULT);
             assertThat(injectedCostConfig.wEta()).isEqualTo(5.0);
