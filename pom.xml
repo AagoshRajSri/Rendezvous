@@ -188,6 +188,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <classifier>exec</classifier>
+                    <jvmArguments>-Duser.timezone=UTC</jvmArguments>
                 </configuration>
             </plugin>
         </plugins>

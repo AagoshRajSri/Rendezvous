@@ -21,7 +21,7 @@ services:
       POSTGRES_PASSWORD: dispatch_password
       POSTGRES_DB: dispatch_db
     ports:
-      - "5432:5432"
+      - "5434:5432"
 
   # Phase 5 Step 3: Non-authoritative driver location cache (30s TTL, Lua conditional writes)
   redis:
