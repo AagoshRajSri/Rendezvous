@@ -177,3 +177,48 @@
   color: var(--color-text);
   transform: translateY(-1px);
 }
+
+/* ============================================================
+   Selected place pin marker (Phase 7B)
+   ============================================================ */
+.globe-map__pin {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  cursor: default;
+}
+
+/* Teardrop body */
+.globe-map__pin::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 18px;
+  background: var(--color-accent);
+  border-radius: 50% 50% 50% 0;
+  transform: translateX(-50%) rotate(-45deg);
+  box-shadow: 0 0 12px var(--color-accent-glow), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* Pulsing ring */
+.globe-map__pin::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--color-accent);
+  opacity: 0;
+  animation: pin-pulse 2s ease-out infinite;
+}
+
+@keyframes pin-pulse {
+  0%   { transform: translateX(-50%) scale(0.5); opacity: 0.8; }
+  100% { transform: translateX(-50%) scale(2);   opacity: 0; }
+}

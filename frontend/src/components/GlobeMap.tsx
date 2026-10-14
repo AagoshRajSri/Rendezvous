@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { MapReadyState } from '../hooks/useMapReady';
+import type { PlaceSuggestion } from '../types/place';
 import './GlobeMap.css';
+
+// Ensure MapLibre web worker is explicitly resolved by Vite
+maplibregl.setWorkerUrl(maplibreglWorkerUrl);
 
 type MapLibreMap = maplibregl.Map;
 
@@ -30,10 +35,17 @@ const SKY_CONFIG: maplibregl.SkySpecification = {
   ] as maplibregl.ExpressionSpecification,
 };
 
+// ── Camera constants for flyTo ────────────────────────────────────────────────
+const FLY_DURATION_MS = 2500;
+const FIT_BOUNDS_PADDING = 80;
+const FIT_BOUNDS_MAX_ZOOM = 14;
+
 interface GlobeMapProps {
   onLoad: () => void;
   onError: (message: string) => void;
   mapState: MapReadyState;
+  /** When non-null, animates the globe to the selected place. */
+  selectedPlace: PlaceSuggestion | null;
 }
 
 /**
@@ -45,15 +57,18 @@ interface GlobeMapProps {
  *   3. 'error': calls props.onError with a human-readable message.
  *   4. Unmount: destroys the map instance to avoid leaks.
  *
- * No search, no driver markers, no backend calls — all deferred to 7B/7C/7D.
+ * When selectedPlace changes, animates the camera without recreating the map.
+ * A pulsing pin marker marks the selected location.
  */
-export function GlobeMap({ onLoad, onError, mapState }: GlobeMapProps) {
+export function GlobeMap({ onLoad, onError, mapState, selectedPlace }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
 
   // Controls whether the loading overlay is still mounted (fades out after ready)
   const [overlayVisible, setOverlayVisible] = useState(true);
 
+  // ── Map initialisation ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
     if (mapRef.current) return; // already initialised (StrictMode double-invoke guard)
@@ -86,8 +101,6 @@ export function GlobeMap({ onLoad, onError, mapState }: GlobeMapProps) {
 
       // ── Atmospheric sky layer ──────────────────────────────────────────────
       // setSky is available from MapLibre GL JS v4+.
-      // The cast is required because @types/maplibre-gl may not yet include
-      // all v5/v6 sky specification keys.
       map.setSky(SKY_CONFIG);
 
       onLoad();
@@ -108,6 +121,54 @@ export function GlobeMap({ onLoad, onError, mapState }: GlobeMapProps) {
     // onLoad and onError are stable refs from useCallback in useMapReady
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Globe fly-to animation when a place is selected ──────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Remove previous marker
+    if (markerRef.current) {
+      markerRef.current.remove();
+      markerRef.current = null;
+    }
+
+    if (!selectedPlace) return;
+
+    const { lon, lat, bbox } = selectedPlace;
+
+    if (bbox) {
+      // Validated bounding box: [west, south, east, north]
+      map.fitBounds(
+        [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+        {
+          padding: FIT_BOUNDS_PADDING,
+          maxZoom: FIT_BOUNDS_MAX_ZOOM,
+          duration: FLY_DURATION_MS,
+          essential: true,
+        },
+      );
+    } else {
+      // Fall back to flyTo when bbox is absent or invalid
+      map.flyTo({
+        center: [lon, lat],
+        zoom: 12,
+        duration: FLY_DURATION_MS,
+        essential: true,
+      });
+    }
+
+    // Drop a pulsing pin marker at the selected coordinates
+    const markerEl = document.createElement('div');
+    markerEl.className = 'globe-map__pin';
+    markerEl.setAttribute('aria-label', `Selected: ${selectedPlace.name}`);
+
+    const marker = new maplibregl.Marker({ element: markerEl, anchor: 'bottom' })
+      .setLngLat([lon, lat])
+      .addTo(map);
+
+    markerRef.current = marker;
+  }, [selectedPlace]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.
@@ -149,10 +210,6 @@ export function GlobeMap({ onLoad, onError, mapState }: GlobeMapProps) {
             <p className="globe-map__error-body">
               The map could not retrieve its tile data. This is usually a
               network issue or a temporary outage of the tile server.
-              <br /><br />
-              <strong>The database transaction may already have committed</strong>{' '}
-              if this error appears after a trip action — query the trip status
-              directly rather than retrying.
             </p>
 
             {mapState.status === 'error' && mapState.message && (
