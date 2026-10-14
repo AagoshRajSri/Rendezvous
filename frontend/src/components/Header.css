@@ -1,0 +1,119 @@
+/* ============================================================
+   Header — Rendezvous
+   ============================================================ */
+
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  z-index: 100;
+
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+
+  /* Glassmorphism surface */
+  background: rgba(8, 11, 18, 0.72);
+  border-bottom: 1px solid var(--color-border);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+/* ---- Logo mark ---- */
+.header__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--color-accent) 0%, #7b5ef8 100%);
+  box-shadow: 0 0 16px var(--color-accent-glow);
+  flex-shrink: 0;
+}
+
+.header__logo svg {
+  width: 20px;
+  height: 20px;
+  fill: #fff;
+}
+
+/* ---- Brand text ---- */
+.header__brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.header__title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.header__subtitle {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* ---- Right spacer (future actions go here in 7B/7C/7D) ---- */
+.header__spacer {
+  flex: 1;
+}
+
+/* ---- Status chip (shows map state) ---- */
+.header__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  border: 1px solid transparent;
+  transition: all 0.3s var(--ease-out);
+}
+
+.header__status--loading {
+  background: rgba(79, 142, 247, 0.1);
+  border-color: rgba(79, 142, 247, 0.25);
+  color: var(--color-accent);
+}
+
+.header__status--ready {
+  background: rgba(61, 214, 140, 0.1);
+  border-color: rgba(61, 214, 140, 0.25);
+  color: var(--color-success);
+}
+
+.header__status--error {
+  background: var(--color-error-bg);
+  border-color: rgba(247, 92, 92, 0.3);
+  color: var(--color-error);
+}
+
+.header__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.header__status--loading .header__status-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}

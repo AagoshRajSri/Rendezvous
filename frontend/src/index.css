@@ -1,0 +1,85 @@
+/* ============================================================
+   Global design tokens and resets — Rendezvous
+   ============================================================ */
+
+/* ---- Google Font already loaded via index.html link ---- */
+
+:root {
+  /* Palette */
+  --color-bg:          #080b12;
+  --color-surface:     #0e1421;
+  --color-surface-alt: #131b2b;
+  --color-border:      rgba(99, 133, 202, 0.18);
+  --color-accent:      #4f8ef7;
+  --color-accent-glow: rgba(79, 142, 247, 0.25);
+  --color-text:        #e8edf5;
+  --color-text-muted:  #8a9bbf;
+  --color-error:       #f75c5c;
+  --color-error-bg:    rgba(247, 92, 92, 0.12);
+  --color-success:     #3dd68c;
+
+  /* Typography */
+  --font-sans:    'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing */
+  --header-h:     56px;
+  --radius-sm:    6px;
+  --radius-md:    12px;
+  --radius-lg:    20px;
+
+  /* Motion */
+  --ease-out:     cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out:  cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---- Reset ---- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Remove default anchor styles */
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Remove default button styles */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+/* Utility: visually hidden (for accessibility) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

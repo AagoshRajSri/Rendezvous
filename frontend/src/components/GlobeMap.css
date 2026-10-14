@@ -1,0 +1,179 @@
+/* ============================================================
+   GlobeMap — map container + overlay states
+   ============================================================ */
+
+/* ---- Map viewport: fills everything below the header ---- */
+.globe-map {
+  position: fixed;
+  inset: 0;
+  /* Push content below the fixed header */
+  padding-top: var(--header-h);
+}
+
+.globe-map__container {
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+/* MapLibre attribution — keep visible but style to match dark theme */
+.globe-map__container .maplibregl-ctrl-attrib {
+  background: rgba(8, 11, 18, 0.75) !important;
+  color: var(--color-text-muted) !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: 10px !important;
+  backdrop-filter: blur(8px);
+}
+
+.globe-map__container .maplibregl-ctrl-attrib a {
+  color: var(--color-accent) !important;
+}
+
+/* ============================================================
+   Loading overlay
+   ============================================================ */
+.globe-map__overlay {
+  position: absolute;
+  inset: 0;
+  /* Sit above the map canvas, below nothing */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--color-bg);
+  animation: overlay-fade-in 0.3s var(--ease-out);
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* When the map is ready, fade out the overlay */
+.globe-map__overlay--fading {
+  animation: overlay-fade-out 0.6s var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes overlay-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* ---- Spinner ---- */
+.globe-map__spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid rgba(79, 142, 247, 0.15);
+  border-top-color: var(--color-accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Loading label ---- */
+.globe-map__loading-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  letter-spacing: 0.2px;
+}
+
+/* ============================================================
+   Error overlay
+   ============================================================ */
+.globe-map__error {
+  max-width: 400px;
+  padding: 28px 32px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid rgba(247, 92, 92, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(247, 92, 92, 0.1);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.globe-map__error-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-error-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-error);
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.globe-map__error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.globe-map__error-body {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+.globe-map__error-detail {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-error);
+  background: rgba(247, 92, 92, 0.07);
+  border: 1px solid rgba(247, 92, 92, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  width: 100%;
+  word-break: break-all;
+}
+
+.globe-map__error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.globe-map__btn {
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s var(--ease-out);
+  cursor: pointer;
+}
+
+.globe-map__btn--primary {
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  box-shadow: 0 0 16px var(--color-accent-glow);
+}
+
+.globe-map__btn--primary:hover {
+  background: #6ba3ff;
+  box-shadow: 0 0 24px rgba(79, 142, 247, 0.4);
+  transform: translateY(-1px);
+}
+
+.globe-map__btn--secondary {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.globe-map__btn--secondary:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  transform: translateY(-1px);
+}
