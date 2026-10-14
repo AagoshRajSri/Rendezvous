@@ -34,6 +34,32 @@ public final class DriverState {
         return state.compareAndSet(current, claimed);
     }
 
+    /**
+     * Releases a CLAIMED driver back to AVAILABLE, but only if the driver was
+     * claimed by the exact {@code requestId} provided.
+     *
+     * <p>This ownership check ensures that a late compensation call from one
+     * request cannot accidentally free a driver already re-claimed by a
+     * different request.
+     *
+     * @param requestId the request ID that originally claimed this driver
+     * @return {@code true} if the release CAS succeeded; {@code false} if the
+     *         driver was not currently claimed by this request (already released,
+     *         re-claimed, or claimed by someone else)
+     */
+    public boolean releaseClaim(String requestId) {
+        Objects.requireNonNull(requestId, "requestId");
+
+        State current = state.get();
+        if (current.status() != MatchStatus.CLAIMED
+                || !requestId.equals(current.claimedByRequestId())) {
+            return false;
+        }
+
+        State released = new State(MatchStatus.AVAILABLE, null);
+        return state.compareAndSet(current, released);
+    }
+
     public MatchStatus getStatus() {
         return state.get().status();
     }

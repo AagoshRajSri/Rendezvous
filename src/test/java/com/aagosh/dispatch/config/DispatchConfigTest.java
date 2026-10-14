@@ -20,10 +20,14 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
+import org.mockito.Mockito;
+
 class DispatchConfigTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(DispatchConfig.class, DriverRegistry.class, RideRequestConsumer.class);
+            .withUserConfiguration(DispatchConfig.class, DriverRegistry.class, RideRequestConsumer.class)
+            .withBean(AssignmentPersistenceService.class, () -> Mockito.mock(AssignmentPersistenceService.class));
 
     @Test
     @DisplayName("Default configuration injects AuctionMatcher and default cost config when no custom beans exist")

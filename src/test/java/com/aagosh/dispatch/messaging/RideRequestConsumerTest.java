@@ -13,6 +13,9 @@ import com.aagosh.dispatch.matching.AuctionMatcher;
 import com.aagosh.dispatch.matching.CostFunction;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.persistence.AssignmentEntity;
+import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
+import com.aagosh.dispatch.persistence.PersistOutcome;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.kafka.support.Acknowledgment;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,6 +36,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -45,13 +51,23 @@ class RideRequestConsumerTest {
     private DispatchCostConfig costConfig;
     private RideRequestConsumer consumer;
     private Acknowledgment acknowledgment;
+    private AssignmentPersistenceService persistenceService;
 
     @BeforeEach
     void setUp() {
-        driverRegistry = new DriverRegistry();
-        mockMatcher = mock(Matcher.class);
-        costConfig = DispatchCostConfig.DEFAULT;
-        consumer = new RideRequestConsumer(mockMatcher, driverRegistry, costConfig);
+        driverRegistry     = new DriverRegistry();
+        mockMatcher        = mock(Matcher.class);
+        costConfig         = DispatchCostConfig.DEFAULT;
+        persistenceService = mock(AssignmentPersistenceService.class);
+
+        // Default: request is new, persistence succeeds
+        when(persistenceService.getRequestStatus(any())).thenReturn(Optional.empty());
+        doNothing().when(persistenceService).persistMatchedAssignment(any(), any());
+        doNothing().when(persistenceService).persistNoDrivers(any());
+        when(persistenceService.findAssignment(any())).thenReturn(Optional.empty());
+        when(persistenceService.isRequestFinalized(any())).thenReturn(false);
+
+        consumer      = new RideRequestConsumer(mockMatcher, driverRegistry, costConfig, persistenceService);
         acknowledgment = mock(Acknowledgment.class);
     }
 
@@ -129,7 +145,7 @@ class RideRequestConsumerTest {
         driverRegistry.register(d1);
 
         RideRequestConsumer realConsumer = new RideRequestConsumer(
-                new AuctionMatcher(), driverRegistry, costConfig);
+                new AuctionMatcher(), driverRegistry, costConfig, persistenceService);
 
         RideRequestDto dto = new RideRequestDto("REQ-REAL", null, 17.3860, 78.4870);
         realConsumer.onRideRequest(record("REQ-REAL", dto), acknowledgment);
@@ -295,5 +311,128 @@ class RideRequestConsumerTest {
         consumer.markProcessed("REQ-INFLIGHT");
         assertFalse(consumer.isInFlight("REQ-INFLIGHT"));
         assertTrue(consumer.isProcessed("REQ-INFLIGHT"));
+    }
+
+    @Test
+    @DisplayName("11. Durable duplicate with MATCHED status in database is acknowledged without rematching")
+    void durableDuplicateWithMatchedStatusSkipsMatching() {
+        when(persistenceService.getRequestStatus("REQ-DB-MATCHED"))
+                .thenReturn(Optional.of(AssignmentPersistenceService.STATUS_MATCHED));
+
+        RideRequestDto dto = new RideRequestDto("REQ-DB-MATCHED", null, 17.3860, 78.4870);
+        consumer.onRideRequest(record("REQ-DB-MATCHED", dto), acknowledgment);
+
+        verify(mockMatcher, never()).match(any(), any(), any());
+        verify(acknowledgment).acknowledge();
+        assertTrue(consumer.isProcessed("REQ-DB-MATCHED"));
+    }
+
+    @Test
+    @DisplayName("12. Durable duplicate with NO_DRIVERS status in database is acknowledged without rematching")
+    void durableDuplicateWithNoDriversStatusSkipsMatching() {
+        when(persistenceService.getRequestStatus("REQ-DB-NODRIVER"))
+                .thenReturn(Optional.of(AssignmentPersistenceService.STATUS_NO_DRIVERS));
+
+        RideRequestDto dto = new RideRequestDto("REQ-DB-NODRIVER", null, 17.3860, 78.4870);
+        consumer.onRideRequest(record("REQ-DB-NODRIVER", dto), acknowledgment);
+
+        verify(mockMatcher, never()).match(any(), any(), any());
+        verify(acknowledgment).acknowledge();
+        assertTrue(consumer.isProcessed("REQ-DB-NODRIVER"));
+    }
+
+    @Test
+    @DisplayName("13. Assignment persistence failure with confirmed rollback releases driver claim and does not acknowledge")
+    void assignmentPersistenceFailureConfirmedRollbackReleasesClaim() {
+        Driver driver = new Driver("D-FAIL", new GeoPoint(17.3850, 78.4867), new DriverState());
+        driverRegistry.register(driver);
+        driver.state().tryClaim("REQ-PERSIST-FAIL");
+
+        RideRequest domainRequest = new RideRequest("REQ-PERSIST-FAIL", new GeoPoint(17.3860, 78.4870));
+        Assignment assignment = new Assignment(domainRequest, driver, 0.1);
+
+        when(mockMatcher.match(any(), any(), any())).thenReturn(List.of(assignment));
+        doThrow(new RuntimeException("Database error")).when(persistenceService).persistMatchedAssignment(any(), any());
+        // Rollback confirmed: assignment does not exist in DB
+        when(persistenceService.findAssignment("REQ-PERSIST-FAIL")).thenReturn(Optional.empty());
+
+        RideRequestDto dto = new RideRequestDto("REQ-PERSIST-FAIL", null, 17.3860, 78.4870);
+
+        assertThrows(RuntimeException.class, () ->
+                consumer.onRideRequest(record("REQ-PERSIST-FAIL", dto), acknowledgment));
+
+        // Driver claim must be released so driver is available for retry
+        assertEquals(MatchStatus.AVAILABLE, driver.state().getStatus());
+        verify(acknowledgment, never()).acknowledge();
+        assertFalse(consumer.isProcessed("REQ-PERSIST-FAIL"));
+    }
+
+    @Test
+    @DisplayName("14. Assignment persistence failure reconciled as committed acknowledges as idempotent success")
+    void assignmentPersistenceFailureReconciledAsCommittedAcknowledges() {
+        Driver driver = new Driver("D-COMMITTED", new GeoPoint(17.3850, 78.4867), new DriverState());
+        driverRegistry.register(driver);
+        driver.state().tryClaim("REQ-AMBIG");
+
+        RideRequest domainRequest = new RideRequest("REQ-AMBIG", new GeoPoint(17.3860, 78.4870));
+        Assignment assignment = new Assignment(domainRequest, driver, 0.1);
+
+        when(mockMatcher.match(any(), any(), any())).thenReturn(List.of(assignment));
+        // Exception during persistence (e.g. connection timeout after commit)
+        doThrow(new RuntimeException("Connection timeout on ack")).when(persistenceService).persistMatchedAssignment(any(), any());
+        // Reconciliation discovers the row was actually committed with our driver
+        AssignmentEntity committed = new AssignmentEntity("REQ-AMBIG", "D-COMMITTED", 0.1);
+        when(persistenceService.findAssignment("REQ-AMBIG")).thenReturn(Optional.of(committed));
+
+        RideRequestDto dto = new RideRequestDto("REQ-AMBIG", null, 17.3860, 78.4870);
+        consumer.onRideRequest(record("REQ-AMBIG", dto), acknowledgment);
+
+        // Driver claim must NOT be released
+        assertEquals(MatchStatus.CLAIMED, driver.state().getStatus());
+        // Acknowledged as idempotent success
+        verify(acknowledgment).acknowledge();
+        assertTrue(consumer.isProcessed("REQ-AMBIG"));
+    }
+
+    @Test
+    @DisplayName("15. Competing concurrent delivery winning with different driver releases our driver claim")
+    void competingConcurrentDeliveryReleasesOurClaim() {
+        Driver ourDriver = new Driver("D-OURS", new GeoPoint(17.3850, 78.4867), new DriverState());
+        driverRegistry.register(ourDriver);
+        ourDriver.state().tryClaim("REQ-COMPETE");
+
+        RideRequest domainRequest = new RideRequest("REQ-COMPETE", new GeoPoint(17.3860, 78.4870));
+        Assignment assignment = new Assignment(domainRequest, ourDriver, 0.1);
+
+        when(mockMatcher.match(any(), any(), any())).thenReturn(List.of(assignment));
+        doThrow(new RuntimeException("Unique constraint violation")).when(persistenceService).persistMatchedAssignment(any(), any());
+        // Reconciliation discovers another driver won
+        AssignmentEntity otherCommitted = new AssignmentEntity("REQ-COMPETE", "D-COMPETITOR", 0.05);
+        when(persistenceService.findAssignment("REQ-COMPETE")).thenReturn(Optional.of(otherCommitted));
+
+        RideRequestDto dto = new RideRequestDto("REQ-COMPETE", null, 17.3860, 78.4870);
+        consumer.onRideRequest(record("REQ-COMPETE", dto), acknowledgment);
+
+        // Our driver claim must be released so our driver is not leaked
+        assertEquals(MatchStatus.AVAILABLE, ourDriver.state().getStatus());
+        // Kafka offset is acknowledged because the request is durably satisfied
+        verify(acknowledgment).acknowledge();
+        assertTrue(consumer.isProcessed("REQ-COMPETE"));
+    }
+
+    @Test
+    @DisplayName("16. DriverState.releaseClaim cannot release a driver claimed by a different request")
+    void releaseClaimCannotReleaseDifferentRequest() {
+        DriverState state = new DriverState();
+        assertTrue(state.tryClaim("REQ-OWNER"));
+
+        // Wrong request attempt
+        assertFalse(state.releaseClaim("REQ-OTHER"));
+        assertEquals(MatchStatus.CLAIMED, state.getStatus());
+        assertEquals("REQ-OWNER", state.getClaimedByRequestId());
+
+        // Correct request attempt
+        assertTrue(state.releaseClaim("REQ-OWNER"));
+        assertEquals(MatchStatus.AVAILABLE, state.getStatus());
     }
 }

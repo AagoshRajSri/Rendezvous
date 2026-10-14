@@ -7,6 +7,8 @@ import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
+import com.aagosh.dispatch.persistence.PersistOutcome;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
@@ -69,7 +71,10 @@ class KafkaDeserializationErrorHandlingTest {
     void rideRequestConsumerHandlesDeserializationFailureRecord() {
         Matcher mockMatcher = mock(Matcher.class);
         DriverRegistry driverRegistry = new DriverRegistry();
-        RideRequestConsumer consumer = new RideRequestConsumer(mockMatcher, driverRegistry, DispatchCostConfig.DEFAULT);
+        AssignmentPersistenceService persistenceService = mock(AssignmentPersistenceService.class);
+        org.mockito.Mockito.when(persistenceService.persistRequest(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(PersistOutcome.PERSISTED);
+        RideRequestConsumer consumer = new RideRequestConsumer(mockMatcher, driverRegistry, DispatchCostConfig.DEFAULT, persistenceService);
         Acknowledgment ack = mock(Acknowledgment.class);
 
         RecordHeaders headers = new RecordHeaders();

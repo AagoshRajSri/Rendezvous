@@ -1,15 +1,17 @@
 # =============================================================================
 # Architectural Services
 # =============================================================================
-# In Phase 5 Step 1, Kafka is used for asynchronous event ingestion of driver
+# In Phase 5, Kafka is used for asynchronous event ingestion of driver
 # location telemetry and ride requests.
 #
-# PostgreSQL and Redis remain blueprint stubs for future milestones
-# (persistence and distributed caching) and are currently unused.
+# In Phase 5 Step 2, PostgreSQL is active for durable ride request and assignment
+# persistence via Spring Data JPA and Flyway.
+#
+# Redis remains a blueprint stub for future distributed caching / spatial pub-sub.
 # =============================================================================
 
 services:
-  # Declared for future persistent driver and ride storage (currently unused)
+  # Phase 5 Step 2: Durable ride request & assignment storage
   postgres:
     image: postgres:16
     environment:

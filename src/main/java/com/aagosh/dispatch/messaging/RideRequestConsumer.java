@@ -11,6 +11,9 @@ import com.aagosh.dispatch.matching.CostFunction;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.DispatchCostFunction;
 import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.persistence.AssignmentEntity;
+import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
+import com.aagosh.dispatch.persistence.PersistOutcome;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -35,19 +39,22 @@ import java.util.Set;
  * <p>Listens on {@value KafkaTopics#RIDE_REQUESTS}. The consumer group is configured via
  * {@code spring.kafka.consumer.group-id} in {@code application.properties}.
  *
- * <h2>Matching flow</h2>
+ * <h2>Processing flow</h2>
  * <ol>
  *   <li>Deserialize the {@link RideRequestDto} from the Kafka record.</li>
  *   <li>Re-validate to guard against events published outside the REST layer.</li>
- *   <li>Check the in-memory idempotency set (see below).</li>
+ *   <li>Check the in-memory idempotency set (fast path, avoids DB round-trip).</li>
+ *   <li>Persist a {@code PENDING} ride-request row. A duplicate-key outcome means
+ *       the request was previously committed — skip matching.</li>
  *   <li>Build a {@link RideRequest} domain object and take a driver snapshot.</li>
  *   <li>Invoke the configured {@link Matcher} via its {@link Matcher#match} method.</li>
- *   <li>If an assignment is present, verify the driver claim committed via
- *       {@code DriverState.tryClaim()}. Log the outcome.</li>
- *   <li>Mark the request ID as processed and acknowledge the offset.</li>
+ *   <li>If an assignment is present, persist it. On database failure, release the
+ *       in-memory driver claim via {@link com.aagosh.dispatch.domain.DriverState#releaseClaim}.</li>
+ *   <li>If no assignment is found, update the ride-request status to {@code NO_DRIVER}.</li>
+ *   <li>Mark the request ID as processed in the in-memory cache and acknowledge the offset.</li>
  * </ol>
  *
- * <h2>In-memory idempotency (Phase 4)</h2>
+ * <h2>In-memory idempotency</h2>
  * <p>Kafka delivers messages at least once. A redelivered ride-request event could
  * cause the same request to be matched twice, assigning two drivers to one ride or
  * attempting to claim an already-claimed driver for a different request.
@@ -64,10 +71,11 @@ import java.util.Set;
  *       ({@code removeEldestEntry}). Exceeding capacity evicts only the oldest entry,
  *       maintaining unbroken duplicate protection for recent requests.</li>
  *   <li><strong>Failure recovery:</strong> If matching throws an unhandled exception,
- *       {@link #evictIdempotency(String)} removes the ID so that Kafka consumer retries
+ *       {@link #releaseInFlight(String)} removes the ID so that Kafka error handler retries
  *       are not falsely dropped as duplicates.</li>
- *   <li><strong>Limitation:</strong> In-memory state does not survive application restarts.
- *       Durable idempotency requires a database-backed solution, deferred to Phase 5 Step 2.</li>
+ *   <li><strong>Durable idempotency:</strong> The {@link AssignmentPersistenceService}
+ *       persists the ride-request row before matching, providing crash-safe duplicate
+ *       detection via a PostgreSQL UNIQUE constraint on {@code request_id}.</li>
  * </ul>
  *
  * <h2>Acknowledgement</h2>
@@ -75,10 +83,12 @@ import java.util.Set;
  * If the method throws, the error handler in {@code KafkaConfig} retries up to twice
  * before skipping the record.
  *
- * <h2>Claim atomicity</h2>
+ * <h2>Claim atomicity and compensation</h2>
  * <p>Driver claims are performed by the injected {@link Matcher} via
- * {@code DriverState.tryClaim()}. This consumer does not implement separate claiming
- * logic; atomicity is delegated to the Matcher contract.
+ * {@code DriverState.tryClaim()}. If the subsequent database write fails,
+ * {@code DriverState.releaseClaim(requestId)} is called to release the in-memory
+ * claim, returning the driver to AVAILABLE. The method is ownership-safe: it only
+ * releases if the driver is still claimed by exactly this request.
  */
 @Component
 public class RideRequestConsumer {
@@ -96,6 +106,7 @@ public class RideRequestConsumer {
     private final Matcher matcher;
     private final DriverRegistry driverRegistry;
     private final DispatchCostConfig costConfig;
+    private final AssignmentPersistenceService persistenceService;
 
     /**
      * Dedicated monitor lock guarding all accesses to both in-flight and processed request caches.
@@ -124,10 +135,12 @@ public class RideRequestConsumer {
 
     public RideRequestConsumer(Matcher matcher,
                                DriverRegistry driverRegistry,
-                               DispatchCostConfig costConfig) {
-        this.matcher       = Objects.requireNonNull(matcher, "matcher");
-        this.driverRegistry = Objects.requireNonNull(driverRegistry, "driverRegistry");
-        this.costConfig    = Objects.requireNonNull(costConfig, "costConfig");
+                               DispatchCostConfig costConfig,
+                               AssignmentPersistenceService persistenceService) {
+        this.matcher            = Objects.requireNonNull(matcher, "matcher");
+        this.driverRegistry     = Objects.requireNonNull(driverRegistry, "driverRegistry");
+        this.costConfig         = Objects.requireNonNull(costConfig, "costConfig");
+        this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService");
     }
 
     /**
@@ -166,7 +179,7 @@ public class RideRequestConsumer {
             return;
         }
 
-        // ---- Atomic idempotency check and in-flight reservation ----
+        // ---- In-memory idempotency check and in-flight reservation (fast path) ----
         if (!reserveInFlight(requestId)) {
             log.info("Duplicate ride request {} already processed or in-flight; acknowledging without re-matching",
                     requestId);
@@ -174,11 +187,27 @@ public class RideRequestConsumer {
             return;
         }
 
-        // ---- Matching ----
+        // ---- Matching & Persistence Lifecycle ----
         try {
             GeoPoint pickup = new GeoPoint(event.latitude(), event.longitude());
             RideRequest domainRequest = new RideRequest(requestId, pickup);
 
+            // Step 2: Check durable request state before matching
+            Optional<String> durableStatus = persistenceService.getRequestStatus(requestId);
+            if (durableStatus.isPresent()) {
+                String status = durableStatus.get();
+                if (AssignmentPersistenceService.STATUS_MATCHED.equals(status)
+                        || AssignmentPersistenceService.STATUS_NO_DRIVERS.equals(status)
+                        || "NO_DRIVER".equals(status)) {
+                    log.info("Ride request {} already durably finalized with status {}; acknowledging duplicate",
+                            requestId, status);
+                    markProcessed(requestId);
+                    ack.acknowledge();
+                    return;
+                }
+            }
+
+            // Step 4: Driver matching
             List<Driver> drivers = driverRegistry.snapshot();
             CostFunction costFunction = new DispatchCostFunction(costConfig, List.of(domainRequest));
 
@@ -186,24 +215,82 @@ public class RideRequestConsumer {
                     List.of(domainRequest), drivers, costFunction);
 
             if (assignments.isEmpty()) {
-                log.info("No driver available for ride request {}", requestId);
-            } else {
-                Assignment assignment = assignments.get(0);
-                log.info("Ride request {} matched to driver {} (cost={})",
-                        requestId,
-                        assignment.driver().id(),
-                        assignment.cost());
+                // No driver available — record terminal outcome transactionally and acknowledge.
+                try {
+                    persistenceService.persistNoDrivers(domainRequest);
+                } catch (Exception ex) {
+                    if (persistenceService.isRequestFinalized(requestId)) {
+                        log.info("Ride request {} was finalized concurrently; acknowledging duplicate", requestId);
+                        markProcessed(requestId);
+                        ack.acknowledge();
+                        return;
+                    }
+                    releaseInFlight(requestId);
+                    log.error("Failed to persist NO_DRIVERS for request {}: {}", requestId, ex.getMessage(), ex);
+                    throw ex;
+                }
+
+                log.info("No driver available for ride request {}; recorded NO_DRIVERS", requestId);
+                markProcessed(requestId);
+                ack.acknowledge();
+                return;
             }
 
-            // Mark processed only after successful matching / terminal outcome
+            // Step 5: Assignment persistence with driver-claim compensation
+            Assignment assignment = assignments.get(0);
+            Driver matchedDriver = assignment.driver();
+
+            try {
+                persistenceService.persistMatchedAssignment(domainRequest, assignment);
+            } catch (Exception ex) {
+                log.error("Persistence failed for request {} with driver {}: {}",
+                        requestId, matchedDriver.id(), ex.getMessage(), ex);
+
+                // Ambiguous failure reconciliation:
+                // Check if the assignment was actually committed to PostgreSQL despite the exception.
+                Optional<AssignmentEntity> existingAssignment = persistenceService.findAssignment(requestId);
+                if (existingAssignment.isPresent()) {
+                    String persistedDriverId = existingAssignment.get().getDriverId();
+                    if (persistedDriverId.equals(matchedDriver.id())) {
+                        log.info("Assignment for request {} and driver {} committed; acknowledging duplicate",
+                                requestId, matchedDriver.id());
+                    } else {
+                        // Another competing delivery won with a different driver: release our claim!
+                        boolean released = matchedDriver.state().releaseClaim(requestId);
+                        log.info("Request {} already assigned to driver {}; released our claim on driver {} (released={})",
+                                requestId, persistedDriverId, matchedDriver.id(), released);
+                    }
+                    markProcessed(requestId);
+                    ack.acknowledge();
+                    return;
+                }
+
+                // Rollback confirmed: release the driver claim safely with ownership check
+                boolean released = matchedDriver.state().releaseClaim(requestId);
+                log.warn("Released driver claim for driver {} and request {} (claimReleased={})",
+                        matchedDriver.id(), requestId, released);
+
+                releaseInFlight(requestId);
+                throw ex; // Propagate so Kafka error handler / retry can act
+            }
+
+            // Step 6: After confirmed commit, update in-memory idempotency state and acknowledge Kafka
+            log.info("Ride request {} matched to driver {} (cost={}); transaction committed",
+                    requestId,
+                    assignment.driver().id(),
+                    assignment.cost());
             markProcessed(requestId);
             ack.acknowledge();
 
         } catch (Exception ex) {
-            // Processing failed: release in-flight reservation so Kafka error handler retries can re-attempt
+            // Processing failed (non-compensation path): release in-flight reservation so
+            // Kafka error handler retries can re-attempt without false-duplicate suppression.
+            // Note: if releaseInFlight was already called in a compensation branch above,
+            // this call is a no-op (idempotent — the ID is simply absent from the set).
             releaseInFlight(requestId);
             log.error("Failed to process ride request {} at topic={} partition={} offset={} key={}: {}",
-                    requestId, record.topic(), record.partition(), record.offset(), record.key(), ex.getMessage(), ex);
+                    requestId, record.topic(), record.partition(), record.offset(), record.key(),
+                    ex.getMessage(), ex);
             throw ex;
         }
     }

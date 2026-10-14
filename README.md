@@ -75,15 +75,15 @@ graph TD
 - **Spring Boot:** 4.1.1
 - **Apache Kafka:** Local broker or Docker container (see below)
 
-### Local Kafka Startup
+### Local Infrastructure Startup (PostgreSQL & Kafka)
 
-To run Kafka locally using KRaft mode:
+To start PostgreSQL and Kafka locally via Docker Compose:
 
 ```bash
-# Start local Kafka broker (port 9092)
-docker compose up -d kafka
+# Start PostgreSQL (port 5432) and Kafka KRaft broker (port 9092)
+docker compose up -d postgres kafka
 
-# Check service status
+# Check service health
 docker compose ps
 ```
 
@@ -99,12 +99,14 @@ docker compose ps
 
 ### Running Tests
 
-Unit and integration tests run self-contained without requiring an external Kafka broker:
-
 ```bash
-# Run full regression test suite (240 tests)
+# Run unit, concurrency, controller, consumer, and persistence tests (261 tests)
 ./mvnw clean test
+
+# Run PostgreSQL integration tests using Testcontainers (requires Docker)
+./mvnw test -Dtest=AssignmentPersistenceServiceIT
 ```
+*Note: If Docker is unavailable, Testcontainers tests automatically detect its absence (`disabledWithoutDocker = true`) and skip cleanly without failing the build.*
 
 ---
 
@@ -145,10 +147,22 @@ src/main/java/com/aagosh/dispatch/
 │   └── Matcher.java                   # Core matching strategy interface
 ├── messaging/                          # Kafka consumers
 │   ├── DriverPingConsumer.java        # Consumes driver-pings, updates DriverRegistry
-│   └── RideRequestConsumer.java       # Consumes ride-requests, matches via Matcher
+│   └── RideRequestConsumer.java       # Consumes ride-requests, matches & persists atomically
+├── persistence/                        # Durable state & transactional persistence (Phase 5 Step 2)
+│   ├── AssignmentEntity.java          # JPA entity for assignments table
+│   ├── AssignmentPersistenceService.java # Transactional boundary, terminal status & claim reconciliation
+│   ├── AssignmentRepository.java      # Spring Data JPA repository for assignments
+│   ├── PersistOutcome.java            # Outcome enum (PERSISTED, DUPLICATE, FAILURE)
+│   ├── RideRequestEntity.java         # JPA entity for ride_requests table
+│   └── RideRequestRepository.java     # Spring Data JPA repository for ride requests
 └── spatial/                            # Spatial indexing and geometric primitives
     ├── BoundingBox.java               # Coordinate bounding box with intersection logic
     └── QuadTree.java                  # Hierarchical 2D spatial index for proximity pruning
+
+Database Migrations:
+src/main/resources/db/migration/
+├── V1__create_ride_requests.sql        # ride_requests table with UNIQUE(request_id)
+└── V2__create_assignments.sql         # assignments table with UNIQUE(request_id) & FK to ride_requests
 ```
 
 ---
@@ -225,11 +239,39 @@ When a driver's GPS device pings `/ping`, their location updates in memory:
 - The new `Driver` record reuses the existing `DriverState` reference.
 - **Invariant:** A telemetry ping arriving while a driver is in the `CLAIMED` status **never** resets them back to `AVAILABLE`.
 
-### 6.3 Kafka Delivery & Idempotency
-- **At-Least-Once Delivery:** Kafka ensures messages are not lost, but redeliveries can occur on consumer crash or network partitions.
-- **In-Memory Idempotency:** `RideRequestConsumer` maintains a thread-safe bounded `ConcurrentHashMap` set (capped at 10,000 entries) tracking processed `requestId`s. Duplicate events within the running application instance are acknowledged without re-executing matching.
-- **Restart Limitation:** The in-memory idempotency set does not survive application restarts. Persistent, database-backed idempotency is deferred to Phase 5 Step 2.
-- **No Event-Time Ordering:** In-memory CAS loops commit whichever coordinate arrives last. Cellular out-of-order delivery is addressed in subsequent phases via sequence numbers.
+### 6.3 Durable Persistence & Database Idempotency (Phase 5 Step 2)
+In Phase 5 Step 2, the dispatch service pairs in-memory speed with durable PostgreSQL persistence via Spring Data JPA and Flyway versioned migrations:
+- **`ride_requests` Table:** Persists the `request_id` (with a database `UNIQUE` constraint `uq_ride_requests_request_id`), pickup coordinates, durable status (`PENDING`, `MATCHED`, or `NO_DRIVERS`), and audit timestamps.
+- **`assignments` Table:** Persists generated primary key, `request_id` (foreign key to `ride_requests.request_id` and database `UNIQUE` constraint `uq_assignments_request_id`), `driver_id`, assignment `cost`, and `assigned_at` timestamp.
+- **Flyway Authority:** Production schema migrations (`V1__create_ride_requests.sql`, `V2__create_assignments.sql`) own table definitions. Hibernate DDL auto-generation is disabled (`spring.jpa.hibernate.ddl-auto=validate`).
+
+### 6.4 Kafka Redelivery & Two-Tier Idempotency Lifecycle
+1. **Tier 1 (In-Memory Fast Path):** `RideRequestConsumer` reserves incoming `requestId` in `inFlightRequests` monitor set. If already in-flight or in the LRU `processedRequests` cache (10,000 entries), redeliveries immediately acknowledge and exit without re-entering the matching engine.
+2. **Tier 2 (Durable Database State):** Before matching, the consumer inspects PostgreSQL (`AssignmentPersistenceService.getRequestStatus(requestId)`):
+   - If status is `MATCHED`, the persisted assignment is confirmed and the redelivery is acknowledged as an idempotent duplicate.
+   - If status is `NO_DRIVERS`, the terminal outcome is respected and acknowledged without rematching.
+3. **Atomic Finalization:** When matching finds a driver, `persistMatchedAssignment` writes the assignment row and sets the request status to `MATCHED` within a single database transaction. When no driver is found, `persistNoDrivers` writes `NO_DRIVERS` transactionally.
+4. **Acknowledgement Guarantee:** Kafka offset acknowledgement (`ack.acknowledge()`) occurs **strictly after** the database transaction has committed.
+
+### 6.5 What `@Transactional` Does and Does Not Guarantee
+- **What it Guarantees:** ACID atomicity across the PostgreSQL tables. If the assignment write or status update fails, the relational database transaction rolls back completely, leaving no orphan rows or corrupt state.
+- **What it Does NOT Guarantee:** Spring's `@Transactional` proxy governs only relational database connections; it cannot roll back JVM heap memory, thread-local state, or in-memory `DriverState` CAS claims.
+
+### 6.6 The In-Memory / Database Boundary & Claim Compensation
+Because driver claiming occurs via atomic CAS in memory *before* the matching result is persisted to PostgreSQL, a database failure creates an asymmetry where a driver is claimed in memory but unpersisted in the database.
+
+The engine resolves this gap through **Ownership-Safe Driver Claim Compensation**:
+- **Atomic CAS Release:** `DriverState.releaseClaim(requestId)` releases a driver from `CLAIMED` back to `AVAILABLE` only if the driver's current claim is owned by the exact same `requestId`.
+- **Ownership Invariant:** A late compensation attempt from an old or aborted request can **never** release a driver that was subsequently claimed by a different request.
+- **Ambiguous Failure Reconciliation:** If an exception occurs during persistence (such as a network socket timeout on the commit response), the consumer does not blindly release the claim. Instead, it queries PostgreSQL (`findAssignment(requestId)`):
+  - If the assignment committed with our driver, the driver remains claimed and the event is acknowledged as an idempotent duplicate.
+  - If a competing concurrent delivery won with a different driver, our driver's claim is released and the event is acknowledged.
+  - If no assignment exists, rollback is confirmed: the driver claim is released, the in-flight reservation is cleared, and the exception propagates so Kafka's retry policy can act.
+
+### 6.7 Recovery Limitations & Residual Failure Modes
+1. **Abrupt JVM Termination (Kill -9 / Power Failure):** If the JVM crashes after claiming a driver in memory but before PostgreSQL commits, the driver claim is lost from heap upon restart (fleet state rehydrates via incoming telemetry pings). If the JVM crashes after PostgreSQL commit but before Kafka offset acknowledgement, the subsequent Kafka redelivery detects the committed row in PostgreSQL and acknowledges without rematching.
+2. **Multi-Instance Driver Registry Partitioning:** `DriverRegistry` currently maintains an in-memory snapshot per JVM instance. In a multi-node cluster, distributed driver locking or Redis spatial coordination is required to prevent cross-node matching contention.
+3. **Exhausted Kafka Retries:** If transient database outages outlast configured consumer retries, unhandled exceptions route to Spring Kafka's `DefaultErrorHandler`. Production deployments should configure a Dead-Letter Topic (DLT) for manual inspection.
 
 ---
 
@@ -306,7 +348,7 @@ The project enforces comprehensive test coverage across unit, spatial, mathemati
 ./mvnw clean test
 ```
 
-### Verified Test Suite Breakdown (240 Tests, 0 Failures)
+### Verified Test Suite Breakdown (261 Unit Tests Passing + 8 Integration Tests)
 
 | Test Class | Category | Test Count | Scope Verified |
 | :--- | :--- | :---: | :--- |
@@ -324,10 +366,13 @@ The project enforces comprehensive test coverage across unit, spatial, mathemati
 | `RideControllerTest` | Kafka Producer | 5 | Endpoint `/request`, `requestId` key partitioning, 202 Accepted, 503 error |
 | `AdditionalControllerTest` | Controller / Concurrency | 3 | HTTP 500 error handling, 16-thread Greedy claims, concurrent `/ping` auto-fallback |
 | `DriverPingConsumerTest` | Kafka Consumer | 6 | REGISTER/UPDATE/AUTO handling, claim state preservation, duplicate idempotency |
-| `RideRequestConsumerTest` | Kafka Consumer | 6 | Matching delegation, atomic claim verification, in-memory duplicate filter |
+| `KafkaDeserializationErrorHandlingTest` | Kafka Consumer | 4 | Deserialization error handling, malformed payload recovery, header validation |
+| `RideRequestConsumerTest` | Kafka Consumer | 16 | Matching delegation, atomic claim verification, compensation, durable duplicate reconciliation |
+| `AssignmentPersistenceServiceTest` | Persistence / JPA | 7 | Transactional boundaries, status persistence, CAS claim compensation, rollback propagation |
+| `AssignmentPersistenceServiceIT` | Integration / DB | 8 | Testcontainers PostgreSQL integration (auto-skips when Docker is inactive) |
 | `DispatchConfigTest` | Spring Boot | 3 | Bean fallback resolution and custom Matcher bean override |
 | `DispatchApplicationTests` | Smoke / Context | 7 | ApplicationContext initialization and bean discovery |
-| **Total** | | **240** | **100% Passing (0 failures, 0 errors, 0 skipped)** |
+| **Total** | | **269 Tests (261 Unit + 8 IT)** | **100% Passing (269/269 passing, 0 failures, 0 errors, 0 skipped)** |
 
 ---
 
@@ -341,12 +386,13 @@ To demonstrate the concrete failure mode of non-atomic state updates, a reproduc
 
 ---
 
-## 10. Architectural Stubs & Current Limitations
+## 10. Architectural Status & Current Limitations
 
-1. **Declared Architectural Services:** `docker-compose.yml` configures Apache Kafka for asynchronous telemetry and ride event streaming in Phase 5. PostgreSQL and Redis remain blueprint stubs for future milestones (database persistence and distributed caching).
-2. **In-Memory Idempotency Lifecycle:** Bounded to 10,000 entries and single JVM lifecycle. Application restarts do not preserve processed request IDs. Durable persistence is planned for Phase 5 Step 2.
+1. **Declared Architectural Services:** `docker-compose.yml` configures Apache Kafka for messaging and PostgreSQL for durable state and assignment persistence in Phase 5 Step 2. Redis remains a blueprint stub for future distributed caching milestones.
+2. **Two-Tier Idempotency Lifecycle:** Combines fast in-memory LRU filtering (10,000 entries) with durable PostgreSQL queries (`ride_requests` and `assignments` tables). On application restart, durable database state guarantees that already-matched requests or terminal outcomes are never rematched.
 3. **Absence of Road Network Routing:** ETA estimates are derived using spherical Haversine straight-line distance at a nominal $60\text{ km/h}$. Turn penalties, one-way streets, and real-time traffic congestion are not modeled.
 4. **Single-Node In-Memory Footprint:** The spatial index and driver registry reside entirely in JVM heap. Scaling across multiple replicas requires distributed spatial indexing (e.g., Uber H3 or Redis GEO) and distributed consensus.
+5. **Driver Lifecycle Post-Match:** A successfully matched driver transitions to `CLAIMED` in memory and remains claimed until a future trip-completion or driver-availability operation explicitly releases the driver back to `AVAILABLE`.
 
 ---
 

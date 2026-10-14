@@ -4,15 +4,26 @@ import com.aagosh.dispatch.api.DriverController;
 import com.aagosh.dispatch.api.GlobalExceptionHandler;
 import com.aagosh.dispatch.api.RideController;
 import com.aagosh.dispatch.domain.DriverRegistry;
+import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.flyway.enabled=false",
+        "spring.autoconfigure.exclude="
+                + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
+                + "org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration"
+})
 class DispatchApplicationTests {
+
+    @MockitoBean
+    private AssignmentPersistenceService persistenceService;
 
     @Autowired
     private ApplicationContext context;
