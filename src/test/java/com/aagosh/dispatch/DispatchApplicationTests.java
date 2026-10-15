@@ -38,6 +38,9 @@ class DispatchApplicationTests {
     private TripLifecycleService tripLifecycleService;
 
     @MockitoBean
+    private com.aagosh.dispatch.persistence.RideRequestRepository rideRequestRepository;
+
+    @MockitoBean
     private com.aagosh.dispatch.cache.RedisLocationCache redisLocationCache;
 
     @Autowired
@@ -90,5 +93,11 @@ class DispatchApplicationTests {
     void tripControllerIsRegisteredInApplicationContext() {
         assertNotNull(context.getBean(TripController.class),
                 "TripController must be a Spring-managed @RestController");
+    }
+
+    @Test
+    void requestStatusControllerIsRegisteredInApplicationContext() {
+        assertNotNull(context.getBean(com.aagosh.dispatch.api.RequestStatusController.class),
+                "RequestStatusController must be a Spring-managed @RestController");
     }
 }

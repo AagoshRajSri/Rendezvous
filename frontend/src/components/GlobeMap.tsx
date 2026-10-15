@@ -9,6 +9,11 @@ import type { SimulatedDriver } from '../types/driver';
 import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
+// ── Real matched-driver layer constants (Phase 7D) ────────────────────────────
+const MATCHED_DRIVER_SOURCE_ID = 'rendezvous-matched-driver';
+const MATCHED_DRIVER_HALO_LAYER_ID = 'rendezvous-matched-driver-halo';
+const MATCHED_DRIVER_CORE_LAYER_ID = 'rendezvous-matched-driver-core';
+
 // Ensure MapLibre web worker is explicitly resolved by Vite
 maplibregl.setWorkerUrl(maplibreglWorkerUrl);
 
@@ -113,6 +118,52 @@ function ensureDriverLayers(map: MapLibreMap) {
   }
 }
 
+/**
+ * Idempotently registers the real matched-driver GeoJSON source and layers.
+ * Uses amber/gold colors to visually distinguish from simulated drivers.
+ * Safe to call on initial style load and after style reloads.
+ */
+function ensureMatchedDriverLayers(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(MATCHED_DRIVER_SOURCE_ID)) {
+    map.addSource(MATCHED_DRIVER_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  if (!map.getLayer(MATCHED_DRIVER_HALO_LAYER_ID)) {
+    map.addLayer({
+      id: MATCHED_DRIVER_HALO_LAYER_ID,
+      type: 'circle',
+      source: MATCHED_DRIVER_SOURCE_ID,
+      paint: {
+        'circle-radius': 18,
+        'circle-color': '#ffc542', // amber — distinct from simulated fleet
+        'circle-opacity': 0.2,
+        'circle-pitch-alignment': 'map',
+      },
+    });
+  }
+
+  if (!map.getLayer(MATCHED_DRIVER_CORE_LAYER_ID)) {
+    map.addLayer({
+      id: MATCHED_DRIVER_CORE_LAYER_ID,
+      type: 'circle',
+      source: MATCHED_DRIVER_SOURCE_ID,
+      paint: {
+        'circle-radius': 8,
+        'circle-color': '#ffc542',
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#080b12',
+        'circle-opacity': 1.0,
+        'circle-pitch-alignment': 'map',
+      },
+    });
+  }
+}
+
 // ── OpenFreeMap "liberty" style ──────────────────────────────────────────────
 // Free, no API key, OSM data. Attribution is rendered automatically by the
 // MapLibre AttributionControl when the style JSON includes attribution metadata.
@@ -148,8 +199,14 @@ interface GlobeMapProps {
   mapState: MapReadyState;
   /** When non-null, animates the globe to the selected place. */
   selectedPlace: PlaceSuggestion | null;
-  /** Simulated drivers to render on the map. Empty array = no drivers shown. */
+  /** Simulated drivers to render on the map (Phase 7C). Empty array = no drivers shown. */
   drivers?: SimulatedDriver[];
+  /**
+   * Phase 7D — Verified coordinates of the matched driver, if supplied by the backend.
+   * Only rendered when explicitly non-null with valid lat/lon.
+   * Never falls back to pickup coordinates.
+   */
+  matchedDriverLocation?: { lat: number; lon: number } | null;
 }
 
 /**
@@ -171,6 +228,7 @@ export function GlobeMap({
   mapState,
   selectedPlace,
   drivers = [],
+  matchedDriverLocation = null,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -222,6 +280,9 @@ export function GlobeMap({
         const source = map.getSource(DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
         source?.setData(driversToFeatureCollection(driversRef.current));
       }
+
+      // ── Initialize real matched-driver layer idempotently (Phase 7D) ──────
+      ensureMatchedDriverLayers(map);
 
       onLoad();
     });
@@ -305,6 +366,35 @@ export function GlobeMap({
       }
     }
   }, [drivers]);
+
+  // ── Sync real matched-driver marker with GeoJSON source (Phase 7D) ───────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!map.isStyleLoaded()) return;
+    ensureMatchedDriverLayers(map);
+
+    const source = map.getSource(MATCHED_DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+
+    if (matchedDriverLocation) {
+      // Only render when the backend supplies verified coordinates for the matched driver.
+      // Never render at the pickup coordinates.
+      const collection: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          id: 'matched-driver',
+          geometry: { type: 'Point', coordinates: [matchedDriverLocation.lon, matchedDriverLocation.lat] },
+          properties: {},
+        }],
+      };
+      source.setData(collection);
+    } else {
+      source.setData(EMPTY_FEATURE_COLLECTION);
+    }
+  }, [matchedDriverLocation]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.
