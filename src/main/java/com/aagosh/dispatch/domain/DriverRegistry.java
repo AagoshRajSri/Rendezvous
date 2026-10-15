@@ -1,5 +1,6 @@
 package com.aagosh.dispatch.domain;
 
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -251,6 +252,87 @@ public final class DriverRegistry {
             result.add(ref.get());
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Returns an immutable snapshot of drivers whose last-known location is verified and fresh.
+     *
+     * <p>A driver is included only when <em>all</em> of the following hold:
+     * <ol>
+     *   <li>{@code updatedAt > 0L} — a verified, timestamped location fix has been received
+     *       (timestamp-less drivers that arrived only via legacy unversioned pings are excluded).</li>
+     *   <li>{@code updatedAt >= nowMs - stalenessMs} — the location is not older than the
+     *       configured staleness threshold.</li>
+     *   <li>{@code updatedAt <= nowMs + maxFutureSkewMs} — the timestamp is not implausibly
+     *       far in the future (guards against misbehaving or spoofed clients).</li>
+     * </ol>
+     *
+     * <p>This method should be used by the matching pipeline in place of {@link #snapshot()}
+     * to prevent stale or untrusted drivers from being selected for new rides.
+     *
+     * @param config the freshness thresholds to apply; must not be {@code null}
+     * @return an immutable {@link List} of fresh driver snapshots; never {@code null}
+     * @throws NullPointerException if {@code config} is {@code null}
+     */
+    public List<Driver> snapshotFresh(DriverFreshnessConfig config) {
+        Objects.requireNonNull(config, "config");
+
+        long nowMs         = System.currentTimeMillis();
+        long stalenessMs   = config.stalenessSeconds()   * 1_000L;
+        long maxFutureSkewMs = config.maxFutureSkewSeconds() * 1_000L;
+
+        Collection<AtomicReference<Driver>> refs = registry.values();
+        List<Driver> result = new java.util.ArrayList<>(refs.size());
+        for (AtomicReference<Driver> ref : refs) {
+            Driver d = ref.get();
+            long ts = d.updatedAt();
+            if (ts <= 0L) {
+                // No verified timestamp — exclude from production matching.
+                continue;
+            }
+            if (ts < nowMs - stalenessMs) {
+                // Location is older than the staleness threshold.
+                continue;
+            }
+            if (ts > nowMs + maxFutureSkewMs) {
+                // Timestamp is implausibly far in the future.
+                continue;
+            }
+            result.add(d);
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Returns {@code true} if the driver identified by {@code driverId} has a fresh,
+     * verified location according to the supplied {@link DriverFreshnessConfig}.
+     *
+     * <p>Equivalent to checking whether a driver with this ID appears in
+     * {@link #snapshotFresh(DriverFreshnessConfig)}, but without building the full list.
+     *
+     * @param driverId the driver ID; must not be {@code null} or blank
+     * @param config   the freshness thresholds to apply; must not be {@code null}
+     * @return {@code true} if the driver exists and has a fresh, verified location
+     * @throws IllegalArgumentException if {@code driverId} is {@code null} or blank
+     * @throws NullPointerException     if {@code config} is {@code null}
+     */
+    public boolean isFresh(String driverId, DriverFreshnessConfig config) {
+        requireNonBlank(driverId, "driverId");
+        Objects.requireNonNull(config, "config");
+
+        AtomicReference<Driver> ref = registry.get(driverId);
+        if (ref == null) {
+            return false;
+        }
+        Driver d = ref.get();
+        long ts  = d.updatedAt();
+        if (ts <= 0L) {
+            return false;
+        }
+        long nowMs           = System.currentTimeMillis();
+        long stalenessMs     = config.stalenessSeconds()      * 1_000L;
+        long maxFutureSkewMs = config.maxFutureSkewSeconds()  * 1_000L;
+        return ts >= nowMs - stalenessMs && ts <= nowMs + maxFutureSkewMs;
     }
 
     // -------------------------------------------------------------------------

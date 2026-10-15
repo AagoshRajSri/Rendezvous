@@ -1,6 +1,7 @@
 package com.aagosh.dispatch.messaging;
 
 import com.aagosh.dispatch.api.RideRequestDto;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
@@ -67,7 +68,7 @@ class RideRequestConsumerTest {
         when(persistenceService.findAssignment(any())).thenReturn(Optional.empty());
         when(persistenceService.isRequestFinalized(any())).thenReturn(false);
 
-        consumer      = new RideRequestConsumer(mockMatcher, driverRegistry, costConfig, persistenceService);
+        consumer      = new RideRequestConsumer(mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig, persistenceService);
         acknowledgment = mock(Acknowledgment.class);
     }
 
@@ -75,11 +76,21 @@ class RideRequestConsumerTest {
         return new ConsumerRecord<>(KafkaTopics.RIDE_REQUESTS, 0, 200L, key, value);
     }
 
+    /**
+     * Registers a driver with a fresh timestamp so {@code snapshotFresh} includes it.
+     * Without a positive, recent timestamp the driver would be excluded from production matching.
+     */
+    private Driver freshDriver(String id, double lat, double lon) {
+        long nowMs = System.currentTimeMillis();
+        Driver d = new Driver(id, new GeoPoint(lat, lon), new DriverState(), nowMs);
+        driverRegistry.register(d);
+        return d;
+    }
+
     @Test
     @DisplayName("1. Valid ride request delegates to injected Matcher with domain RideRequest and driver snapshot")
     void validRideRequestDelegatesToMatcher() {
-        Driver driver = new Driver("D100", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(driver);
+        Driver driver = freshDriver("D100", 17.3850, 78.4867);
         driver.state().tryClaim("REQ-1");
 
         RideRequest domainRequest = new RideRequest("REQ-1", new GeoPoint(17.3860, 78.4870));
@@ -141,11 +152,10 @@ class RideRequestConsumerTest {
     @Test
     @DisplayName("4. End-to-end matching with real AuctionMatcher commits driver claim in registry")
     void endToEndMatchingWithRealAuctionMatcher() {
-        Driver d1 = new Driver("D_REAL", new GeoPoint(17.3850, 78.4867), new DriverState());
-        driverRegistry.register(d1);
+        Driver d1 = freshDriver("D_REAL", 17.3850, 78.4867);
 
         RideRequestConsumer realConsumer = new RideRequestConsumer(
-                new AuctionMatcher(), driverRegistry, costConfig, persistenceService);
+                new AuctionMatcher(), driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig, persistenceService);
 
         RideRequestDto dto = new RideRequestDto("REQ-REAL", null, 17.3860, 78.4870);
         realConsumer.onRideRequest(record("REQ-REAL", dto), acknowledgment);

@@ -1,17 +1,26 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.cache.RedisLocationCache;
+import com.aagosh.dispatch.cache.RedisLocationCache.LocationResult;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
+import com.aagosh.dispatch.domain.Driver;
+import com.aagosh.dispatch.domain.DriverRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -46,9 +55,18 @@ public class DriverController {
     private static final long SEND_TIMEOUT_SECONDS = 5;
 
     private final KafkaTemplate<String, DriverPingRequest> kafkaTemplate;
+    private final DriverRegistry driverRegistry;
+    private final RedisLocationCache redisLocationCache;
+    private final DriverFreshnessConfig freshnessConfig;
 
-    public DriverController(KafkaTemplate<String, DriverPingRequest> kafkaTemplate) {
-        this.kafkaTemplate = Objects.requireNonNull(kafkaTemplate, "kafkaTemplate");
+    public DriverController(KafkaTemplate<String, DriverPingRequest> kafkaTemplate,
+                            DriverRegistry driverRegistry,
+                            RedisLocationCache redisLocationCache,
+                            DriverFreshnessConfig freshnessConfig) {
+        this.kafkaTemplate      = Objects.requireNonNull(kafkaTemplate,      "kafkaTemplate");
+        this.driverRegistry     = Objects.requireNonNull(driverRegistry,     "driverRegistry");
+        this.redisLocationCache = Objects.requireNonNull(redisLocationCache, "redisLocationCache");
+        this.freshnessConfig    = Objects.requireNonNull(freshnessConfig,    "freshnessConfig");
     }
 
     /**
@@ -102,6 +120,122 @@ public class DriverController {
                 .body(new DriverPingAcceptedResponse(
                         request.driverId(),
                         "Driver registration accepted and queued for processing"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Location query
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the last-known location of a registered driver.
+     *
+     * <p>The in-memory {@link DriverRegistry} is the authoritative source.
+     * Coordinates are never fabricated: if no verified location exists the response
+     * has {@code fresh == false} and {@code latitude}/{@code longitude} are {@code null}.
+     *
+     * <p>HTTP status:
+     * <ul>
+     *   <li>200 – driver known and location is fresh.</li>
+     *   <li>404 – driver not registered.</li>
+     *   <li>409 – driver registered but location is stale, absent, or unverified.</li>
+     * </ul>
+     *
+     * <p>Compatible URL aliases:
+     * <ul>
+     *   <li>{@code GET /drivers/{driverId}/location}</li>
+     *   <li>{@code GET /api/drivers/{driverId}/location} (registered in RequestStatusController)</li>
+     * </ul>
+     */
+    @GetMapping({"/drivers/{driverId}/location"})
+    public ResponseEntity<?> getDriverLocation(
+            @PathVariable("driverId") String driverId) {
+
+        if (driverId == null || driverId.isBlank()) {
+            throw new InvalidRequestException("driverId must not be null or blank");
+        }
+
+        // 1. Query Redis location cache
+        LocationResult redisResult = redisLocationCache.getLocation(driverId);
+
+        if (redisResult instanceof LocationResult.Found found) {
+            long ts = found.updatedAt();
+            long nowMs = System.currentTimeMillis();
+            long stalenessMs = freshnessConfig.stalenessSeconds() * 1000L;
+            long maxFutureSkewMs = freshnessConfig.maxFutureSkewSeconds() * 1000L;
+            boolean fresh = (ts > 0L) && (ts >= nowMs - stalenessMs) && (ts <= nowMs + maxFutureSkewMs);
+
+            DriverLocationResponse body = new DriverLocationResponse(
+                    driverId,
+                    found.location().latitude(),
+                    found.location().longitude(),
+                    Instant.ofEpochMilli(ts),
+                    fresh);
+
+            log.debug("Redis location hit: driverId={} fresh={} ts={}", driverId, fresh, ts);
+            HttpStatus status = fresh ? HttpStatus.OK : HttpStatus.CONFLICT;
+            return ResponseEntity.status(status).body(body);
+        }
+
+        if (redisResult instanceof LocationResult.Miss) {
+            // 2. Cache miss: explicit in-memory fallback to DriverRegistry
+            Optional<Driver> driverOpt = driverRegistry.findById(driverId);
+            if (driverOpt.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(new ApiErrorResponse(
+                                HttpStatus.NOT_FOUND.value(),
+                                "Not Found",
+                                "No driver registered with id: " + driverId));
+            }
+
+            Driver driver = driverOpt.get();
+            long   ts     = driver.updatedAt();
+            boolean fresh = driverRegistry.isFresh(driverId, freshnessConfig);
+
+            Double  lat = (ts > 0L) ? driver.location().latitude()  : null;
+            Double  lon = (ts > 0L) ? driver.location().longitude() : null;
+            Instant updatedAt = (ts > 0L) ? Instant.ofEpochMilli(ts) : null;
+
+            DriverLocationResponse body = new DriverLocationResponse(
+                    driverId, lat, lon, updatedAt, fresh);
+
+            log.debug("Fallback in-memory location (miss): driverId={} fresh={} ts={}", driverId, fresh, ts);
+            HttpStatus status = fresh ? HttpStatus.OK : HttpStatus.CONFLICT;
+            return ResponseEntity.status(status).body(body);
+        }
+
+        if (redisResult instanceof LocationResult.RedisError error) {
+            // 3. Redis infrastructure failure: do NOT report as ordinary missing driver (404)!
+            // Fall back to authoritative in-memory registry if the driver is known
+            Optional<Driver> driverOpt = driverRegistry.findById(driverId);
+            if (driverOpt.isPresent()) {
+                Driver driver = driverOpt.get();
+                long   ts     = driver.updatedAt();
+                boolean fresh = driverRegistry.isFresh(driverId, freshnessConfig);
+
+                Double  lat = (ts > 0L) ? driver.location().latitude()  : null;
+                Double  lon = (ts > 0L) ? driver.location().longitude() : null;
+                Instant updatedAt = (ts > 0L) ? Instant.ofEpochMilli(ts) : null;
+
+                DriverLocationResponse body = new DriverLocationResponse(
+                        driverId, lat, lon, updatedAt, fresh);
+
+                log.warn("Fallback in-memory location during Redis error ({}) for driverId={}",
+                        error.message(), driverId);
+                HttpStatus status = fresh ? HttpStatus.OK : HttpStatus.CONFLICT;
+                return ResponseEntity.status(status).body(body);
+            }
+
+            // Driver is NOT known in memory either: report 503 Service Unavailable, NEVER 404!
+            log.warn("Redis location query failed and driver not in memory: driverId={} error={}",
+                    driverId, error.message());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(new ApiErrorResponse(
+                            HttpStatus.SERVICE_UNAVAILABLE.value(),
+                            "Service Unavailable",
+                            "Driver location cache is temporarily unavailable: " + error.message()));
+        }
+
+        throw new IllegalStateException("Unhandled LocationResult variant: " + redisResult);
     }
 
     // -------------------------------------------------------------------------

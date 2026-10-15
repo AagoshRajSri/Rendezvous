@@ -1,5 +1,8 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
+import com.aagosh.dispatch.domain.Driver;
+import com.aagosh.dispatch.domain.DriverRegistry;
 import com.aagosh.dispatch.persistence.AssignmentEntity;
 import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
 import com.aagosh.dispatch.persistence.RideRequestEntity;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -51,15 +55,21 @@ public class RequestStatusController {
     private final AssignmentPersistenceService assignmentPersistenceService;
     private final RideController rideController;
     private final DriverController driverController;
+    private final DriverRegistry driverRegistry;
+    private final DriverFreshnessConfig freshnessConfig;
 
     public RequestStatusController(RideRequestRepository rideRequestRepository,
                                    AssignmentPersistenceService assignmentPersistenceService,
                                    RideController rideController,
-                                   DriverController driverController) {
+                                   DriverController driverController,
+                                   DriverRegistry driverRegistry,
+                                   DriverFreshnessConfig freshnessConfig) {
         this.rideRequestRepository        = Objects.requireNonNull(rideRequestRepository, "rideRequestRepository");
         this.assignmentPersistenceService = Objects.requireNonNull(assignmentPersistenceService, "assignmentPersistenceService");
         this.rideController               = Objects.requireNonNull(rideController, "rideController");
         this.driverController             = Objects.requireNonNull(driverController, "driverController");
+        this.driverRegistry               = Objects.requireNonNull(driverRegistry, "driverRegistry");
+        this.freshnessConfig              = Objects.requireNonNull(freshnessConfig, "freshnessConfig");
     }
 
     // -------------------------------------------------------------------------
@@ -92,20 +102,51 @@ public class RequestStatusController {
 
         // Populate driverId only when MATCHED (from the assignments table)
         String driverId = null;
+        Double driverLat = null;
+        Double driverLon = null;
+        Instant driverLocationAt = null;
+
         if (AssignmentPersistenceService.STATUS_MATCHED.equals(entity.getStatus())) {
             driverId = assignmentPersistenceService.findAssignment(requestId)
                     .map(AssignmentEntity::getDriverId)
                     .orElse(null);
+
+            // Attempt to attach last-known telemetry for the matched driver.
+            // Per mandatory correction #6: a location lookup failure must NOT undo
+            // or misrepresent the already-persisted match. If anything goes wrong
+            // the match record is still returned correctly, with null telemetry.
+            if (driverId != null) {
+                try {
+                    Optional<Driver> driverOpt = driverRegistry.findById(driverId);
+                    if (driverOpt.isPresent()) {
+                        Driver d  = driverOpt.get();
+                        long   ts = d.updatedAt();
+                        if (ts > 0L && driverRegistry.isFresh(driverId, freshnessConfig)) {
+                            driverLat       = d.location().latitude();
+                            driverLon       = d.location().longitude();
+                            driverLocationAt = Instant.ofEpochMilli(ts);
+                        }
+                    }
+                } catch (Exception ex) {
+                    // Location lookup failure must not affect match reporting.
+                    log.warn("Failed to read driver location for driverId={} during status query: {}",
+                            driverId, ex.getMessage());
+                }
+            }
         }
 
-        log.debug("Status query: requestId={} status={} driverId={}", requestId, entity.getStatus(), driverId);
+        log.debug("Status query: requestId={} status={} driverId={} hasTelemetry={}",
+                requestId, entity.getStatus(), driverId, driverLat != null);
 
         return ResponseEntity.ok(new RequestStatusResponse(
                 entity.getRequestId(),
                 entity.getStatus(),
                 driverId,
                 entity.getReceivedAt(),
-                entity.getUpdatedAt()
+                entity.getUpdatedAt(),
+                driverLat,
+                driverLon,
+                driverLocationAt
         ));
     }
 
@@ -127,5 +168,15 @@ public class RequestStatusController {
     @PostMapping("/register")
     public ResponseEntity<DriverPingAcceptedResponse> registerAlias(@RequestBody DriverPingRequest request) {
         return driverController.register(request);
+    }
+
+    /**
+     * Alias for {@code GET /drivers/{driverId}/location}.
+     * Delegates to {@link DriverController#getDriverLocation}.
+     */
+    @GetMapping("/drivers/{driverId}/location")
+    public ResponseEntity<?> driverLocationAlias(
+            @PathVariable("driverId") String driverId) {
+        return driverController.getDriverLocation(driverId);
     }
 }

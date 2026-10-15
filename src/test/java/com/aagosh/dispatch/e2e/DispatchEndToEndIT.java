@@ -358,12 +358,13 @@ class DispatchEndToEndIT {
         String requestId = "E2E-REQ-S3";
 
         // Register a driver first and wait for it to appear in the registry
+        long capturedAt = System.currentTimeMillis();
         mockMvc.perform(post("/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"driverId":"%s","latitude":17.385,"longitude":78.486,
-                     "action":"REGISTER","capturedAt":1000}
-                    """.formatted(driverId)))
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, capturedAt)))
                 .andExpect(status().isAccepted());
 
         await().atMost(Duration.ofSeconds(10))
@@ -444,12 +445,13 @@ class DispatchEndToEndIT {
         String requestId = "E2E-REQ-S5";
 
         // Register driver
+        long capturedAt = System.currentTimeMillis();
         mockMvc.perform(post("/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"driverId":"%s","latitude":17.385,"longitude":78.486,
-                     "action":"REGISTER","capturedAt":2000}
-                    """.formatted(driverId)))
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, capturedAt)))
                 .andExpect(status().isAccepted());
 
         await().atMost(Duration.ofSeconds(10))
@@ -504,12 +506,13 @@ class DispatchEndToEndIT {
         String requestId = "E2E-REQ-S6-DUP";
 
         // Register driver
+        long capturedAt = System.currentTimeMillis();
         mockMvc.perform(post("/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"driverId":"%s","latitude":17.385,"longitude":78.486,
-                     "action":"REGISTER","capturedAt":2500}
-                    """.formatted(driverId)))
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, capturedAt)))
                 .andExpect(status().isAccepted());
 
         await().atMost(Duration.ofSeconds(10))
@@ -589,12 +592,13 @@ class DispatchEndToEndIT {
         String requestB = "E2E-REQ-S7B";
 
         // Register exactly one driver
+        long capturedAt = System.currentTimeMillis();
         mockMvc.perform(post("/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"driverId":"%s","latitude":17.385,"longitude":78.486,
-                     "action":"REGISTER","capturedAt":3000}
-                    """.formatted(driverId)))
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, capturedAt)))
                 .andExpect(status().isAccepted());
 
         await().atMost(Duration.ofSeconds(10))
@@ -679,12 +683,13 @@ class DispatchEndToEndIT {
                       .exec();
         try {
             // Register driver — must succeed despite Redis being paused
+            long capturedAt = System.currentTimeMillis();
             mockMvc.perform(post("/register")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
                         {"driverId":"%s","latitude":17.385,"longitude":78.486,
-                         "action":"REGISTER","capturedAt":4000}
-                        """.formatted(driverId)))
+                         "action":"REGISTER","capturedAt":%d}
+                        """.formatted(driverId, capturedAt)))
                     .andExpect(status().isAccepted());
 
             await().atMost(Duration.ofSeconds(10))

@@ -1,6 +1,7 @@
 package com.aagosh.dispatch.messaging;
 
 import com.aagosh.dispatch.api.RideRequestDto;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.Assignment;
 import com.aagosh.dispatch.domain.Driver;
@@ -105,6 +106,7 @@ public class RideRequestConsumer {
 
     private final Matcher matcher;
     private final DriverRegistry driverRegistry;
+    private final DriverFreshnessConfig freshnessConfig;
     private final DispatchCostConfig costConfig;
     private final AssignmentPersistenceService persistenceService;
 
@@ -135,10 +137,12 @@ public class RideRequestConsumer {
 
     public RideRequestConsumer(Matcher matcher,
                                DriverRegistry driverRegistry,
+                               DriverFreshnessConfig freshnessConfig,
                                DispatchCostConfig costConfig,
                                AssignmentPersistenceService persistenceService) {
         this.matcher            = Objects.requireNonNull(matcher, "matcher");
         this.driverRegistry     = Objects.requireNonNull(driverRegistry, "driverRegistry");
+        this.freshnessConfig    = Objects.requireNonNull(freshnessConfig, "freshnessConfig");
         this.costConfig         = Objects.requireNonNull(costConfig, "costConfig");
         this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService");
     }
@@ -207,8 +211,8 @@ public class RideRequestConsumer {
                 }
             }
 
-            // Step 4: Driver matching
-            List<Driver> drivers = driverRegistry.snapshot();
+            // Step 4: Driver matching — only consider fresh, verified-timestamp drivers
+            List<Driver> drivers = driverRegistry.snapshotFresh(freshnessConfig);
             CostFunction costFunction = new DispatchCostFunction(costConfig, List.of(domainRequest));
 
             List<Assignment> assignments = matcher.match(

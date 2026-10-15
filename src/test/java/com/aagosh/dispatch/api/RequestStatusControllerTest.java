@@ -1,5 +1,11 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.cache.RedisLocationCache;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
+import com.aagosh.dispatch.domain.Driver;
+import com.aagosh.dispatch.domain.DriverRegistry;
+import com.aagosh.dispatch.domain.DriverState;
+import com.aagosh.dispatch.domain.GeoPoint;
 import com.aagosh.dispatch.persistence.AssignmentEntity;
 import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
 import com.aagosh.dispatch.persistence.RideRequestEntity;
@@ -48,18 +54,24 @@ class RequestStatusControllerTest {
     private final KafkaTemplate<String, DriverPingRequest> driverKafkaTemplate = mock(KafkaTemplate.class);
     private final RideRequestRepository rideRequestRepository = mock(RideRequestRepository.class);
     private final AssignmentPersistenceService assignmentPersistenceService = mock(AssignmentPersistenceService.class);
+    private final DriverRegistry driverRegistry = new DriverRegistry();
+    private final RedisLocationCache redisLocationCache = mock(RedisLocationCache.class);
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
+        when(redisLocationCache.getLocation(anyString())).thenReturn(RedisLocationCache.LocationResult.Miss.INSTANCE);
         RideController rideController = new RideController(rideKafkaTemplate);
-        DriverController driverController = new DriverController(driverKafkaTemplate);
+        DriverController driverController = new DriverController(
+                driverKafkaTemplate, driverRegistry, redisLocationCache, DriverFreshnessConfig.DEFAULT);
         RequestStatusController controller = new RequestStatusController(
                 rideRequestRepository,
                 assignmentPersistenceService,
                 rideController,
-                driverController
+                driverController,
+                driverRegistry,
+                DriverFreshnessConfig.DEFAULT
         );
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -141,6 +153,77 @@ class RequestStatusControllerTest {
                     .andExpect(jsonPath("$.status").value("NO_DRIVERS"))
                     .andExpect(jsonPath("$.driverId").doesNotExist());
         }
+
+        @Test
+        @DisplayName("Returns MATCHED status with driver telemetry when driver is registered and fresh")
+        void returnsMatchedWithDriverTelemetryWhenFresh() throws Exception {
+            long now = System.currentTimeMillis();
+            Driver driver = new Driver("D-FRESH", new GeoPoint(12.9716, 77.5946), new DriverState(), now - 10_000L);
+            driverRegistry.register(driver);
+
+            RideRequestEntity entity = buildRequestEntity("REQ-FRESH", "MATCHED");
+            when(rideRequestRepository.findByRequestId("REQ-FRESH")).thenReturn(Optional.of(entity));
+
+            AssignmentEntity assignment = new AssignmentEntity("REQ-FRESH", "D-FRESH", 1.5);
+            when(assignmentPersistenceService.findAssignment("REQ-FRESH"))
+                    .thenReturn(Optional.of(assignment));
+
+            mockMvc.perform(get("/api/requests/REQ-FRESH"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.requestId").value("REQ-FRESH"))
+                    .andExpect(jsonPath("$.status").value("MATCHED"))
+                    .andExpect(jsonPath("$.driverId").value("D-FRESH"))
+                    .andExpect(jsonPath("$.driverLatitude").value(12.9716))
+                    .andExpect(jsonPath("$.driverLongitude").value(77.5946))
+                    .andExpect(jsonPath("$.driverLocationAt").isNotEmpty());
+        }
+
+        @Test
+        @DisplayName("Returns MATCHED status with null telemetry when driver is registered but stale")
+        void returnsMatchedWithoutTelemetryWhenDriverStale() throws Exception {
+            long now = System.currentTimeMillis();
+            Driver driver = new Driver("D-STALE", new GeoPoint(12.9716, 77.5946), new DriverState(), now - 120_000L);
+            driverRegistry.register(driver);
+
+            RideRequestEntity entity = buildRequestEntity("REQ-STALE", "MATCHED");
+            when(rideRequestRepository.findByRequestId("REQ-STALE")).thenReturn(Optional.of(entity));
+
+            AssignmentEntity assignment = new AssignmentEntity("REQ-STALE", "D-STALE", 1.5);
+            when(assignmentPersistenceService.findAssignment("REQ-STALE"))
+                    .thenReturn(Optional.of(assignment));
+
+            mockMvc.perform(get("/api/requests/REQ-STALE"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.requestId").value("REQ-STALE"))
+                    .andExpect(jsonPath("$.status").value("MATCHED"))
+                    .andExpect(jsonPath("$.driverId").value("D-STALE"))
+                    .andExpect(jsonPath("$.driverLatitude").doesNotExist())
+                    .andExpect(jsonPath("$.driverLongitude").doesNotExist())
+                    .andExpect(jsonPath("$.driverLocationAt").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("Returns MATCHED status with null telemetry when driver has updatedAt=0")
+        void returnsMatchedWithoutTelemetryWhenDriverZeroTimestamp() throws Exception {
+            Driver driver = new Driver("D-ZERO", new GeoPoint(12.9716, 77.5946), new DriverState(), 0L);
+            driverRegistry.register(driver);
+
+            RideRequestEntity entity = buildRequestEntity("REQ-ZERO", "MATCHED");
+            when(rideRequestRepository.findByRequestId("REQ-ZERO")).thenReturn(Optional.of(entity));
+
+            AssignmentEntity assignment = new AssignmentEntity("REQ-ZERO", "D-ZERO", 1.5);
+            when(assignmentPersistenceService.findAssignment("REQ-ZERO"))
+                    .thenReturn(Optional.of(assignment));
+
+            mockMvc.perform(get("/api/requests/REQ-ZERO"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.requestId").value("REQ-ZERO"))
+                    .andExpect(jsonPath("$.status").value("MATCHED"))
+                    .andExpect(jsonPath("$.driverId").value("D-ZERO"))
+                    .andExpect(jsonPath("$.driverLatitude").doesNotExist())
+                    .andExpect(jsonPath("$.driverLongitude").doesNotExist())
+                    .andExpect(jsonPath("$.driverLocationAt").doesNotExist());
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -210,6 +293,39 @@ class RequestStatusControllerTest {
                                     {"latitude": 51.5, "longitude": -0.1}
                                     """))
                     .andExpect(status().isBadRequest());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/drivers/{driverId}/location alias
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("GET /api/drivers/{driverId}/location alias")
+    class DriverLocationAlias {
+
+        @Test
+        @DisplayName("Delegates to DriverController and returns 200 OK when driver is fresh")
+        void delegatesToDriverControllerAndReturns200() throws Exception {
+            long now = System.currentTimeMillis();
+            Driver driver = new Driver("D-LOC-1", new GeoPoint(51.5, -0.1), new DriverState(), now - 5_000L);
+            driverRegistry.register(driver);
+
+            mockMvc.perform(get("/api/drivers/D-LOC-1/location"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.driverId").value("D-LOC-1"))
+                    .andExpect(jsonPath("$.fresh").value(true))
+                    .andExpect(jsonPath("$.latitude").value(51.5))
+                    .andExpect(jsonPath("$.longitude").value(-0.1))
+                    .andExpect(jsonPath("$.updatedAt").isNotEmpty());
+        }
+
+        @Test
+        @DisplayName("Delegates to DriverController and returns 404 for unknown driver")
+        void delegatesToDriverControllerAndReturns404() throws Exception {
+            mockMvc.perform(get("/api/drivers/UNKNOWN/location"))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.status").value(404));
         }
     }
 

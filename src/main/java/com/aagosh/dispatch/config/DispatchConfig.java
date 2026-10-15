@@ -4,6 +4,7 @@ import com.aagosh.dispatch.matching.AuctionMatcher;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.Matcher;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Fallback;
@@ -12,6 +13,7 @@ import org.springframework.context.annotation.Fallback;
  * Spring configuration providing default fallback beans for dispatch matching.
  */
 @Configuration
+@EnableConfigurationProperties(DriverFreshnessConfig.class)
 public class DispatchConfig {
 
     @Bean

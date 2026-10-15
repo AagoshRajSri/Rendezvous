@@ -3,6 +3,7 @@ package com.aagosh.dispatch.messaging;
 import com.aagosh.dispatch.api.DriverPingRequest;
 import com.aagosh.dispatch.api.RideRequestDto;
 import com.aagosh.dispatch.cache.RedisLocationCache;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import com.aagosh.dispatch.config.KafkaConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
 import com.aagosh.dispatch.domain.DriverRegistry;
@@ -75,7 +76,7 @@ class KafkaDeserializationErrorHandlingTest {
         AssignmentPersistenceService persistenceService = mock(AssignmentPersistenceService.class);
         org.mockito.Mockito.when(persistenceService.persistRequest(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(PersistOutcome.PERSISTED);
-        RideRequestConsumer consumer = new RideRequestConsumer(mockMatcher, driverRegistry, DispatchCostConfig.DEFAULT, persistenceService);
+        RideRequestConsumer consumer = new RideRequestConsumer(mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, DispatchCostConfig.DEFAULT, persistenceService);
         Acknowledgment ack = mock(Acknowledgment.class);
 
         RecordHeaders headers = new RecordHeaders();

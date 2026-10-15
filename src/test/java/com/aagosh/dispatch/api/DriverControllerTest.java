@@ -1,6 +1,12 @@
 package com.aagosh.dispatch.api;
 
+import com.aagosh.dispatch.cache.RedisLocationCache;
+import com.aagosh.dispatch.config.DriverFreshnessConfig;
 import com.aagosh.dispatch.config.KafkaTopics;
+import com.aagosh.dispatch.domain.Driver;
+import com.aagosh.dispatch.domain.DriverRegistry;
+import com.aagosh.dispatch.domain.DriverState;
+import com.aagosh.dispatch.domain.GeoPoint;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +30,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -31,13 +38,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DriverControllerTest {
 
     private KafkaTemplate<String, DriverPingRequest> kafkaTemplate;
+    private DriverRegistry driverRegistry;
+    private RedisLocationCache redisLocationCache;
     private MockMvc mockMvc;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
-        kafkaTemplate = mock(KafkaTemplate.class);
-        DriverController controller = new DriverController(kafkaTemplate);
+        kafkaTemplate      = mock(KafkaTemplate.class);
+        driverRegistry     = new DriverRegistry();
+        redisLocationCache = mock(RedisLocationCache.class);
+        when(redisLocationCache.getLocation(anyString())).thenReturn(RedisLocationCache.LocationResult.Miss.INSTANCE);
+
+        DriverController controller = new DriverController(
+                kafkaTemplate, driverRegistry, redisLocationCache, DriverFreshnessConfig.DEFAULT);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -246,5 +260,147 @@ class DriverControllerTest {
                 .andExpect(jsonPath("$.error").value("Service Unavailable"))
                 .andExpect(jsonPath("$.message").value(
                         "Event could not be published; the message broker is temporarily unavailable"));
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /drivers/{driverId}/location
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("6. GET /drivers/{driverId}/location returns 404 when driver is not registered")
+    void getDriverLocationNotFound() throws Exception {
+        mockMvc.perform(get("/drivers/NON_EXISTENT/location"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("No driver registered with id: NON_EXISTENT"));
+    }
+
+    @Test
+    @DisplayName("7. GET /drivers/{driverId}/location returns 409 Conflict with fresh=false for driver with updatedAt=0")
+    void getDriverLocationUnversionedReturnsConflict() throws Exception {
+        Driver d = new Driver("D_UNVER", new GeoPoint(17.385, 78.4867), new DriverState(), 0L);
+        driverRegistry.register(d);
+
+        mockMvc.perform(get("/drivers/D_UNVER/location"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.driverId").value("D_UNVER"))
+                .andExpect(jsonPath("$.fresh").value(false))
+                .andExpect(jsonPath("$.latitude").doesNotExist())
+                .andExpect(jsonPath("$.longitude").doesNotExist())
+                .andExpect(jsonPath("$.updatedAt").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("8. GET /drivers/{driverId}/location returns 409 Conflict with fresh=false for stale driver")
+    void getDriverLocationStaleReturnsConflict() throws Exception {
+        long now = System.currentTimeMillis();
+        long staleTs = now - 120_000L; // 2 minutes ago (staleness threshold 60s)
+        Driver d = new Driver("D_STALE", new GeoPoint(17.385, 78.4867), new DriverState(), staleTs);
+        driverRegistry.register(d);
+
+        mockMvc.perform(get("/drivers/D_STALE/location"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.driverId").value("D_STALE"))
+                .andExpect(jsonPath("$.fresh").value(false))
+                .andExpect(jsonPath("$.latitude").value(17.385))
+                .andExpect(jsonPath("$.longitude").value(78.4867))
+                .andExpect(jsonPath("$.updatedAt").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("9. GET /drivers/{driverId}/location returns 200 OK with fresh=true for fresh driver")
+    void getDriverLocationFreshReturnsOk() throws Exception {
+        long now = System.currentTimeMillis();
+        long freshTs = now - 5_000L; // 5 seconds ago
+        Driver d = new Driver("D_FRESH", new GeoPoint(17.385, 78.4867), new DriverState(), freshTs);
+        driverRegistry.register(d);
+
+        mockMvc.perform(get("/drivers/D_FRESH/location"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.driverId").value("D_FRESH"))
+                .andExpect(jsonPath("$.fresh").value(true))
+                .andExpect(jsonPath("$.latitude").value(17.385))
+                .andExpect(jsonPath("$.longitude").value(78.4867))
+                .andExpect(jsonPath("$.updatedAt").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("10. GET /drivers/{driverId}/location returns 409 Conflict for future-skewed driver")
+    void getDriverLocationFutureSkewReturnsConflict() throws Exception {
+        long now = System.currentTimeMillis();
+        long futureTs = now + 30_000L; // 30 seconds into future (max skew 5s)
+        Driver d = new Driver("D_FUTURE", new GeoPoint(17.385, 78.4867), new DriverState(), futureTs);
+        driverRegistry.register(d);
+
+        mockMvc.perform(get("/drivers/D_FUTURE/location"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.driverId").value("D_FUTURE"))
+                .andExpect(jsonPath("$.fresh").value(false));
+    }
+
+    @Test
+    @DisplayName("11. GET /drivers/{driverId}/location returns 200 OK directly from Redis cache hit when fresh")
+    void getDriverLocationRedisHitFreshReturnsOk() throws Exception {
+        long now = System.currentTimeMillis();
+        long freshTs = now - 5_000L;
+        when(redisLocationCache.getLocation("D_REDIS_FRESH")).thenReturn(
+                new RedisLocationCache.LocationResult.Found(new GeoPoint(12.9716, 77.5946), freshTs));
+
+        mockMvc.perform(get("/drivers/D_REDIS_FRESH/location"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.driverId").value("D_REDIS_FRESH"))
+                .andExpect(jsonPath("$.fresh").value(true))
+                .andExpect(jsonPath("$.latitude").value(12.9716))
+                .andExpect(jsonPath("$.longitude").value(77.5946))
+                .andExpect(jsonPath("$.updatedAt").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("12. GET /drivers/{driverId}/location returns 409 Conflict from Redis cache hit when stale")
+    void getDriverLocationRedisHitStaleReturnsConflict() throws Exception {
+        long now = System.currentTimeMillis();
+        long staleTs = now - 120_000L;
+        when(redisLocationCache.getLocation("D_REDIS_STALE")).thenReturn(
+                new RedisLocationCache.LocationResult.Found(new GeoPoint(12.9716, 77.5946), staleTs));
+
+        mockMvc.perform(get("/drivers/D_REDIS_STALE/location"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.driverId").value("D_REDIS_STALE"))
+                .andExpect(jsonPath("$.fresh").value(false))
+                .andExpect(jsonPath("$.latitude").value(12.9716))
+                .andExpect(jsonPath("$.longitude").value(77.5946));
+    }
+
+    @Test
+    @DisplayName("13. GET /drivers/{driverId}/location falls back to in-memory registry on Redis connection failure")
+    void getDriverLocationRedisErrorWithInMemoryFallbackReturnsOk() throws Exception {
+        long now = System.currentTimeMillis();
+        long freshTs = now - 5_000L;
+        Driver d = new Driver("D_FALLBACK", new GeoPoint(12.9716, 77.5946), new DriverState(), freshTs);
+        driverRegistry.register(d);
+
+        when(redisLocationCache.getLocation("D_FALLBACK"))
+                .thenReturn(new RedisLocationCache.LocationResult.RedisError("connection failure: timeout"));
+
+        mockMvc.perform(get("/drivers/D_FALLBACK/location"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.driverId").value("D_FALLBACK"))
+                .andExpect(jsonPath("$.fresh").value(true))
+                .andExpect(jsonPath("$.latitude").value(12.9716))
+                .andExpect(jsonPath("$.longitude").value(77.5946));
+    }
+
+    @Test
+    @DisplayName("14. GET /drivers/{driverId}/location returns 503 Service Unavailable (NOT 404) on Redis failure when driver is not in memory")
+    void getDriverLocationRedisErrorWithoutInMemoryFallbackReturnsServiceUnavailable() throws Exception {
+        when(redisLocationCache.getLocation("D_UNKNOWN_DOWN"))
+                .thenReturn(new RedisLocationCache.LocationResult.RedisError("connection failure: refused"));
+
+        mockMvc.perform(get("/drivers/D_UNKNOWN_DOWN/location"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.error").value("Service Unavailable"))
+                .andExpect(jsonPath("$.message").value("Driver location cache is temporarily unavailable: connection failure: refused"));
     }
 }

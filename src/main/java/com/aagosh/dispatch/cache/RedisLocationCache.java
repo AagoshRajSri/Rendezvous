@@ -1,13 +1,16 @@
 package com.aagosh.dispatch.cache;
 
+import com.aagosh.dispatch.domain.GeoPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -148,5 +151,100 @@ public class RedisLocationCache {
      */
     static String keyFor(String driverId) {
         return String.format(KEY_PATTERN, driverId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Location read
+    // -------------------------------------------------------------------------
+
+    /**
+     * Discriminated result type for {@link #getLocation(String)}.
+     *
+     * <ul>
+     *   <li>{@link Found}  – key exists and contained valid lat/lon/updated_at fields.</li>
+     *   <li>{@link Miss}   – key does not exist in Redis (expired TTL or never written).</li>
+     *   <li>{@link RedisError} – Redis was unreachable or returned an unexpected error.
+     *       This is explicitly <em>not</em> treated as a cache miss so callers can handle
+     *       infrastructure failures differently from genuine absence of data.</li>
+     * </ul>
+     */
+    public sealed interface LocationResult
+            permits LocationResult.Found, LocationResult.Miss, LocationResult.RedisError {
+
+        /** A valid cached location was retrieved. */
+        record Found(GeoPoint location, long updatedAt) implements LocationResult {}
+
+        /** The key is absent (TTL expired or driver never cached). */
+        record Miss() implements LocationResult {
+            /** Singleton canonical instance. */
+            public static final Miss INSTANCE = new Miss();
+        }
+
+        /** Redis was unavailable or threw an unexpected exception. */
+        record RedisError(String message) implements LocationResult {}
+    }
+
+    /**
+     * Reads the cached location for the specified driver from Redis.
+     *
+     * <p>Returns:
+     * <ul>
+     *   <li>{@link LocationResult.Found}     if the key exists with valid lat/lon/updated_at data.</li>
+     *   <li>{@link LocationResult.Miss}       if the key is absent (no cache entry or TTL expired).</li>
+     *   <li>{@link LocationResult.RedisError} if Redis is unavailable or throws an unexpected error.
+     *       <strong>This is explicitly distinct from a cache miss.</strong></li>
+     * </ul>
+     *
+     * @param driverId the driver's logical identifier; must not be blank
+     * @return a {@link LocationResult} describing the outcome; never {@code null}
+     */
+    public LocationResult getLocation(String driverId) {
+        if (driverId == null || driverId.isBlank()) {
+            log.warn("RedisLocationCache.getLocation called with blank driverId");
+            return new LocationResult.RedisError("blank driverId");
+        }
+
+        String key = String.format(KEY_PATTERN, driverId);
+        try {
+            Map<Object, Object> fields =
+                    redisTemplate.opsForHash().entries(key);
+
+            if (fields == null || fields.isEmpty()) {
+                return LocationResult.Miss.INSTANCE;
+            }
+
+            String latStr = (String) fields.get(FIELD_LAT);
+            String lonStr = (String) fields.get(FIELD_LON);
+            String tsStr  = (String) fields.get(FIELD_UPDATED_AT);
+
+            if (latStr == null || lonStr == null || tsStr == null) {
+                // Partial write — treat as a miss rather than silently fabricating data.
+                log.warn("Incomplete Redis location entry for driver {}: lat={} lon={} ts={}",
+                        driverId, latStr, lonStr, tsStr);
+                return LocationResult.Miss.INSTANCE;
+            }
+
+            double lat       = Double.parseDouble(latStr);
+            double lon       = Double.parseDouble(lonStr);
+            long   updatedAt = Long.parseLong(tsStr);
+            GeoPoint location = new GeoPoint(lat, lon);  // validates range
+            return new LocationResult.Found(location, updatedAt);
+
+        } catch (RedisConnectionFailureException ex) {
+            // Explicit infrastructure failure — must NOT be silently downgraded to a Miss.
+            log.warn("Redis connection failure reading location for driver {}: {}", driverId, ex.getMessage());
+            return new LocationResult.RedisError("connection failure: " + ex.getMessage());
+        } catch (NumberFormatException ex) {
+            log.warn("Malformed Redis location fields for driver {}: {}", driverId, ex.getMessage());
+            return new LocationResult.RedisError("malformed data: " + ex.getMessage());
+        } catch (IllegalArgumentException ex) {
+            // GeoPoint range validation failed.
+            log.warn("Invalid coordinates in Redis for driver {}: {}", driverId, ex.getMessage());
+            return new LocationResult.RedisError("invalid coordinates: " + ex.getMessage());
+        } catch (Exception ex) {
+            // Unexpected Redis exception — not a cache miss.
+            log.warn("Unexpected error reading Redis location for driver {}: {}", driverId, ex.getMessage());
+            return new LocationResult.RedisError("unexpected error: " + ex.getMessage());
+        }
     }
 }
