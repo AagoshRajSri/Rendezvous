@@ -2,14 +2,116 @@ import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import type { FeatureCollection } from 'geojson';
 import type { MapReadyState } from '../hooks/useMapReady';
 import type { PlaceSuggestion } from '../types/place';
+import type { SimulatedDriver } from '../types/driver';
+import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
 // Ensure MapLibre web worker is explicitly resolved by Vite
 maplibregl.setWorkerUrl(maplibreglWorkerUrl);
 
 type MapLibreMap = maplibregl.Map;
+
+// ── Simulated driver layer constants ─────────────────────────────────────────
+const DRIVER_SOURCE_ID = 'rendezvous-drivers';
+const DRIVER_HALO_LAYER_ID = 'rendezvous-drivers-halo';
+const DRIVER_CORE_LAYER_ID = 'rendezvous-drivers-core';
+
+const EMPTY_FEATURE_COLLECTION: FeatureCollection = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
+function driversToFeatureCollection(drivers: SimulatedDriver[]): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: drivers.map((d) => ({
+      type: 'Feature',
+      id: d.id,
+      geometry: {
+        type: 'Point',
+        coordinates: [d.lon, d.lat],
+      },
+      properties: {
+        id: d.id,
+        status: d.status,
+      },
+    })),
+  };
+}
+
+/**
+ * Idempotently registers the driver GeoJSON source and layers on the MapLibre map.
+ * Safe to call on initial style load and after style reloads.
+ */
+function ensureDriverLayers(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(DRIVER_SOURCE_ID)) {
+    map.addSource(DRIVER_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  // Outer halo layer for visual breathing room and status indication
+  if (!map.getLayer(DRIVER_HALO_LAYER_ID)) {
+    map.addLayer({
+      id: DRIVER_HALO_LAYER_ID,
+      type: 'circle',
+      source: DRIVER_SOURCE_ID,
+      paint: {
+        'circle-radius': 9,
+        'circle-color': [
+          'match',
+          ['get', 'status'],
+          'available',
+          '#3dd68c', // var(--color-success)
+          '#8a9bbf', // var(--color-text-muted)
+        ],
+        'circle-opacity': [
+          'match',
+          ['get', 'status'],
+          'available',
+          0.25,
+          0.12,
+        ],
+        'circle-pitch-alignment': 'map',
+      },
+    });
+  }
+
+  // Inner core vehicle dot with dark stroke for contrast against any terrain
+  if (!map.getLayer(DRIVER_CORE_LAYER_ID)) {
+    map.addLayer({
+      id: DRIVER_CORE_LAYER_ID,
+      type: 'circle',
+      source: DRIVER_SOURCE_ID,
+      paint: {
+        'circle-radius': 5,
+        'circle-color': [
+          'match',
+          ['get', 'status'],
+          'available',
+          '#3dd68c',
+          '#8a9bbf',
+        ],
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#080b12',
+        'circle-opacity': [
+          'match',
+          ['get', 'status'],
+          'available',
+          1.0,
+          0.6,
+        ],
+        'circle-pitch-alignment': 'map',
+      },
+    });
+  }
+}
 
 // ── OpenFreeMap "liberty" style ──────────────────────────────────────────────
 // Free, no API key, OSM data. Attribution is rendered automatically by the
@@ -46,6 +148,8 @@ interface GlobeMapProps {
   mapState: MapReadyState;
   /** When non-null, animates the globe to the selected place. */
   selectedPlace: PlaceSuggestion | null;
+  /** Simulated drivers to render on the map. Empty array = no drivers shown. */
+  drivers?: SimulatedDriver[];
 }
 
 /**
@@ -53,17 +157,26 @@ interface GlobeMapProps {
  *
  * Lifecycle:
  *   1. Mount: creates MapLibreMap, attaches AttributionControl.
- *   2. 'style.load': sets globe projection, configures sky, calls props.onLoad.
+ *   2. 'style.load': sets globe projection, configures sky, sets up driver layers, calls props.onLoad.
  *   3. 'error': calls props.onError with a human-readable message.
  *   4. Unmount: destroys the map instance to avoid leaks.
  *
  * When selectedPlace changes, animates the camera without recreating the map.
  * A pulsing pin marker marks the selected location.
+ * When drivers change, updates the GeoJSON source and renders the simulated fleet badge.
  */
-export function GlobeMap({ onLoad, onError, mapState, selectedPlace }: GlobeMapProps) {
+export function GlobeMap({
+  onLoad,
+  onError,
+  mapState,
+  selectedPlace,
+  drivers = [],
+}: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
+  const driversRef = useRef<SimulatedDriver[]>(drivers);
+  driversRef.current = drivers;
 
   // Controls whether the loading overlay is still mounted (fades out after ready)
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -102,6 +215,13 @@ export function GlobeMap({ onLoad, onError, mapState, selectedPlace }: GlobeMapP
       // ── Atmospheric sky layer ──────────────────────────────────────────────
       // setSky is available from MapLibre GL JS v4+.
       map.setSky(SKY_CONFIG);
+
+      // ── Initialize simulated driver layers idempotently ───────────────────
+      ensureDriverLayers(map);
+      if (driversRef.current && driversRef.current.length > 0) {
+        const source = map.getSource(DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        source?.setData(driversToFeatureCollection(driversRef.current));
+      }
 
       onLoad();
     });
@@ -170,6 +290,22 @@ export function GlobeMap({ onLoad, onError, mapState, selectedPlace }: GlobeMapP
     markerRef.current = marker;
   }, [selectedPlace]);
 
+  // ── Sync simulated drivers with GeoJSON source ──────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (map.isStyleLoaded()) {
+      ensureDriverLayers(map);
+      const source = map.getSource(DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (source) {
+        source.setData(
+          drivers.length > 0 ? driversToFeatureCollection(drivers) : EMPTY_FEATURE_COLLECTION,
+        );
+      }
+    }
+  }, [drivers]);
+
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.
   useEffect(() => {
@@ -186,6 +322,9 @@ export function GlobeMap({ onLoad, onError, mapState, selectedPlace }: GlobeMapP
     <div className="globe-map">
       {/* ── Map canvas ─────────────────────────────────────────────────────── */}
       <div ref={containerRef} className="globe-map__container" id="globe-map-container" />
+
+      {/* ── Simulated fleet badge & legend (Phase 7C) ──────────────────────── */}
+      <SimulatedFleetBadge drivers={drivers} placeName={selectedPlace?.name} />
 
       {/* ── Loading overlay ────────────────────────────────────────────────── */}
       {(showOverlay || fadingOut) && mapState.status !== 'error' && (

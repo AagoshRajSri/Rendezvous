@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
 import { useMapReady } from './hooks/useMapReady';
 import { usePlaceSearch } from './hooks/usePlaceSearch';
+import { useSimulatedDrivers } from './hooks/useSimulatedDrivers';
 import type { PlaceSuggestion } from './types/place';
 
 /**
@@ -13,7 +14,8 @@ import type { PlaceSuggestion } from './types/place';
  *   - mapState   : map load lifecycle (loading → ready | error)
  *   - search     : query, suggestions, and search status from usePlaceSearch
  *   - selectedPlace : the place the user most recently selected; drives
- *                     the globe camera animation and pin marker
+ *                     the globe camera animation, pin marker, and simulated fleet
+ *   - drivers    : deterministic simulated drivers generated for selectedPlace
  *
  * Lift selectedPlace here so it can flow to both Header (future use) and
  * GlobeMap without a context or prop-drilling workaround.
@@ -22,6 +24,7 @@ export default function App() {
   const { state: mapState, onLoad, onError } = useMapReady();
   const search = usePlaceSearch();
   const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
+  const drivers = useSimulatedDrivers(selectedPlace);
 
   function handleSelect(place: PlaceSuggestion) {
     setSelectedPlace(place);
@@ -53,6 +56,7 @@ export default function App() {
         onLoad={onLoad}
         onError={onError}
         selectedPlace={selectedPlace}
+        drivers={drivers}
       />
     </>
   );

@@ -1,0 +1,172 @@
+/* ============================================================
+   SimulatedFleetBadge — compact accessible badge & legend
+   ============================================================ */
+
+.simulated-fleet-badge {
+  position: absolute;
+  bottom: 96px;
+  left: 16px;
+  z-index: 5;
+  width: 230px;
+  padding: 12px 14px;
+  background: rgba(14, 20, 33, 0.88);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: fleet-badge-in 0.25s var(--ease-out);
+  pointer-events: auto;
+  user-select: none;
+}
+
+@keyframes fleet-badge-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.simulated-fleet-badge__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.simulated-fleet-badge__title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.simulated-fleet-badge__live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 8px var(--color-success);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.85);
+  }
+}
+
+.simulated-fleet-badge__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0.3px;
+}
+
+.simulated-fleet-badge__tag {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: rgba(138, 155, 191, 0.15);
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.6px;
+}
+
+.simulated-fleet-badge__location {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 8px;
+}
+
+.simulated-fleet-badge__counts {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.simulated-fleet-badge__count-main {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+.simulated-fleet-badge__count-sep {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.simulated-fleet-badge__count-total {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.simulated-fleet-badge__count-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.simulated-fleet-badge__legend {
+  display: flex;
+  gap: 12px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(99, 133, 202, 0.12);
+  margin-bottom: 6px;
+}
+
+.simulated-fleet-badge__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.simulated-fleet-badge__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-bg);
+}
+
+.simulated-fleet-badge__legend-dot--available {
+  background: var(--color-success);
+  box-shadow: 0 0 6px rgba(61, 214, 140, 0.4);
+}
+
+.simulated-fleet-badge__legend-dot--busy {
+  background: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.simulated-fleet-badge__notice {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: rgba(138, 155, 191, 0.75);
+  font-style: italic;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .simulated-fleet-badge {
+    bottom: 80px;
+    left: 12px;
+    width: 200px;
+    padding: 10px 12px;
+  }
+}
