@@ -21,6 +21,7 @@ const IDLE_STATE: DispatchState = {
   requestId: null,
   matchedDriverId: null,
   matchedDriverLocation: null,
+  matchedDriverLocationAt: null,
   errorMessage: null,
   updatedAt: null,
 };
@@ -48,13 +49,19 @@ export interface UseDispatchReturn {
 }
 
 /**
- * Phase 7D — Frontend dispatch lifecycle hook.
+ * Phase 7E.2 — Frontend dispatch lifecycle hook.
  *
  * Orchestrates three sequential steps:
  *   1. Register a demo driver near the selected place (POST /api/register).
  *   2. Submit a ride request at the selected place (POST /api/request → 202).
  *   3. Poll GET /api/requests/{id} with bounded exponential backoff until a
  *      terminal state (MATCHED or NO_DRIVERS) is reached, or until exhausted.
+ *
+ * When MATCHED, the hook extracts and validates optional driver telemetry
+ * fields (driverLatitude, driverLongitude, driverLocationAt) from the response.
+ * These represent the last-known fresh fix at status-query time — not live
+ * tracking. Telemetry may be null even when status is MATCHED; null telemetry
+ * does not invalidate the match.
  *
  * Safety guarantees:
  * - Duplicate submissions are prevented: a second requestDispatch() call while
@@ -244,11 +251,21 @@ async function runDispatchFlow(
     const status = statusResponse.status;
 
     if (status === 'MATCHED') {
+      // Phase 7E.2 — Extract and validate optional driver telemetry.
+      // Telemetry represents the last-known fresh fix at status-query time.
+      // Null telemetry does not invalidate the match.
+      const rawLat = statusResponse.driverLatitude;
+      const rawLon = statusResponse.driverLongitude;
+      const rawAt = statusResponse.driverLocationAt;
+      const validCoords = isValidDriverCoords(rawLat, rawLon);
       setState({
         phase: 'matched',
         requestId,
         matchedDriverId: statusResponse.driverId,
-        matchedDriverLocation: null, // Backend does not supply verified driver coordinates
+        matchedDriverLocation: validCoords
+          ? { lat: rawLat as number, lon: rawLon as number }
+          : null,
+        matchedDriverLocationAt: validCoords && rawAt != null ? rawAt : null,
         errorMessage: null,
         updatedAt: statusResponse.updatedAt,
       });
@@ -262,6 +279,7 @@ async function runDispatchFlow(
         requestId,
         matchedDriverId: null,
         matchedDriverLocation: null,
+        matchedDriverLocationAt: null,
         errorMessage: null,
         updatedAt: statusResponse.updatedAt,
       });
@@ -280,6 +298,7 @@ async function runDispatchFlow(
     requestId,
     matchedDriverId: null,
     matchedDriverLocation: null,
+    matchedDriverLocationAt: null,
     errorMessage:
       'No match result received after maximum polling attempts. The backend may be unavailable.',
     updatedAt: null,
@@ -306,4 +325,31 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 function toMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * Phase 7E.2 — Validates that raw latitude and longitude values from the
+ * backend status response are safe to render on the map.
+ *
+ * Accepts:
+ *   - typeof number (not NaN, not Infinity)
+ *   - lat ∈ [-90, 90], lon ∈ [-180, 180]
+ *   - (0, 0) is explicitly permitted (Null Island is a valid coordinate)
+ *
+ * Rejects:
+ *   - null or undefined
+ *   - non-numeric types (string, boolean, object, etc.)
+ *   - NaN, +Infinity, -Infinity
+ *   - out-of-range geographic bounds
+ */
+export function isValidDriverCoords(
+  lat: number | null | undefined,
+  lon: number | null | undefined,
+): boolean {
+  if (lat == null || lon == null) return false;
+  if (typeof lat !== 'number' || typeof lon !== 'number') return false;
+  if (!isFinite(lat) || !isFinite(lon)) return false;
+  if (lat < -90 || lat > 90) return false;
+  if (lon < -180 || lon > 180) return false;
+  return true;
 }

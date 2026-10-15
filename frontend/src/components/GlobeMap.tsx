@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
@@ -9,10 +9,14 @@ import type { SimulatedDriver } from '../types/driver';
 import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
-// ── Real matched-driver layer constants (Phase 7D) ────────────────────────────
+// ── Real matched-driver layer constants (Phase 7E.2) ────────────────────────────
+// Amber/gold dots — distinct from the green simulated fleet
 const MATCHED_DRIVER_SOURCE_ID = 'rendezvous-matched-driver';
 const MATCHED_DRIVER_HALO_LAYER_ID = 'rendezvous-matched-driver-halo';
 const MATCHED_DRIVER_CORE_LAYER_ID = 'rendezvous-matched-driver-core';
+// Dashed connector line between pickup pin and real driver marker
+const CONNECTOR_SOURCE_ID = 'rendezvous-matched-connector';
+const CONNECTOR_LAYER_ID = 'rendezvous-matched-connector-line';
 
 // Ensure MapLibre web worker is explicitly resolved by Vite
 maplibregl.setWorkerUrl(maplibreglWorkerUrl);
@@ -164,6 +168,44 @@ function ensureMatchedDriverLayers(map: MapLibreMap) {
   }
 }
 
+/**
+ * Idempotently registers the connector (dashed line) GeoJSON source and layer.
+ * Draws a dashed amber line from the pickup pin to the real driver marker.
+ * Inserted below the matched-driver dot layers so the dots render on top.
+ * Safe to call on initial style load and after style reloads.
+ */
+function ensureConnectorLayer(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(CONNECTOR_SOURCE_ID)) {
+    map.addSource(CONNECTOR_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  if (!map.getLayer(CONNECTOR_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: CONNECTOR_LAYER_ID,
+        type: 'line',
+        source: CONNECTOR_SOURCE_ID,
+        paint: {
+          'line-color': '#ffc542',
+          'line-width': 1.5,
+          'line-dasharray': [4, 4],
+          'line-opacity': 0.6,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      MATCHED_DRIVER_HALO_LAYER_ID,
+    );
+  }
+}
+
 // ── OpenFreeMap "liberty" style ──────────────────────────────────────────────
 // Free, no API key, OSM data. Attribution is rendered automatically by the
 // MapLibre AttributionControl when the style JSON includes attribution metadata.
@@ -202,9 +244,9 @@ interface GlobeMapProps {
   /** Simulated drivers to render on the map (Phase 7C). Empty array = no drivers shown. */
   drivers?: SimulatedDriver[];
   /**
-   * Phase 7D — Verified coordinates of the matched driver, if supplied by the backend.
-   * Only rendered when explicitly non-null with valid lat/lon.
-   * Never falls back to pickup coordinates.
+   * Phase 7E.2 — Verified coordinates of the matched driver's last-known fresh fix.
+   * Only rendered when explicitly non-null with validated lat/lon.
+   * Never falls back to pickup coordinates or simulated-driver positions.
    */
   matchedDriverLocation?: { lat: number; lon: number } | null;
 }
@@ -235,6 +277,13 @@ export function GlobeMap({
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const driversRef = useRef<SimulatedDriver[]>(drivers);
   driversRef.current = drivers;
+
+  /**
+   * Phase 7E.2 camera guard: tracks the last driver location that triggered a
+   * fitBounds/easeTo so we never repeat the same camera animation on unrelated
+   * React re-renders. Keyed as "lat,lon" string; null means no animation done.
+   */
+  const lastFittedDriverLocationRef = useRef<string | null>(null);
 
   // Controls whether the loading overlay is still mounted (fades out after ready)
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -281,8 +330,9 @@ export function GlobeMap({
         source?.setData(driversToFeatureCollection(driversRef.current));
       }
 
-      // ── Initialize real matched-driver layer idempotently (Phase 7D) ──────
+      // -- Initialize real matched-driver and connector layers idempotently (Phase 7E.2) --
       ensureMatchedDriverLayers(map);
+      ensureConnectorLayer(map);
 
       onLoad();
     });
@@ -367,21 +417,21 @@ export function GlobeMap({
     }
   }, [drivers]);
 
-  // ── Sync real matched-driver marker with GeoJSON source (Phase 7D) ───────────
+  // -- Sync real matched-driver marker and connector (Phase 7E.2) --
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !map.isStyleLoaded()) return;
 
-    if (!map.isStyleLoaded()) return;
     ensureMatchedDriverLayers(map);
+    ensureConnectorLayer(map);
 
-    const source = map.getSource(MATCHED_DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
+    const driverSource = map.getSource(MATCHED_DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const connectorSource = map.getSource(CONNECTOR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!driverSource || !connectorSource) return;
 
-    if (matchedDriverLocation) {
-      // Only render when the backend supplies verified coordinates for the matched driver.
-      // Never render at the pickup coordinates.
-      const collection: FeatureCollection = {
+    if (matchedDriverLocation && selectedPlace) {
+      // Render the amber matched-driver dot.
+      driverSource.setData({
         type: 'FeatureCollection',
         features: [{
           type: 'Feature',
@@ -389,12 +439,69 @@ export function GlobeMap({
           geometry: { type: 'Point', coordinates: [matchedDriverLocation.lon, matchedDriverLocation.lat] },
           properties: {},
         }],
-      };
-      source.setData(collection);
+      });
+
+      // Render the dashed amber connector from the pickup pin to the driver dot.
+      connectorSource.setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [selectedPlace.lon, selectedPlace.lat],
+              [matchedDriverLocation.lon, matchedDriverLocation.lat],
+            ],
+          },
+          properties: {},
+        }],
+      });
+
+      // Camera: fit both points, but only animate once per unique driver fix
+      // to prevent repeated camera jumps on unrelated React re-renders.
+      const locationKey = `${matchedDriverLocation.lat},${matchedDriverLocation.lon}`;
+      if (lastFittedDriverLocationRef.current !== locationKey) {
+        lastFittedDriverLocationRef.current = locationKey;
+
+        const west  = Math.min(selectedPlace.lon, matchedDriverLocation.lon);
+        const east  = Math.max(selectedPlace.lon, matchedDriverLocation.lon);
+        const south = Math.min(selectedPlace.lat, matchedDriverLocation.lat);
+        const north = Math.max(selectedPlace.lat, matchedDriverLocation.lat);
+
+        // Near-identical guard: fitBounds on a degenerate bounding box causes
+        // extreme zoom; use easeTo when the two points are within ~11 m.
+        const NEAR_IDENTICAL_THRESHOLD = 0.0001;
+        const tooClose =
+          (east - west) < NEAR_IDENTICAL_THRESHOLD &&
+          (north - south) < NEAR_IDENTICAL_THRESHOLD;
+
+        if (tooClose) {
+          map.easeTo({
+            center: [matchedDriverLocation.lon, matchedDriverLocation.lat],
+            zoom: Math.max(map.getZoom(), 14),
+            duration: FLY_DURATION_MS,
+            essential: true,
+          });
+        } else {
+          map.fitBounds(
+            [[west, south], [east, north]],
+            {
+              padding: FIT_BOUNDS_PADDING,
+              maxZoom: FIT_BOUNDS_MAX_ZOOM,
+              duration: FLY_DURATION_MS,
+              essential: true,
+            },
+          );
+        }
+      }
     } else {
-      source.setData(EMPTY_FEATURE_COLLECTION);
+      // No valid driver location or no pickup selected -- clear both layers.
+      driverSource.setData(EMPTY_FEATURE_COLLECTION);
+      connectorSource.setData(EMPTY_FEATURE_COLLECTION);
+      lastFittedDriverLocationRef.current = null;
     }
-  }, [matchedDriverLocation]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchedDriverLocation, selectedPlace]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.

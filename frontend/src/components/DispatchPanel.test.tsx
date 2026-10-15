@@ -8,6 +8,7 @@ const IDLE_STATE: DispatchState = {
   requestId: null,
   matchedDriverId: null,
   matchedDriverLocation: null,
+  matchedDriverLocationAt: null,
   errorMessage: null,
   updatedAt: null,
 };
@@ -177,5 +178,112 @@ describe('DispatchPanel', () => {
 
     fireEvent.click(resetBtn);
     expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the driver location verified badge with fix time when matchedDriverLocation and valid timestamp are present', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-GPS',
+      matchedDriverLocation: { lat: 48.8566, lon: 2.3522 },
+      matchedDriverLocationAt: '2026-01-01T00:00:55Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Paris"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    const badge = document.getElementById('dispatch-driver-location-badge');
+    expect(badge).not.toBeNull();
+    expect(screen.getByText('Driver location verified')).not.toBeNull();
+    const badgeText = badge?.textContent ?? '';
+    expect(badgeText).toContain('Fix at');
+  });
+
+  it('renders the verified badge without fix time when timestamp is null or missing', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-GPS-NO-TIME',
+      matchedDriverLocation: { lat: 48.8566, lon: 2.3522 },
+      matchedDriverLocationAt: null,
+      updatedAt: '2026-01-01T00:01:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Paris"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    const badge = document.getElementById('dispatch-driver-location-badge');
+    expect(badge).not.toBeNull();
+    expect(screen.getByText('Driver location verified')).not.toBeNull();
+    const badgeText = badge?.textContent ?? '';
+    expect(badgeText).not.toContain('Fix at');
+    expect(badgeText).not.toContain('Invalid Date');
+  });
+
+  it('renders the verified badge without "Invalid Date" when timestamp is malformed', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-GPS-BAD-TIME',
+      matchedDriverLocation: { lat: 48.8566, lon: 2.3522 },
+      matchedDriverLocationAt: 'not-a-valid-date-string',
+      updatedAt: '2026-01-01T00:01:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Paris"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    const badge = document.getElementById('dispatch-driver-location-badge');
+    expect(badge).not.toBeNull();
+    expect(screen.getByText('Driver location verified')).not.toBeNull();
+    const badgeText = badge?.textContent ?? '';
+    expect(badgeText).not.toContain('Fix at');
+    expect(badgeText).not.toContain('Invalid Date');
+  });
+
+  it('renders the unavailable-location notice when matchedDriverLocation is null while preserving matched driver ID', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-NO-GPS',
+      matchedDriverLocation: null,
+      matchedDriverLocationAt: null,
+      updatedAt: '2026-01-01T00:01:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Paris"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    expect(document.getElementById('dispatch-driver-location-badge')).toBeNull();
+    expect(document.getElementById('dispatch-driver-location-unavailable')).not.toBeNull();
+    expect(
+      screen.getByText('Driver location unavailable (stale or unverified fix at match time)')
+    ).not.toBeNull();
+    expect(screen.getByText('DRIVER-NO-GPS')).not.toBeNull();
   });
 });

@@ -9,12 +9,14 @@ interface DispatchPanelProps {
 }
 
 /**
- * Phase 7D — Real dispatch action panel.
+ * Phase 7E.2 — Real dispatch action panel.
  *
  * Rendered when the user selects a place. Provides:
  *   - A "Request Real Dispatch" CTA that triggers the backend matching pipeline.
  *   - A status display that tracks progress through registering → submitting → polling.
  *   - A matched-driver result card (only when the backend confirms a match).
+ *   - A "Driver location verified" telemetry badge when the backend supplies a
+ *     fresh GPS fix for the matched driver (snapshot at status-query time, not live).
  *   - An error display with a retry/reset option.
  *
  * Security notice: displayed prominently in the disclaimer — the backend is
@@ -23,13 +25,26 @@ interface DispatchPanelProps {
  * Simulated drivers (Phase 7C) remain visible alongside this panel; they are
  * clearly separated and are never fed into the real matching pipeline.
  */
+/**
+ * Safely formats an ISO-8601 timestamp string as a local time (HH:MM:SS).
+ * Returns null if the timestamp is missing, null, undefined, or fails to parse.
+ */
+function formatValidTime(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString();
+}
+
 export function DispatchPanel({
   placeName,
   dispatchState,
   onRequestDispatch,
   onReset,
 }: DispatchPanelProps) {
-  const { phase, matchedDriverId, errorMessage, updatedAt } = dispatchState;
+  const { phase, matchedDriverId, matchedDriverLocation, matchedDriverLocationAt, errorMessage, updatedAt } = dispatchState;
+  const formattedFixTime = formatValidTime(matchedDriverLocationAt);
+  const formattedUpdateTime = formatValidTime(updatedAt);
 
   return (
     <div className="dispatch-panel" role="region" aria-label="Real dispatch panel">
@@ -120,13 +135,43 @@ export function DispatchPanel({
               >
                 {matchedDriverId}
               </div>
-              {updatedAt && (
+              {formattedUpdateTime && (
                 <div className="dispatch-panel__match-time">
-                  {new Date(updatedAt).toLocaleTimeString()}
+                  {formattedUpdateTime}
                 </div>
               )}
             </div>
           </div>
+        )}
+
+        {/* ── Driver location badge / unavailable notice (Phase 7E.2) ─────── */}
+        {phase === 'matched' && (
+          matchedDriverLocation ? (
+            <div
+              className="dispatch-panel__location-badge"
+              role="status"
+              id="dispatch-driver-location-badge"
+            >
+              <span className="dispatch-panel__location-badge-icon" aria-hidden="true">📍</span>
+              <div className="dispatch-panel__location-badge-text">
+                <strong>Driver location verified</strong>
+                {formattedFixTime && (
+                  <span>Fix at {formattedFixTime}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div
+              className="dispatch-panel__location-badge dispatch-panel__location-badge--unavailable"
+              role="status"
+              id="dispatch-driver-location-unavailable"
+            >
+              <span className="dispatch-panel__location-badge-icon" aria-hidden="true">📍</span>
+              <div className="dispatch-panel__location-badge-text">
+                <span>Driver location unavailable (stale or unverified fix at match time)</span>
+              </div>
+            </div>
+          )
         )}
 
         {phase === 'matched' && !matchedDriverId && (

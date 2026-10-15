@@ -270,3 +270,52 @@
   color: #ff9090;
   line-height: 1.45;
 }
+
+/* ── Driver location verified badge (Phase 7E.2) ────────────────────────────── */
+
+.dispatch-panel__location-badge {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(255, 197, 66, 0.07);
+  border: 1px solid rgba(255, 197, 66, 0.28);
+}
+
+.dispatch-panel__location-badge--unavailable {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dispatch-panel__location-badge-icon {
+  font-size: 13px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.dispatch-panel__location-badge-text {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.45;
+}
+
+.dispatch-panel__location-badge-text strong {
+  display: block;
+  font-weight: 600;
+  color: #ffc542;
+  margin-bottom: 2px;
+  font-size: 11px;
+}
+
+.dispatch-panel__location-badge-text span {
+  display: block;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+
+.dispatch-panel__location-badge--unavailable .dispatch-panel__location-badge-text span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}

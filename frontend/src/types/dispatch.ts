@@ -1,5 +1,5 @@
 /**
- * Phase 7D — Dispatch domain types for the frontend API client and hook.
+ * Phase 7E.2 — Dispatch domain types for the frontend API client and hook.
  *
  * These types mirror the backend JSON contracts for:
  *   POST /api/request           → DispatchRequest / DispatchAccepted
@@ -46,6 +46,12 @@ export interface DispatchAccepted {
  *   PENDING    – queued, matching in progress
  *   MATCHED    – driver assigned; driverId is populated
  *   NO_DRIVERS – terminal; no driver was available
+ *
+ * Phase 7E.2: Optional driver telemetry fields are present when the backend
+ * has a fresh GPS fix for the matched driver in its registry at query time.
+ * These represent the last-known verified fix as of the status response —
+ * not a continuously live position. Telemetry may be null even when status
+ * is MATCHED; null telemetry does not invalidate the match.
  */
 export interface RequestStatusResponse {
   requestId: string;
@@ -55,6 +61,23 @@ export interface RequestStatusResponse {
   driverId: string | null;
   receivedAt: string; // ISO-8601
   updatedAt: string;  // ISO-8601
+  /**
+   * Phase 7E.2 — WGS-84 latitude of the matched driver's last-known fresh fix.
+   * Only present when the backend has a verified, non-stale GPS fix.
+   * May be null even when status === 'MATCHED'.
+   */
+  driverLatitude?: number | null;
+  /**
+   * Phase 7E.2 — WGS-84 longitude of the matched driver's last-known fresh fix.
+   * Only present when the backend has a verified, non-stale GPS fix.
+   * May be null even when status === 'MATCHED'.
+   */
+  driverLongitude?: number | null;
+  /**
+   * Phase 7E.2 — ISO-8601 timestamp at which the driver fix was captured.
+   * Only present when driverLatitude and driverLongitude are present.
+   */
+  driverLocationAt?: string | null;
 }
 
 export type RequestStatus = 'PENDING' | 'MATCHED' | 'NO_DRIVERS';
@@ -77,10 +100,17 @@ export interface DispatchState {
   /** Confirmed backend driver ID (only when phase === 'matched') */
   matchedDriverId: string | null;
   /**
-   * Verified coordinates of the matched driver, if supplied by the backend.
-   * Null when the backend does not expose driver coordinates.
+   * Phase 7E.2 — Verified coordinates of the matched driver's last-known fresh
+   * fix, extracted and validated from the status response at match time.
+   * Null when the backend does not supply a valid GPS fix for the matched driver.
+   * Permits (0, 0) as a valid coordinate pair (Null Island).
    */
   matchedDriverLocation: { lat: number; lon: number } | null;
+  /**
+   * Phase 7E.2 — ISO-8601 timestamp at which the driver fix was captured,
+   * as reported by the backend. Null when matchedDriverLocation is null.
+   */
+  matchedDriverLocationAt: string | null;
   /** Human-readable error message (only when phase === 'error') */
   errorMessage: string | null;
   /** ISO-8601 timestamp of the last status update */
