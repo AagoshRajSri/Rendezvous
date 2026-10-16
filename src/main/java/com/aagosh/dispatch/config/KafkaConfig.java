@@ -61,6 +61,9 @@ public class KafkaConfig {
     @Value("${spring.kafka.listener.auto-startup:true}")
     private boolean autoStartup;
 
+    @Value("${spring.kafka.consumer.max-poll-records:50}")
+    private int maxPollRecords;
+
     // -------------------------------------------------------------------------
     // KafkaAdmin & Topics
     // -------------------------------------------------------------------------
@@ -132,6 +135,7 @@ public class KafkaConfig {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, consumerGroupId);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
         props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName());
@@ -147,6 +151,27 @@ public class KafkaConfig {
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setAutoStartup(autoStartup);
+
+        // Commit offsets only after successful processing.
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+
+        // Retry twice at 1-second intervals; then log and skip.
+        factory.setCommonErrorHandler(
+                new DefaultErrorHandler(new FixedBackOff(1_000L, 2L)));
+
+        return factory;
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, Object> batchKafkaListenerContainerFactory(
+            ConsumerFactory<String, Object> consumerFactory) {
+
+        ConcurrentKafkaListenerContainerFactory<String, Object> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setAutoStartup(autoStartup);
+        factory.setBatchListener(true);
+        factory.getContainerProperties().setSubBatchPerPartition(true);
 
         // Commit offsets only after successful processing.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);

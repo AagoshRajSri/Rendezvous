@@ -8,6 +8,7 @@ import com.aagosh.dispatch.domain.MatchStatus;
 import com.aagosh.dispatch.domain.RideRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -333,5 +334,70 @@ class AssignmentPersistenceServiceIT {
         // Losing request has no assignment or trip
         assertFalse(assignmentRepository.existsByRequestId("REQ-LOSE"));
         assertFalse(tripRepository.existsByRequestId("REQ-LOSE"));
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @DisplayName("14. Real PostgreSQL batch rollback: partial unique constraint violation on active driver rolls back all requests in batch and compensateClaims releases claims")
+    void batchPersistenceRollback_rollsBackAllRequestsAndCompensatesClaims() {
+        try {
+            // Pre-existing active trip for driver D-BATCH-BUSY
+            RideRequest busyReq = makeRequest("REQ-IT-BATCH-BUSY");
+            service.persistRequest(busyReq);
+            tripRepository.saveAndFlush(new TripEntity("REQ-IT-BATCH-BUSY", "D-BATCH-BUSY", com.aagosh.dispatch.domain.TripStatus.ASSIGNED));
+
+            // Prepare a batch of 3 requests:
+            // Req 1: Valid match with available driver D-BATCH-AVAIL
+            RideRequest req1 = makeRequest("REQ-IT-BATCH-1");
+            Assignment assignment1 = makeAssignment("REQ-IT-BATCH-1", "D-BATCH-AVAIL", 3.00);
+
+            // Req 2: Conflicting match attempting to assign D-BATCH-BUSY (will violate uq_trips_active_driver)
+            RideRequest req2 = makeRequest("REQ-IT-BATCH-2");
+            Assignment assignment2 = makeAssignment("REQ-IT-BATCH-2", "D-BATCH-BUSY", 4.00);
+
+            // Req 3: Unmatched request (NO_DRIVERS)
+            RideRequest req3 = makeRequest("REQ-IT-BATCH-3");
+
+            List<RideRequest> batchRequests = List.of(req1, req2, req3);
+            List<Assignment> batchAssignments = List.of(assignment1, assignment2);
+
+            // Persist batch must fail on assignment2's trip constraint and roll back entirely
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.dao.DataIntegrityViolationException.class,
+                    () -> service.persistBatch(batchRequests, batchAssignments));
+
+            // Verify atomic rollback in real PostgreSQL:
+            // No assignment was committed for REQ-IT-BATCH-1 or REQ-IT-BATCH-2
+            assertFalse(assignmentRepository.existsByRequestId("REQ-IT-BATCH-1"),
+                    "Assignment 1 must be rolled back");
+            assertFalse(assignmentRepository.existsByRequestId("REQ-IT-BATCH-2"),
+                    "Assignment 2 must be rolled back");
+
+            // No trip was committed for REQ-IT-BATCH-1 or REQ-IT-BATCH-2
+            assertFalse(tripRepository.existsByRequestId("REQ-IT-BATCH-1"),
+                    "Trip 1 must be rolled back");
+            assertFalse(tripRepository.existsByRequestId("REQ-IT-BATCH-2"),
+                    "Trip 2 must be rolled back");
+
+            // Requests were not durably finalized as MATCHED or NO_DRIVERS
+            assertFalse(service.isRequestFinalized("REQ-IT-BATCH-1"));
+            assertFalse(service.isRequestFinalized("REQ-IT-BATCH-2"));
+            assertFalse(service.isRequestFinalized("REQ-IT-BATCH-3"));
+
+            // Now test compensation:
+            assertEquals(MatchStatus.CLAIMED, assignment1.driver().state().getStatus());
+            assertEquals(MatchStatus.CLAIMED, assignment2.driver().state().getStatus());
+
+            service.reconcileAndCompensateClaims(batchAssignments);
+
+            // Since DB lookup confirmed no assignments committed, claims are safely released to AVAILABLE
+            assertEquals(MatchStatus.AVAILABLE, assignment1.driver().state().getStatus(),
+                    "Driver 1 claim must be released");
+            assertEquals(MatchStatus.AVAILABLE, assignment2.driver().state().getStatus(),
+                    "Driver 2 claim must be released");
+        } finally {
+            tripRepository.findByRequestId("REQ-IT-BATCH-BUSY").ifPresent(tripRepository::delete);
+            rideRequestRepository.findByRequestId("REQ-IT-BATCH-BUSY").ifPresent(rideRequestRepository::delete);
+        }
     }
 }

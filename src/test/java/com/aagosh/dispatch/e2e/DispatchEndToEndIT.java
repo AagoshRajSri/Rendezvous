@@ -210,6 +210,11 @@ class DispatchEndToEndIT {
                 if (processed != null) processed.clear();
             }
         }
+
+        // 5. Reset AdaptiveWindowController telemetry
+        if (rideRequestConsumer.getWindowController() != null) {
+            rideRequestConsumer.getWindowController().reset();
+        }
     }
 
     @AfterEach
@@ -853,6 +858,103 @@ class DispatchEndToEndIT {
                 .andExpect(jsonPath("$.driverLatitude").doesNotExist())
                 .andExpect(jsonPath("$.driverLongitude").doesNotExist())
                 .andExpect(jsonPath("$.driverLocationAt").doesNotExist());
+    }
+
+    // =========================================================================
+    // Scenario 11 — End-to-end multi-request batch dispatch & passive telemetry
+    // =========================================================================
+
+    @Test
+    @DisplayName("11. Multi-request burst via Kafka is batched, matched, atomically persisted, and recorded in controller telemetry")
+    void multiRequestBurstIsBatchedAndRecordedInTelemetry() throws Exception {
+        // 1. Register 3 drivers
+        long now = System.currentTimeMillis();
+        for (int i = 1; i <= 3; i++) {
+            String dId = "E2E-D-BATCH-" + i;
+            double lat = 17.3850 + (i * 0.001);
+            double lon = 78.4867 + (i * 0.001);
+            mockMvc.perform(post("/register")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"driverId":"%s","latitude":%f,"longitude":%f,
+                         "action":"REGISTER","capturedAt":%d}
+                        """.formatted(dId, lat, lon, now)))
+                    .andExpect(status().isAccepted());
+        }
+
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> {
+                   assertTrue(driverRegistry.findById("E2E-D-BATCH-1").isPresent());
+                   assertTrue(driverRegistry.findById("E2E-D-BATCH-2").isPresent());
+                   assertTrue(driverRegistry.findById("E2E-D-BATCH-3").isPresent());
+               });
+
+        // 2. Publish 3 ride requests in rapid succession
+        for (int i = 1; i <= 3; i++) {
+            String reqId = "E2E-REQ-BATCH-" + i;
+            RideRequestDto dto = new RideRequestDto(reqId, null, 17.3850 + (i * 0.001), 78.4867 + (i * 0.001));
+            rideRequestKafkaTemplate.send(KafkaTopics.RIDE_REQUESTS, reqId, dto).get(5, TimeUnit.SECONDS);
+        }
+
+        // 3. Await all 3 requests reaching terminal MATCHED state in PostgreSQL
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> {
+                   assertEquals(3, assignmentRepository.count(),
+                           "All 3 requests must be persisted in assignments table");
+                   for (int i = 1; i <= 3; i++) {
+                       String reqId = "E2E-REQ-BATCH-" + i;
+                       var optStatus = persistenceService.getRequestStatus(reqId);
+                       assertTrue(optStatus.isPresent(), "Status for " + reqId + " must exist");
+                       assertEquals(AssignmentPersistenceService.STATUS_MATCHED, optStatus.get());
+                   }
+               });
+
+        // 4. Verify telemetry recorded batches and requests
+        var telemetry = rideRequestConsumer.getWindowController().getTelemetrySnapshot();
+        assertTrue(telemetry.totalBatches() >= 1, "Must have recorded at least 1 batch");
+        assertTrue(telemetry.totalRequests() >= 3, "Must have observed at least 3 requests");
+        assertTrue(telemetry.averageBatchSize() >= 1.0, "Average batch size must be >= 1.0");
+    }
+
+    // =========================================================================
+    // Scenario 12 — End-to-end mixed batch: poison pill skipped without stalling partition
+    // =========================================================================
+
+    @Test
+    @DisplayName("12. Poison pill record does not stall partition and allows subsequent valid request to match and commit")
+    void poisonPillRecordDoesNotStallPartition() throws Exception {
+        String driverId = "E2E-D-POISON";
+        String validReqId = "E2E-REQ-POISON-VALID";
+        long now = System.currentTimeMillis();
+
+        mockMvc.perform(post("/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"driverId":"%s","latitude":17.3850,"longitude":78.4867,
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, now)))
+                .andExpect(status().isAccepted());
+
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> assertTrue(driverRegistry.findById(driverId).isPresent()));
+
+        // Publish a null payload (simulates poison pill / tombstone) followed by a valid payload
+        rideRequestKafkaTemplate.send(KafkaTopics.RIDE_REQUESTS, "KEY-POISON", null).get(5, TimeUnit.SECONDS);
+        RideRequestDto validDto = new RideRequestDto(validReqId, null, 17.3851, 78.4868);
+        rideRequestKafkaTemplate.send(KafkaTopics.RIDE_REQUESTS, validReqId, validDto).get(5, TimeUnit.SECONDS);
+
+        // Await valid request successfully processed and persisted despite preceding poison pill
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> {
+                   var optStatus = persistenceService.getRequestStatus(validReqId);
+                   assertTrue(optStatus.isPresent(), "Valid request must be processed");
+                   assertEquals(AssignmentPersistenceService.STATUS_MATCHED, optStatus.get());
+                   assertTrue(assignmentRepository.existsByRequestId(validReqId));
+               });
     }
 
     // =========================================================================

@@ -25,6 +25,7 @@ import org.springframework.stereotype.Component;
 import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.support.serializer.SerializationUtils;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -109,6 +110,7 @@ public class RideRequestConsumer {
     private final DriverFreshnessConfig freshnessConfig;
     private final DispatchCostConfig costConfig;
     private final AssignmentPersistenceService persistenceService;
+    private final AdaptiveWindowController windowController;
 
     /**
      * Dedicated monitor lock guarding all accesses to both in-flight and processed request caches.
@@ -140,63 +142,129 @@ public class RideRequestConsumer {
                                DriverFreshnessConfig freshnessConfig,
                                DispatchCostConfig costConfig,
                                AssignmentPersistenceService persistenceService) {
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.empty());
+    }
+
+    public RideRequestConsumer(Matcher matcher,
+                               DriverRegistry driverRegistry,
+                               DriverFreshnessConfig freshnessConfig,
+                               DispatchCostConfig costConfig,
+                               AssignmentPersistenceService persistenceService,
+                               AdaptiveWindowController windowController) {
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.ofNullable(windowController));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RideRequestConsumer(Matcher matcher,
+                               DriverRegistry driverRegistry,
+                               DriverFreshnessConfig freshnessConfig,
+                               DispatchCostConfig costConfig,
+                               AssignmentPersistenceService persistenceService,
+                               Optional<AdaptiveWindowController> windowController) {
         this.matcher            = Objects.requireNonNull(matcher, "matcher");
         this.driverRegistry     = Objects.requireNonNull(driverRegistry, "driverRegistry");
         this.freshnessConfig    = Objects.requireNonNull(freshnessConfig, "freshnessConfig");
         this.costConfig         = Objects.requireNonNull(costConfig, "costConfig");
         this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService");
+        this.windowController   = (windowController != null && windowController.isPresent())
+                ? windowController.get()
+                : new AdaptiveWindowController();
     }
 
     /**
-     * Processes a single ride request event from the {@code ride-requests} topic.
+     * Returns the underlying adaptive window controller for telemetry inspection.
+     *
+     * @return the controller instance
+     */
+    public AdaptiveWindowController getWindowController() {
+        return windowController;
+    }
+
+    /**
+     * Backward-compatible single-record entry point that delegates to the batch handler.
      *
      * @param record the Kafka record; payload is a {@link RideRequestDto}
      * @param ack    manual acknowledgement handle; called on success or deliberate skip
      */
+     public void onRideRequest(ConsumerRecord<String, RideRequestDto> record, Acknowledgment ack) {
+         onRideRequests(record != null ? List.of(record) : List.of(), ack);
+     }
+
+    /**
+     * Processes a batch of ride request events from the {@code ride-requests} topic.
+     *
+     * <p><strong>Lifecycle guarantees:</strong>
+     * <ul>
+     *   <li><strong>Thread-safety:</strong> Operates entirely on the Kafka consumer thread; no sleeps or
+     *       artificial blocking inside the listener.</li>
+     *   <li><strong>Order preservation:</strong> Records are delivered per-partition; offsets are committed
+     *       monotonically only after PostgreSQL commits.</li>
+     *   <li><strong>Durable idempotency:</strong> Malformed, unparseable (poison pills), or duplicate records
+     *       are safely filtered without aborting the batch.</li>
+     *   <li><strong>Atomic persistence & compensation:</strong> Uses {@link AssignmentPersistenceService#persistBatch}
+     *       to atomically persist matched and unmatched outcomes. On failure, {@link AssignmentPersistenceService#reconcileAndCompensateClaims}
+     *       safely reconciles ambiguous outcomes before releasing driver claims.</li>
+     * </ul>
+     *
+     * @param records the list of Kafka records from the current poll batch
+     * @param ack     manual acknowledgement handle; called strictly after database commit
+     */
     @KafkaListener(
             topics = KafkaTopics.RIDE_REQUESTS,
             groupId = "${spring.kafka.consumer.group-id:dispatch-service}",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "batchKafkaListenerContainerFactory"
     )
-    public void onRideRequest(ConsumerRecord<String, RideRequestDto> record, Acknowledgment ack) {
-        RideRequestDto event = record.value();
-
-        // ---- Guard: null or unparseable payload (e.g. poison pill from ErrorHandlingDeserializer) ----
-        if (event == null) {
-            String errorDetail = extractDeserializationError(record);
-            log.warn("Received null or unparseable ride request record at topic={} partition={} offset={} key={}{}; acknowledging and skipping",
-                    record.topic(), record.partition(), record.offset(), record.key(),
-                    errorDetail != null ? " (" + errorDetail + ")" : "");
-            ack.acknowledge();
+    public void onRideRequests(List<ConsumerRecord<String, RideRequestDto>> records, Acknowledgment ack) {
+        if (records == null || records.isEmpty()) {
+            if (ack != null) {
+                ack.acknowledge();
+            }
             return;
         }
 
-        // ---- Guard: invalid payload ----
-        String requestId;
+        // Passive controller observation: track batch size and arrival rate metrics.
+        // Must never delay, alter Kafka pacing, or fail request processing.
         try {
-            event.validate();
-            requestId = event.resolveId();
+            windowController.recordArrivals(records.size());
         } catch (Exception ex) {
-            log.error("Invalid ride request event at topic={} partition={} offset={} key={}: {}",
-                    record.topic(), record.partition(), record.offset(), record.key(), ex.getMessage());
-            ack.acknowledge();
-            return;
+            log.warn("Failed to record batch telemetry in AdaptiveWindowController: {}", ex.getMessage());
         }
 
-        // ---- In-memory idempotency check and in-flight reservation (fast path) ----
-        if (!reserveInFlight(requestId)) {
-            log.info("Duplicate ride request {} already processed or in-flight; acknowledging without re-matching",
-                    requestId);
-            ack.acknowledge();
-            return;
-        }
+        List<RideRequest> validBatchRequests = new ArrayList<>();
+        List<String> newlyReservedInFlight = new ArrayList<>();
 
-        // ---- Matching & Persistence Lifecycle ----
-        try {
-            GeoPoint pickup = new GeoPoint(event.latitude(), event.longitude());
-            RideRequest domainRequest = new RideRequest(requestId, pickup);
+        for (ConsumerRecord<String, RideRequestDto> record : records) {
+            RideRequestDto event = record.value();
 
-            // Step 2: Check durable request state before matching
+            // Guard: null or unparseable payload (e.g. poison pill from ErrorHandlingDeserializer)
+            if (event == null) {
+                String errorDetail = extractDeserializationError(record);
+                log.warn("Received null or unparseable ride request record at topic={} partition={} offset={} key={}{}; skipping",
+                        record.topic(), record.partition(), record.offset(), record.key(),
+                        errorDetail != null ? " (" + errorDetail + ")" : "");
+                continue;
+            }
+
+            // Guard: invalid payload
+            String requestId;
+            try {
+                event.validate();
+                requestId = event.resolveId();
+            } catch (Exception ex) {
+                log.error("Invalid ride request event at topic={} partition={} offset={} key={}: {}; skipping",
+                        record.topic(), record.partition(), record.offset(), record.key(), ex.getMessage());
+                continue;
+            }
+
+            // In-memory idempotency check and in-flight reservation (fast path)
+            if (!reserveInFlight(requestId)) {
+                log.info("Duplicate ride request {} already processed or in-flight; skipping re-match",
+                        requestId);
+                continue;
+            }
+            newlyReservedInFlight.add(requestId);
+
+            // Check durable request state before matching
             Optional<String> durableStatus = persistenceService.getRequestStatus(requestId);
             if (durableStatus.isPresent()) {
                 String status = durableStatus.get();
@@ -206,95 +274,100 @@ public class RideRequestConsumer {
                     log.info("Ride request {} already durably finalized with status {}; acknowledging duplicate",
                             requestId, status);
                     markProcessed(requestId);
-                    ack.acknowledge();
-                    return;
+                    newlyReservedInFlight.remove(requestId);
+                    continue;
                 }
             }
 
-            // Step 4: Driver matching — only consider fresh, verified-timestamp drivers
-            List<Driver> drivers = driverRegistry.snapshotFresh(freshnessConfig);
-            CostFunction costFunction = new DispatchCostFunction(costConfig, List.of(domainRequest));
+            GeoPoint pickup = new GeoPoint(event.latitude(), event.longitude());
+            validBatchRequests.add(new RideRequest(requestId, pickup));
+        }
 
-            List<Assignment> assignments = matcher.match(
-                    List.of(domainRequest), drivers, costFunction);
-
-            if (assignments.isEmpty()) {
-                // No driver available — record terminal outcome transactionally and acknowledge.
-                try {
-                    persistenceService.persistNoDrivers(domainRequest);
-                } catch (Exception ex) {
-                    if (persistenceService.isRequestFinalized(requestId)) {
-                        log.info("Ride request {} was finalized concurrently; acknowledging duplicate", requestId);
-                        markProcessed(requestId);
-                        ack.acknowledge();
-                        return;
-                    }
-                    releaseInFlight(requestId);
-                    log.error("Failed to persist NO_DRIVERS for request {}: {}", requestId, ex.getMessage(), ex);
-                    throw ex;
-                }
-
-                log.info("No driver available for ride request {}; recorded NO_DRIVERS", requestId);
-                markProcessed(requestId);
+        // If no fresh requests require matching (e.g., batch only contained poison pills, invalid payloads, or duplicates)
+        if (validBatchRequests.isEmpty()) {
+            if (ack != null) {
                 ack.acknowledge();
+            }
+            return;
+        }
+
+        List<Assignment> assignments = List.of();
+        try {
+            // Driver matching: snapshot fresh drivers and evaluate spatial cost function across the entire batch
+            List<Driver> drivers = driverRegistry.snapshotFresh(freshnessConfig);
+            CostFunction costFunction = new DispatchCostFunction(costConfig, validBatchRequests);
+
+            assignments = matcher.match(validBatchRequests, drivers, costFunction);
+
+            // Step 5: Atomic batch persistence
+            persistenceService.persistBatch(validBatchRequests, assignments);
+
+            // Step 6: On confirmed commit, mark in-flight requests as processed and acknowledge Kafka
+            for (String reqId : newlyReservedInFlight) {
+                markProcessed(reqId);
+            }
+
+            log.info("Batch processed successfully: {} requests ({} matched, {} no-drivers); committing offset",
+                    validBatchRequests.size(), assignments.size(), validBatchRequests.size() - assignments.size());
+
+            if (ack != null) {
+                ack.acknowledge();
+            }
+
+        } catch (Exception ex) {
+            log.error("Failed to process batch of {} requests: {}",
+                    validBatchRequests.size(), ex.getMessage(), ex);
+
+            // Reconcile ambiguous durable state and compensate driver claims
+            persistenceService.reconcileAndCompensateClaims(assignments);
+
+            // Check if all requests in the batch were actually durably finalized despite the error
+            boolean allFinalized = true;
+            for (RideRequest req : validBatchRequests) {
+                boolean reqFinalized = false;
+                try {
+                    reqFinalized = persistenceService.isRequestFinalized(req.id());
+                } catch (Exception queryEx) {
+                    log.warn("Failed to check durable finalization for request {}: {}; assuming unfinalized",
+                            req.id(), queryEx.getMessage());
+                    reqFinalized = false;
+                }
+                if (!reqFinalized) {
+                    allFinalized = false;
+                    break;
+                }
+            }
+
+            if (allFinalized) {
+                // Ambiguous commit confirmed for all requests: mark processed and acknowledge
+                for (String reqId : newlyReservedInFlight) {
+                    markProcessed(reqId);
+                }
+                if (ack != null) {
+                    ack.acknowledge();
+                }
+                log.info("Batch persistence failed but all {} requests were reconciled as durably finalized; acknowledged duplicate batch",
+                        validBatchRequests.size());
                 return;
             }
 
-            // Step 5: Assignment persistence with driver-claim compensation
-            Assignment assignment = assignments.get(0);
-            Driver matchedDriver = assignment.driver();
-
-            try {
-                persistenceService.persistMatchedAssignment(domainRequest, assignment);
-            } catch (Exception ex) {
-                log.error("Persistence failed for request {} with driver {}: {}",
-                        requestId, matchedDriver.id(), ex.getMessage(), ex);
-
-                // Ambiguous failure reconciliation:
-                // Check if the assignment was actually committed to PostgreSQL despite the exception.
-                Optional<AssignmentEntity> existingAssignment = persistenceService.findAssignment(requestId);
-                if (existingAssignment.isPresent()) {
-                    String persistedDriverId = existingAssignment.get().getDriverId();
-                    if (persistedDriverId.equals(matchedDriver.id())) {
-                        log.info("Assignment for request {} and driver {} committed; acknowledging duplicate",
-                                requestId, matchedDriver.id());
-                    } else {
-                        // Another competing delivery won with a different driver: release our claim!
-                        boolean released = matchedDriver.state().releaseClaim(requestId);
-                        log.info("Request {} already assigned to driver {}; released our claim on driver {} (released={})",
-                                requestId, persistedDriverId, matchedDriver.id(), released);
-                    }
-                    markProcessed(requestId);
-                    ack.acknowledge();
-                    return;
+            // Rollback confirmed for at least one record: release in-flight reservations
+            // for unfinalized requests so Kafka error handler retries can re-attempt
+            for (RideRequest req : validBatchRequests) {
+                boolean reqFinalized = false;
+                try {
+                    reqFinalized = persistenceService.isRequestFinalized(req.id());
+                } catch (Exception queryEx) {
+                    reqFinalized = false;
                 }
-
-                // Rollback confirmed: release the driver claim safely with ownership check
-                boolean released = matchedDriver.state().releaseClaim(requestId);
-                log.warn("Released driver claim for driver {} and request {} (claimReleased={})",
-                        matchedDriver.id(), requestId, released);
-
-                releaseInFlight(requestId);
-                throw ex; // Propagate so Kafka error handler / retry can act
+                if (reqFinalized) {
+                    markProcessed(req.id());
+                } else {
+                    releaseInFlight(req.id());
+                }
             }
 
-            // Step 6: After confirmed commit, update in-memory idempotency state and acknowledge Kafka
-            log.info("Ride request {} matched to driver {} (cost={}); transaction committed",
-                    requestId,
-                    assignment.driver().id(),
-                    assignment.cost());
-            markProcessed(requestId);
-            ack.acknowledge();
-
-        } catch (Exception ex) {
-            // Processing failed (non-compensation path): release in-flight reservation so
-            // Kafka error handler retries can re-attempt without false-duplicate suppression.
-            // Note: if releaseInFlight was already called in a compensation branch above,
-            // this call is a no-op (idempotent — the ID is simply absent from the set).
-            releaseInFlight(requestId);
-            log.error("Failed to process ride request {} at topic={} partition={} offset={} key={}: {}",
-                    requestId, record.topic(), record.partition(), record.offset(), record.key(),
-                    ex.getMessage(), ex);
+            // Propagate exception so Kafka DefaultErrorHandler seeks back to uncommitted offset
             throw ex;
         }
     }

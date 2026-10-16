@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -187,5 +188,235 @@ class AssignmentPersistenceServiceTest {
         assertEquals(Optional.of(entity), service.findTrip("REQ-TRIP"));
         assertTrue(service.isTripPersisted("REQ-TRIP"));
         assertFalse(service.isTripPersisted("REQ-TRIP-MISS"));
+    }
+
+    @Test
+    @DisplayName("9. persistBatch with mixed outcomes persists MATCHED, NO_DRIVERS, and flushes all repos")
+    void persistBatch_mixedOutcomes_persistsMatchedAndNoDrivers() {
+        RideRequest req1 = sampleRequest("REQ-1");
+        RideRequest req2 = sampleRequest("REQ-2");
+        RideRequest req3 = sampleRequest("REQ-3");
+
+        Assignment a1 = sampleAssignment("REQ-1", "D-1", 1.25);
+        Assignment a3 = sampleAssignment("REQ-3", "D-3", 2.50);
+
+        when(rideRequestRepository.findByRequestId(any())).thenReturn(Optional.empty());
+        when(assignmentRepository.existsByRequestId(any())).thenReturn(false);
+        when(tripRepository.existsByRequestId(any())).thenReturn(false);
+
+        AssignmentPersistenceService.BatchPersistResult result =
+                service.persistBatch(List.of(req1, req2, req3), List.of(a1, a3));
+
+        assertEquals(2, result.matchedPersisted());
+        assertEquals(1, result.noDriversPersisted());
+        assertEquals(0, result.duplicatesSkipped());
+
+        // Verify ride_requests saved for all 3
+        ArgumentCaptor<RideRequestEntity> reqCaptor = ArgumentCaptor.forClass(RideRequestEntity.class);
+        verify(rideRequestRepository, times(3)).save(reqCaptor.capture());
+        List<RideRequestEntity> savedReqs = reqCaptor.getAllValues();
+        assertEquals("REQ-1", savedReqs.get(0).getRequestId());
+        assertEquals(AssignmentPersistenceService.STATUS_MATCHED, savedReqs.get(0).getStatus());
+        assertEquals("REQ-2", savedReqs.get(1).getRequestId());
+        assertEquals(AssignmentPersistenceService.STATUS_NO_DRIVERS, savedReqs.get(1).getStatus());
+        assertEquals("REQ-3", savedReqs.get(2).getRequestId());
+        assertEquals(AssignmentPersistenceService.STATUS_MATCHED, savedReqs.get(2).getStatus());
+
+        // Verify assignments saved only for matched requests (REQ-1, REQ-3)
+        ArgumentCaptor<AssignmentEntity> assignCaptor = ArgumentCaptor.forClass(AssignmentEntity.class);
+        verify(assignmentRepository, times(2)).save(assignCaptor.capture());
+        assertEquals("REQ-1", assignCaptor.getAllValues().get(0).getRequestId());
+        assertEquals("D-1", assignCaptor.getAllValues().get(0).getDriverId());
+        assertEquals("REQ-3", assignCaptor.getAllValues().get(1).getRequestId());
+        assertEquals("D-3", assignCaptor.getAllValues().get(1).getDriverId());
+
+        // Verify trips saved only for matched requests
+        ArgumentCaptor<TripEntity> tripCaptor = ArgumentCaptor.forClass(TripEntity.class);
+        verify(tripRepository, times(2)).save(tripCaptor.capture());
+        assertEquals("REQ-1", tripCaptor.getAllValues().get(0).getRequestId());
+        assertEquals(TripStatus.ASSIGNED, tripCaptor.getAllValues().get(0).getStatus());
+        assertEquals("REQ-3", tripCaptor.getAllValues().get(1).getRequestId());
+        assertEquals(TripStatus.ASSIGNED, tripCaptor.getAllValues().get(1).getStatus());
+
+        // Verify transactional flush
+        verify(rideRequestRepository).flush();
+        verify(assignmentRepository).flush();
+        verify(tripRepository).flush();
+    }
+
+    @Test
+    @DisplayName("10. persistBatch skips already finalized requests (durable idempotency)")
+    void persistBatch_skipsAlreadyFinalizedRequests() {
+        RideRequest reqFinalM = sampleRequest("REQ-FINAL-M");
+        RideRequest reqFinalN = sampleRequest("REQ-FINAL-N");
+        RideRequest reqFresh  = sampleRequest("REQ-FRESH");
+
+        Assignment aFinalM = sampleAssignment("REQ-FINAL-M", "D-1", 1.0);
+        Assignment aFresh  = sampleAssignment("REQ-FRESH", "D-2", 2.0);
+
+        RideRequestEntity entityFinalM = new RideRequestEntity("REQ-FINAL-M", 0, 0, AssignmentPersistenceService.STATUS_MATCHED);
+        RideRequestEntity entityFinalN = new RideRequestEntity("REQ-FINAL-N", 0, 0, AssignmentPersistenceService.STATUS_NO_DRIVERS);
+
+        when(rideRequestRepository.findByRequestId("REQ-FINAL-M")).thenReturn(Optional.of(entityFinalM));
+        when(rideRequestRepository.findByRequestId("REQ-FINAL-N")).thenReturn(Optional.of(entityFinalN));
+        when(rideRequestRepository.findByRequestId("REQ-FRESH")).thenReturn(Optional.empty());
+        when(assignmentRepository.existsByRequestId(any())).thenReturn(false);
+        when(tripRepository.existsByRequestId(any())).thenReturn(false);
+
+        AssignmentPersistenceService.BatchPersistResult result =
+                service.persistBatch(List.of(reqFinalM, reqFinalN, reqFresh), List.of(aFinalM, aFresh));
+
+        assertEquals(1, result.matchedPersisted());
+        assertEquals(0, result.noDriversPersisted());
+        assertEquals(2, result.duplicatesSkipped());
+
+        // Assignment and trip saved only for REQ-FRESH
+        ArgumentCaptor<AssignmentEntity> assignCaptor = ArgumentCaptor.forClass(AssignmentEntity.class);
+        verify(assignmentRepository, times(1)).save(assignCaptor.capture());
+        assertEquals("REQ-FRESH", assignCaptor.getValue().getRequestId());
+
+        ArgumentCaptor<TripEntity> tripCaptor = ArgumentCaptor.forClass(TripEntity.class);
+        verify(tripRepository, times(1)).save(tripCaptor.capture());
+        assertEquals("REQ-FRESH", tripCaptor.getValue().getRequestId());
+    }
+
+    @Test
+    @DisplayName("11. persistBatch processes entities in deterministic ascending requestId order")
+    void persistBatch_deterministicAscendingOrder() {
+        RideRequest reqZ = sampleRequest("REQ-Z");
+        RideRequest reqA = sampleRequest("REQ-A");
+        RideRequest reqM = sampleRequest("REQ-M");
+
+        Assignment aZ = sampleAssignment("REQ-Z", "D-Z", 1.0);
+        Assignment aA = sampleAssignment("REQ-A", "D-A", 1.0);
+
+        when(rideRequestRepository.findByRequestId(any())).thenReturn(Optional.empty());
+        when(assignmentRepository.existsByRequestId(any())).thenReturn(false);
+        when(tripRepository.existsByRequestId(any())).thenReturn(false);
+
+        // Input in reverse/unordered sequence
+        service.persistBatch(List.of(reqZ, reqA, reqM), List.of(aZ, aA));
+
+        ArgumentCaptor<RideRequestEntity> captor = ArgumentCaptor.forClass(RideRequestEntity.class);
+        verify(rideRequestRepository, times(3)).save(captor.capture());
+        List<String> order = captor.getAllValues().stream().map(RideRequestEntity::getRequestId).toList();
+        assertEquals(List.of("REQ-A", "REQ-M", "REQ-Z"), order);
+    }
+
+    @Test
+    @DisplayName("12. persistBatch propagates database exceptions to trigger transaction rollback")
+    void persistBatch_propagatesDatabaseExceptionsForRollback() {
+        RideRequest req = sampleRequest("REQ-ERR");
+        Assignment a = sampleAssignment("REQ-ERR", "D-1", 1.0);
+
+        when(rideRequestRepository.findByRequestId("REQ-ERR")).thenReturn(Optional.empty());
+        when(assignmentRepository.save(any())).thenThrow(new DataIntegrityViolationException("Simulated constraint violation"));
+
+        assertThrows(DataIntegrityViolationException.class, () ->
+                service.persistBatch(List.of(req), List.of(a)));
+    }
+
+    @Test
+    @DisplayName("13. reconcileAndCompensateClaims releases driver claims when DB rollback is confirmed")
+    void reconcileAndCompensateClaims_releasesClaimsOnConfirmedRollback() {
+        Assignment a1 = sampleAssignment("REQ-1", "D-1", 1.0);
+        Assignment a2 = sampleAssignment("REQ-2", "D-2", 2.0);
+
+        assertEquals(MatchStatus.CLAIMED, a1.driver().state().getStatus());
+        assertEquals(MatchStatus.CLAIMED, a2.driver().state().getStatus());
+
+        // Rollback confirmed: findAssignment returns empty for both
+        when(assignmentRepository.findByRequestId(any())).thenReturn(Optional.empty());
+
+        AssignmentPersistenceService.BatchCompensationResult comp =
+                service.reconcileAndCompensateClaims(List.of(a1, a2));
+
+        assertEquals(2, comp.totalAssignments());
+        assertEquals(2, comp.claimsReleased());
+        assertEquals(0, comp.claimsRetained());
+        assertEquals(List.of("REQ-1", "REQ-2"), comp.releasedRequestIds());
+
+        // In-memory claims safely compensated to AVAILABLE
+        assertEquals(MatchStatus.AVAILABLE, a1.driver().state().getStatus());
+        assertEquals(MatchStatus.AVAILABLE, a2.driver().state().getStatus());
+    }
+
+    @Test
+    @DisplayName("14. reconcileAndCompensateClaims retains driver claim when ambiguous commit succeeded")
+    void reconcileAndCompensateClaims_retainsClaimOnAmbiguousCommit() {
+        Assignment a1 = sampleAssignment("REQ-1", "D-1", 1.0);
+        Assignment a2 = sampleAssignment("REQ-2", "D-2", 2.0);
+
+        // REQ-1 actually committed with D-1 despite error
+        AssignmentEntity committedEntity = new AssignmentEntity("REQ-1", "D-1", 1.0);
+        when(assignmentRepository.findByRequestId("REQ-1")).thenReturn(Optional.of(committedEntity));
+        // REQ-2 truly rolled back
+        when(assignmentRepository.findByRequestId("REQ-2")).thenReturn(Optional.empty());
+
+        AssignmentPersistenceService.BatchCompensationResult comp =
+                service.reconcileAndCompensateClaims(List.of(a1, a2));
+
+        assertEquals(2, comp.totalAssignments());
+        assertEquals(1, comp.claimsReleased());
+        assertEquals(1, comp.claimsRetained());
+        assertEquals(List.of("REQ-2"), comp.releasedRequestIds());
+        assertEquals(List.of("REQ-1"), comp.retainedRequestIds());
+
+        // D-1 claim must NOT be released!
+        assertEquals(MatchStatus.CLAIMED, a1.driver().state().getStatus());
+        // D-2 claim is safely released
+        assertEquals(MatchStatus.AVAILABLE, a2.driver().state().getStatus());
+    }
+
+    @Test
+    @DisplayName("15. reconcileAndCompensateClaims releases claim if assignment committed with a conflicting driver")
+    void reconcileAndCompensateClaims_releasesClaimOnConflictingDriver() {
+        Assignment a1 = sampleAssignment("REQ-1", "D-1", 1.0);
+
+        // Competing process committed REQ-1 with another driver D-OTHER
+        AssignmentEntity conflictingEntity = new AssignmentEntity("REQ-1", "D-OTHER", 0.8);
+        when(assignmentRepository.findByRequestId("REQ-1")).thenReturn(Optional.of(conflictingEntity));
+
+        AssignmentPersistenceService.BatchCompensationResult comp =
+                service.reconcileAndCompensateClaims(List.of(a1));
+
+        assertEquals(1, comp.claimsReleased());
+        assertEquals(0, comp.claimsRetained());
+
+        // Our claim on D-1 is released
+        assertEquals(MatchStatus.AVAILABLE, a1.driver().state().getStatus());
+    }
+
+    @Test
+    @DisplayName("16. persistBatch rejects duplicate assignments for same requestId within batch")
+    void persistBatch_rejectsDuplicateAssignmentForSameRequestInBatch() {
+        RideRequest req = sampleRequest("REQ-DUP");
+        Assignment a1 = sampleAssignment("REQ-DUP", "D-1", 1.0);
+        Assignment a2 = sampleAssignment("REQ-DUP", "D-2", 2.0);
+
+        assertThrows(IllegalArgumentException.class, () ->
+                service.persistBatch(List.of(req), List.of(a1, a2)));
+    }
+
+    @Test
+    @DisplayName("17. reconcileAndCompensateClaims retains claim when DB lookup fails with exception (never assume rollback)")
+    void reconcileAndCompensateClaims_retainsClaimOnDbLookupFailure() {
+        Assignment a1 = sampleAssignment("REQ-ERR", "D-1", 1.0);
+        assertEquals(MatchStatus.CLAIMED, a1.driver().state().getStatus());
+
+        // Database lookup fails unexpectedly (e.g. timeout or connection drop)
+        when(assignmentRepository.findByRequestId("REQ-ERR"))
+                .thenThrow(new RuntimeException("Database connection timeout during reconciliation"));
+
+        AssignmentPersistenceService.BatchCompensationResult comp =
+                service.reconcileAndCompensateClaims(List.of(a1));
+
+        assertEquals(1, comp.totalAssignments());
+        assertEquals(0, comp.claimsReleased());
+        assertEquals(1, comp.claimsRetained());
+        assertEquals(List.of("REQ-ERR"), comp.retainedRequestIds());
+
+        // In-memory claim is safely retained, NOT released!
+        assertEquals(MatchStatus.CLAIMED, a1.driver().state().getStatus());
     }
 }
