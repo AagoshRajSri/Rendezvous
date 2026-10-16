@@ -305,6 +305,257 @@ describe('useDispatch — place change cancels in-flight flow', () => {
   });
 });
 
+// ── Abort / cancellation tests (Phase 7E.3) ───────────────────────────────────
+
+describe('useDispatch — abort during polling delay terminates cleanly', () => {
+  it('returns to idle without unhandled rejection when reset fires while flow is sleeping between poll attempts', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-ABORT', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-abort', message: 'ok' });
+    // getRequestStatus resolves only after timer advances — keep it pending via PENDING status
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-abort',
+      status: 'PENDING',
+      driverId: null,
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+
+    // Advance past registration + submission + first poll interval, but less than second poll
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
+    expect(result.current.dispatchState.phase).toBe('polling');
+
+    // Reset while delay is in progress (flow is sleeping between poll attempts)
+    act(() => { result.current.reset(); });
+
+    // Confirm clean termination — no unhandled rejection, state is idle
+    expect(result.current.dispatchState.phase).toBe('idle');
+  });
+
+  it('terminates cleanly when unmount fires while the polling delay is pending', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-UNMOUNT', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-unmount', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-unmount',
+      status: 'PENDING',
+      driverId: null,
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    });
+
+    const { result, unmount } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
+    expect(result.current.dispatchState.phase).toBe('polling');
+
+    // Unmount the component — the cleanup effect calls abortRef.current?.abort()
+    // The dangling abort listener must NOT produce an unhandled rejection.
+    expect(() => act(() => { unmount(); })).not.toThrow();
+  });
+
+  it('does not propagate AbortError when place changes while delay is sleeping', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-PLCHG', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-plchg', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-plchg',
+      status: 'PENDING',
+      driverId: null,
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    });
+
+    let place: PlaceSuggestion | null = makePlaceSuggestion('London');
+    const { result, rerender } = renderHook(({ p }) => useDispatch(p), {
+      initialProps: { p: place },
+    });
+
+    act(() => { result.current.requestDispatch(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
+    expect(result.current.dispatchState.phase).toBe('polling');
+
+    // Change place mid-polling delay — abort fires during the sleep window
+    place = makePlaceSuggestion('Tokyo');
+    await act(async () => { rerender({ p: place }); });
+
+    expect(result.current.dispatchState.phase).toBe('idle');
+  });
+
+  it('abort listener is cleaned up after the timer resolves normally so a subsequent abort has no effect', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-CLEAN', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-clean', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-clean',
+      status: 'MATCHED',
+      driverId: 'D-CLEAN',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+      driverLatitude: 51.5074,
+      driverLongitude: -0.1278,
+      driverLocationAt: '2026-01-01T00:00:58Z',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+
+    // Run to completion — timer resolves normally, flow reaches MATCHED
+    await drainHook();
+    expect(result.current.dispatchState.phase).toBe('matched');
+
+    // Subsequent reset (abort after timer already resolved) must not throw
+    expect(() => act(() => { result.current.reset(); })).not.toThrow();
+    expect(result.current.dispatchState.phase).toBe('idle');
+  });
+
+  it('unexpected rejections surface as error phase, log to console, and allow subsequent dispatch attempts', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-UNEXPECTED', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-unexpected', message: 'ok' });
+    // Simulate an unexpected runtime failure inside the polling cycle:
+    // getRequestStatus returns an object whose status property getter throws an unexpected error
+    const unexpectedError = new Error('Corrupted status response payload');
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      get status() {
+        throw unexpectedError;
+      },
+    } as any);
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+
+    // Drain hook to advance past registration, submission, and first poll attempt
+    await drainHook();
+
+    // 1. Error state must be surfaced
+    expect(result.current.dispatchState.phase).toBe('error');
+    expect(result.current.dispatchState.errorMessage).toBe('Corrupted status response payload');
+
+    // 2. Diagnostic logging occurred
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Unhandled error in dispatch flow:',
+      unexpectedError
+    );
+
+    // 3. activeRef must be released so a subsequent dispatch can be initiated
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-retry',
+      status: 'MATCHED',
+      driverId: 'D-RETRY',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+      driverLatitude: 51.5074,
+      driverLongitude: -0.1278,
+      driverLocationAt: '2026-01-01T00:00:58Z',
+    });
+
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.matchedDriverId).toBe('D-RETRY');
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('stale dispatch does not release active lock belonging to a newer dispatch', async () => {
+    let resolveFirstRegister!: (val: any) => void;
+    const firstRegisterPromise = new Promise((resolve) => {
+      resolveFirstRegister = resolve;
+    });
+
+    // First dispatch hangs on registerDriver
+    vi.mocked(registerDriver).mockReturnValueOnce(firstRegisterPromise as any);
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+
+    // 1. Start Dispatch 1
+    act(() => { result.current.requestDispatch(); });
+    expect(result.current.dispatchState.phase).toBe('registering');
+
+    // 2. Reset Dispatch 1
+    act(() => { result.current.reset(); });
+    expect(result.current.dispatchState.phase).toBe('idle');
+
+    // 3. Start Dispatch 2 (second dispatch hangs on registerDriver as well)
+    let resolveSecondRegister!: (val: any) => void;
+    const secondRegisterPromise = new Promise((resolve) => {
+      resolveSecondRegister = resolve;
+    });
+    vi.mocked(registerDriver).mockReturnValueOnce(secondRegisterPromise as any);
+
+    act(() => { result.current.requestDispatch(); });
+    expect(result.current.dispatchState.phase).toBe('registering');
+
+    // 4. Dispatch 1 now finishes/resolves after being superseded
+    await act(async () => {
+      resolveFirstRegister({ driverId: 'D-STALE', message: 'stale' });
+    });
+
+    // 5. Stale dispatch must NOT have released the active lock for Dispatch 2!
+    // A duplicate requestDispatch call while Dispatch 2 is running must be guarded
+    act(() => { result.current.requestDispatch(); });
+    expect(registerDriver).toHaveBeenCalledTimes(2); // Still only 2 calls, not 3
+
+    // 6. Now let Dispatch 2 proceed and finish
+    vi.mocked(submitRideRequest).mockResolvedValueOnce({ requestId: 'req-2', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValueOnce({
+      requestId: 'req-2',
+      status: 'MATCHED',
+      driverId: 'D-NEW',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+    });
+
+    await act(async () => {
+      resolveSecondRegister({ driverId: 'D-NEW', message: 'ok' });
+    });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.matchedDriverId).toBe('D-NEW');
+  });
+
+  it('unexpected error is logged even if signal.aborted is true when the handler runs', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-ERR-ABORT', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-err-abort', message: 'ok' });
+
+    const unexpectedErr = new Error('Corrupted status getter');
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      get status() {
+        throw unexpectedErr;
+      },
+    } as any);
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+
+    // Advance to polling delay
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+
+    // Reset while the request is in flight
+    act(() => { result.current.reset(); });
+
+    // Drain any pending microtasks so the rejection handler runs with signal.aborted === true
+    await drainHook();
+
+    // The unexpected error MUST be logged despite signal.aborted being true
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Unhandled error in dispatch flow:',
+      unexpectedErr
+    );
+
+    // Stale aborted flow must NOT overwrite state (remains idle from reset)
+    expect(result.current.dispatchState.phase).toBe('idle');
+
+    consoleErrorSpy.mockRestore();
+  });
+});
+
 // ── isValidDriverCoords unit tests (Phase 7E.2) ───────────────────────────────────
 
 describe('isValidDriverCoords', () => {

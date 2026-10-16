@@ -3,6 +3,7 @@ package com.aagosh.dispatch.e2e;
 import com.aagosh.dispatch.api.DriverController;
 import com.aagosh.dispatch.api.GlobalExceptionHandler;
 import com.aagosh.dispatch.api.PingAction;
+import com.aagosh.dispatch.api.RequestStatusController;
 import com.aagosh.dispatch.api.RideController;
 import com.aagosh.dispatch.api.RideRequestDto;
 import com.aagosh.dispatch.config.KafkaTopics;
@@ -44,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -161,6 +163,7 @@ class DispatchEndToEndIT {
 
     @Autowired DriverController                      driverController;
     @Autowired RideController                        rideController;
+    @Autowired RequestStatusController               requestStatusController;
     @Autowired DriverRegistry                        driverRegistry;
     @Autowired RideRequestConsumer                   rideRequestConsumer;
     @Autowired AssignmentPersistenceService          persistenceService;
@@ -177,7 +180,7 @@ class DispatchEndToEndIT {
 
     @BeforeEach
     void resetState() {
-        mockMvc = MockMvcBuilders.standaloneSetup(driverController, rideController)
+        mockMvc = MockMvcBuilders.standaloneSetup(driverController, rideController, requestStatusController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -738,6 +741,118 @@ class DispatchEndToEndIT {
                 } catch (Exception ignored) {}
             }
         }
+    }
+
+    // =========================================================================
+    // Scenario 9 — Request status with telemetry: fresh driver returns MATCHED + coordinates
+    // =========================================================================
+
+    @Test
+    @DisplayName("9. GET /api/requests/{requestId} returns MATCHED with telemetry for a fresh matched driver")
+    void requestStatusReturnsMatchedWithTelemetryForFreshDriver() throws Exception {
+        String driverId  = "E2E-D-S9";
+        String requestId = "E2E-REQ-S9";
+        long capturedAt = System.currentTimeMillis();
+
+        // 1. Register driver with fresh location fix
+        mockMvc.perform(post("/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"driverId":"%s","latitude":17.3850,"longitude":78.4867,
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, capturedAt)))
+                .andExpect(status().isAccepted());
+
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> assertTrue(
+                       driverRegistry.findById(driverId).isPresent(),
+                       "Driver must be registered in DriverRegistry"));
+
+        // 2. Submit ride request
+        mockMvc.perform(post("/request")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"requestId":"%s","latitude":17.3852,"longitude":78.4869}
+                    """.formatted(requestId)))
+                .andExpect(status().isAccepted());
+
+        // 3. Await assignment persistence
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> {
+                   var optStatus = persistenceService.getRequestStatus(requestId);
+                   assertTrue(optStatus.isPresent(), "Request status must be persisted");
+                   assertEquals(AssignmentPersistenceService.STATUS_MATCHED, optStatus.get(),
+                           "Request must be MATCHED");
+               });
+
+        // 4. Poll GET /api/requests/{requestId} — verify full telemetry payload
+        mockMvc.perform(get("/api/requests/" + requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId))
+                .andExpect(jsonPath("$.status").value("MATCHED"))
+                .andExpect(jsonPath("$.driverId").value(driverId))
+                .andExpect(jsonPath("$.driverLatitude").value(17.3850))
+                .andExpect(jsonPath("$.driverLongitude").value(78.4867))
+                .andExpect(jsonPath("$.driverLocationAt").isNotEmpty());
+    }
+
+    // =========================================================================
+    // Scenario 10 — Stale driver excluded by matching pipeline yields NO_DRIVERS
+    // =========================================================================
+
+    @Test
+    @DisplayName("10. Stale driver location fix is excluded by matching pipeline; yields NO_DRIVERS and null telemetry")
+    void staleDriverExcludedByMatchingYieldsNoDrivers() throws Exception {
+        String driverId  = "E2E-D-S10";
+        String requestId = "E2E-REQ-S10";
+        // 120 seconds ago — strictly exceeds default 60s freshness window
+        long staleCapturedAt = System.currentTimeMillis() - 120_000L;
+
+        // 1. Register driver with stale timestamp
+        mockMvc.perform(post("/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"driverId":"%s","latitude":17.3850,"longitude":78.4867,
+                     "action":"REGISTER","capturedAt":%d}
+                    """.formatted(driverId, staleCapturedAt)))
+                .andExpect(status().isAccepted());
+
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> assertTrue(
+                       driverRegistry.findById(driverId).isPresent(),
+                       "Driver must be stored in DriverRegistry"));
+
+        // 2. Submit ride request
+        mockMvc.perform(post("/request")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"requestId":"%s","latitude":17.3852,"longitude":78.4869}
+                    """.formatted(requestId)))
+                .andExpect(status().isAccepted());
+
+        // 3. Await pipeline execution: stale driver is excluded from matching candidates,
+        // resulting in NO_DRIVERS terminal persistence
+        await().atMost(Duration.ofSeconds(10))
+               .pollInterval(Duration.ofMillis(50))
+               .untilAsserted(() -> {
+                   var optStatus = persistenceService.getRequestStatus(requestId);
+                   assertTrue(optStatus.isPresent(), "Request status must be persisted");
+                   assertEquals(AssignmentPersistenceService.STATUS_NO_DRIVERS, optStatus.get(),
+                           "Request must terminate in NO_DRIVERS due to stale candidate exclusion");
+               });
+
+        // 4. Query GET /api/requests/{requestId} — verify status is NO_DRIVERS with no driver or telemetry
+        mockMvc.perform(get("/api/requests/" + requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId))
+                .andExpect(jsonPath("$.status").value("NO_DRIVERS"))
+                .andExpect(jsonPath("$.driverId").doesNotExist())
+                .andExpect(jsonPath("$.driverLatitude").doesNotExist())
+                .andExpect(jsonPath("$.driverLongitude").doesNotExist())
+                .andExpect(jsonPath("$.driverLocationAt").doesNotExist());
     }
 
     // =========================================================================

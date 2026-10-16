@@ -124,8 +124,36 @@ export function useDispatch(selectedPlace: PlaceSuggestion | null): UseDispatchR
     abortRef.current = controller;
     const signal = controller.signal;
 
-    void runDispatchFlow(selectedPlace, signal, setDispatchState, () => {
-      activeRef.current = false;
+    runDispatchFlow(selectedPlace, signal, setDispatchState, () => {
+      // Only release active lock if this flow is still the current active one
+      if (abortRef.current === controller) {
+        activeRef.current = false;
+      }
+    }).catch((err) => {
+      const isCurrent = abortRef.current === controller;
+      // Only release active lock if this flow is still the current active one
+      if (isCurrent) {
+        activeRef.current = false;
+      }
+
+      // AbortErrors from intentional cancellation (reset / place change / unmount)
+      // are silently discarded.
+      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      if (isAbort) {
+        return;
+      }
+
+      // Preserve visibility for unexpected errors via logging even if signal was aborted
+      console.error('Unhandled error in dispatch flow:', err);
+
+      // Only update UI error state if this dispatch is still the current active one and not aborted
+      if (isCurrent && !signal.aborted) {
+        setDispatchState({
+          ...IDLE_STATE,
+          phase: 'error',
+          errorMessage: toMessage(err) || 'Unexpected dispatch error',
+        });
+      }
     });
   }, [selectedPlace]);
 
@@ -215,7 +243,16 @@ async function runDispatchFlow(
   let intervalMs = POLL_BASE_MS;
 
   while (attempt < POLL_MAX_ATTEMPTS) {
-    await delay(intervalMs, signal);
+    try {
+      await delay(intervalMs, signal);
+    } catch (_e) {
+      // An AbortError here means the signal was fired during the sleep window
+      // (reset, place change, or unmount). Terminate the flow quietly.
+      if (signal.aborted) return;
+      // Any other rejection is unexpected; re-throw so the unhandled-rejection
+      // handler can report it rather than silently swallowing it.
+      throw _e;
+    }
     if (signal.aborted) return;
 
     let statusResponse;
@@ -314,11 +351,18 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
       reject(new DOMException('Aborted', 'AbortError'));
       return;
     }
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(timer);
       reject(new DOMException('Aborted', 'AbortError'));
-    });
+    };
+    // Use { once: true } so the listener self-removes after the first abort
+    // event. The timer callback also removes it explicitly so no listener
+    // remains on the signal after a normal (non-aborted) resolution.
+    signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
   });
 }
 
