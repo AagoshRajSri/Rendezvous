@@ -90,11 +90,20 @@ public class RedisLocationCache {
 
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<Long>   locationScript;
+    private final com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics;
 
     public RedisLocationCache(StringRedisTemplate redisTemplate,
                               RedisScript<Long> locationScript) {
-        this.redisTemplate  = Objects.requireNonNull(redisTemplate,  "redisTemplate");
-        this.locationScript = Objects.requireNonNull(locationScript, "locationScript");
+        this(redisTemplate, locationScript, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RedisLocationCache(StringRedisTemplate redisTemplate,
+                              RedisScript<Long> locationScript,
+                              @org.springframework.beans.factory.annotation.Autowired(required = false) com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics) {
+        this.redisTemplate   = Objects.requireNonNull(redisTemplate,  "redisTemplate");
+        this.locationScript  = Objects.requireNonNull(locationScript, "locationScript");
+        this.dispatchMetrics = dispatchMetrics;
     }
 
     /**
@@ -140,6 +149,9 @@ public class RedisLocationCache {
                 }
             }
         } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordRedisCacheRequest(com.aagosh.dispatch.metrics.DispatchMetrics.CACHE_ERROR);
+            }
             log.warn("Redis location cache write failed for driver {} at timestamp {}: {}",
                     driverId, timestamp, ex.getMessage());
         }
@@ -201,7 +213,7 @@ public class RedisLocationCache {
     public LocationResult getLocation(String driverId) {
         if (driverId == null || driverId.isBlank()) {
             log.warn("RedisLocationCache.getLocation called with blank driverId");
-            return new LocationResult.RedisError("blank driverId");
+            return recordResult(new LocationResult.RedisError("blank driverId"));
         }
 
         String key = String.format(KEY_PATTERN, driverId);
@@ -210,7 +222,7 @@ public class RedisLocationCache {
                     redisTemplate.opsForHash().entries(key);
 
             if (fields == null || fields.isEmpty()) {
-                return LocationResult.Miss.INSTANCE;
+                return recordResult(LocationResult.Miss.INSTANCE);
             }
 
             String latStr = (String) fields.get(FIELD_LAT);
@@ -221,30 +233,43 @@ public class RedisLocationCache {
                 // Partial write — treat as a miss rather than silently fabricating data.
                 log.warn("Incomplete Redis location entry for driver {}: lat={} lon={} ts={}",
                         driverId, latStr, lonStr, tsStr);
-                return LocationResult.Miss.INSTANCE;
+                return recordResult(LocationResult.Miss.INSTANCE);
             }
 
             double lat       = Double.parseDouble(latStr);
             double lon       = Double.parseDouble(lonStr);
             long   updatedAt = Long.parseLong(tsStr);
             GeoPoint location = new GeoPoint(lat, lon);  // validates range
-            return new LocationResult.Found(location, updatedAt);
+            return recordResult(new LocationResult.Found(location, updatedAt));
 
         } catch (RedisConnectionFailureException ex) {
             // Explicit infrastructure failure — must NOT be silently downgraded to a Miss.
             log.warn("Redis connection failure reading location for driver {}: {}", driverId, ex.getMessage());
-            return new LocationResult.RedisError("connection failure: " + ex.getMessage());
+            return recordResult(new LocationResult.RedisError("connection failure: " + ex.getMessage()));
         } catch (NumberFormatException ex) {
             log.warn("Malformed Redis location fields for driver {}: {}", driverId, ex.getMessage());
-            return new LocationResult.RedisError("malformed data: " + ex.getMessage());
+            return recordResult(new LocationResult.RedisError("malformed data: " + ex.getMessage()));
         } catch (IllegalArgumentException ex) {
             // GeoPoint range validation failed.
             log.warn("Invalid coordinates in Redis for driver {}: {}", driverId, ex.getMessage());
-            return new LocationResult.RedisError("invalid coordinates: " + ex.getMessage());
+            return recordResult(new LocationResult.RedisError("invalid coordinates: " + ex.getMessage()));
         } catch (Exception ex) {
             // Unexpected Redis exception — not a cache miss.
             log.warn("Unexpected error reading Redis location for driver {}: {}", driverId, ex.getMessage());
-            return new LocationResult.RedisError("unexpected error: " + ex.getMessage());
+            return recordResult(new LocationResult.RedisError("unexpected error: " + ex.getMessage()));
         }
+    }
+
+    private LocationResult recordResult(LocationResult result) {
+        if (dispatchMetrics != null) {
+            if (result instanceof LocationResult.Found) {
+                dispatchMetrics.recordRedisCacheRequest(com.aagosh.dispatch.metrics.DispatchMetrics.CACHE_HIT);
+            } else if (result instanceof LocationResult.Miss) {
+                dispatchMetrics.recordRedisCacheRequest(com.aagosh.dispatch.metrics.DispatchMetrics.CACHE_MISS);
+            } else if (result instanceof LocationResult.RedisError) {
+                dispatchMetrics.recordRedisCacheRequest(com.aagosh.dispatch.metrics.DispatchMetrics.CACHE_ERROR);
+            }
+        }
+        return result;
     }
 }

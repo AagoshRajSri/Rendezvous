@@ -12,6 +12,7 @@ import com.aagosh.dispatch.matching.CostFunction;
 import com.aagosh.dispatch.matching.DispatchCostConfig;
 import com.aagosh.dispatch.matching.DispatchCostFunction;
 import com.aagosh.dispatch.matching.Matcher;
+import com.aagosh.dispatch.metrics.DispatchMetrics;
 import com.aagosh.dispatch.persistence.AssignmentEntity;
 import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
 import com.aagosh.dispatch.persistence.PersistOutcome;
@@ -111,6 +112,7 @@ public class RideRequestConsumer {
     private final DispatchCostConfig costConfig;
     private final AssignmentPersistenceService persistenceService;
     private final AdaptiveWindowController windowController;
+    private final DispatchMetrics dispatchMetrics;
 
     /**
      * Dedicated monitor lock guarding all accesses to both in-flight and processed request caches.
@@ -142,7 +144,7 @@ public class RideRequestConsumer {
                                DriverFreshnessConfig freshnessConfig,
                                DispatchCostConfig costConfig,
                                AssignmentPersistenceService persistenceService) {
-        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.empty());
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.empty(), Optional.empty());
     }
 
     public RideRequestConsumer(Matcher matcher,
@@ -151,7 +153,27 @@ public class RideRequestConsumer {
                                DispatchCostConfig costConfig,
                                AssignmentPersistenceService persistenceService,
                                AdaptiveWindowController windowController) {
-        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.ofNullable(windowController));
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, Optional.ofNullable(windowController), Optional.empty());
+    }
+
+    public RideRequestConsumer(Matcher matcher,
+                               DriverRegistry driverRegistry,
+                               DriverFreshnessConfig freshnessConfig,
+                               DispatchCostConfig costConfig,
+                               AssignmentPersistenceService persistenceService,
+                               AdaptiveWindowController windowController,
+                               DispatchMetrics dispatchMetrics) {
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService,
+                Optional.ofNullable(windowController), Optional.ofNullable(dispatchMetrics));
+    }
+
+    public RideRequestConsumer(Matcher matcher,
+                               DriverRegistry driverRegistry,
+                               DriverFreshnessConfig freshnessConfig,
+                               DispatchCostConfig costConfig,
+                               AssignmentPersistenceService persistenceService,
+                               Optional<AdaptiveWindowController> windowController) {
+        this(matcher, driverRegistry, freshnessConfig, costConfig, persistenceService, windowController, Optional.empty());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -160,7 +182,8 @@ public class RideRequestConsumer {
                                DriverFreshnessConfig freshnessConfig,
                                DispatchCostConfig costConfig,
                                AssignmentPersistenceService persistenceService,
-                               Optional<AdaptiveWindowController> windowController) {
+                               Optional<AdaptiveWindowController> windowController,
+                               Optional<DispatchMetrics> dispatchMetrics) {
         this.matcher            = Objects.requireNonNull(matcher, "matcher");
         this.driverRegistry     = Objects.requireNonNull(driverRegistry, "driverRegistry");
         this.freshnessConfig    = Objects.requireNonNull(freshnessConfig, "freshnessConfig");
@@ -169,6 +192,9 @@ public class RideRequestConsumer {
         this.windowController   = (windowController != null && windowController.isPresent())
                 ? windowController.get()
                 : new AdaptiveWindowController();
+        this.dispatchMetrics    = (dispatchMetrics != null && dispatchMetrics.isPresent())
+                ? dispatchMetrics.get()
+                : null;
     }
 
     /**
@@ -222,6 +248,11 @@ public class RideRequestConsumer {
             return;
         }
 
+        long batchStartNanos = System.nanoTime();
+        if (dispatchMetrics != null) {
+            dispatchMetrics.recordInboundArrival(DispatchMetrics.ACTION_RIDE_REQUEST, records.size());
+        }
+
         // Passive controller observation: track batch size and arrival rate metrics.
         // Must never delay, alter Kafka pacing, or fail request processing.
         try {
@@ -258,6 +289,9 @@ public class RideRequestConsumer {
 
             // In-memory idempotency check and in-flight reservation (fast path)
             if (!reserveInFlight(requestId)) {
+                if (dispatchMetrics != null) {
+                    dispatchMetrics.recordDuplicateSkipped(DispatchMetrics.DUP_IN_MEMORY);
+                }
                 log.info("Duplicate ride request {} already processed or in-flight; skipping re-match",
                         requestId);
                 continue;
@@ -270,6 +304,9 @@ public class RideRequestConsumer {
 
         // If no fresh requests require matching (e.g., batch only contained poison pills, invalid payloads, or in-memory duplicates)
         if (candidateRequests.isEmpty()) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
+            }
             if (ack != null) {
                 ack.acknowledge();
             }
@@ -281,6 +318,10 @@ public class RideRequestConsumer {
         try {
             finalizedIds = persistenceService.findFinalizedRequestIdsIn(candidateRequests.keySet());
         } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordConsumerFailure(DispatchMetrics.STAGE_PRE_MATCH_LOOKUP);
+                dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
+            }
             log.error("Failed to query durable finalization status for batch of {} requests: {}",
                     candidateRequests.size(), ex.getMessage(), ex);
             // On lookup failure, release in-flight reservations for these requests so retries can re-attempt
@@ -294,6 +335,9 @@ public class RideRequestConsumer {
         for (Map.Entry<String, RideRequest> entry : candidateRequests.entrySet()) {
             String reqId = entry.getKey();
             if (finalizedIds.contains(reqId)) {
+                if (dispatchMetrics != null) {
+                    dispatchMetrics.recordDuplicateSkipped(DispatchMetrics.DUP_DURABLE);
+                }
                 log.info("Ride request {} already durably finalized; acknowledging duplicate", reqId);
                 markProcessed(reqId);
                 newlyReservedInFlight.remove(reqId);
@@ -304,6 +348,9 @@ public class RideRequestConsumer {
 
         // If no fresh requests require matching (all were durably finalized duplicates)
         if (validBatchRequests.isEmpty()) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
+            }
             if (ack != null) {
                 ack.acknowledge();
             }
@@ -316,10 +363,22 @@ public class RideRequestConsumer {
             List<Driver> drivers = driverRegistry.snapshotFresh(freshnessConfig);
             CostFunction costFunction = new DispatchCostFunction(costConfig, validBatchRequests);
 
+            long matchStartNanos = System.nanoTime();
             assignments = matcher.match(validBatchRequests, drivers, costFunction);
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordMatchingDuration(System.nanoTime() - matchStartNanos);
+            }
 
             // Step 5: Atomic batch persistence
             persistenceService.persistBatch(validBatchRequests, assignments);
+
+            // Record outcomes after confirmed commit to avoid counting failed work as successful
+            if (dispatchMetrics != null) {
+                int matched = assignments.size();
+                int noDrivers = validBatchRequests.size() - matched;
+                dispatchMetrics.recordDispatchOutcome(DispatchMetrics.OUTCOME_MATCHED, matched);
+                dispatchMetrics.recordDispatchOutcome(DispatchMetrics.OUTCOME_NO_DRIVERS, noDrivers);
+            }
 
             // Step 6: On confirmed commit, mark in-flight requests as processed and acknowledge Kafka
             for (String reqId : newlyReservedInFlight) {
@@ -333,7 +392,14 @@ public class RideRequestConsumer {
                 ack.acknowledge();
             }
 
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
+            }
+
         } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordConsumerFailure(DispatchMetrics.STAGE_PROCESSING);
+            }
             log.error("Failed to process batch of {} requests: {}",
                     validBatchRequests.size(), ex.getMessage(), ex);
 
@@ -367,6 +433,9 @@ public class RideRequestConsumer {
                 }
                 log.info("Batch persistence failed but all {} requests were reconciled as durably finalized; acknowledged duplicate batch",
                         validBatchRequests.size());
+                if (dispatchMetrics != null) {
+                    dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
+                }
                 return;
             }
 
@@ -384,6 +453,10 @@ public class RideRequestConsumer {
                 } else {
                     releaseInFlight(req.id());
                 }
+            }
+
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordBatchProcessingDuration(System.nanoTime() - batchStartNanos);
             }
 
             // Propagate exception so Kafka DefaultErrorHandler seeks back to uncommitted offset

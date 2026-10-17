@@ -5,6 +5,7 @@ import com.aagosh.dispatch.domain.Driver;
 import com.aagosh.dispatch.domain.DriverState;
 import com.aagosh.dispatch.domain.RideRequest;
 import com.aagosh.dispatch.domain.TripStatus;
+import com.aagosh.dispatch.metrics.DispatchMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -58,19 +59,28 @@ public class AssignmentPersistenceService {
     private final RideRequestRepository rideRequestRepository;
     private final AssignmentRepository  assignmentRepository;
     private final TripRepository        tripRepository;
+    private final com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics;
 
     @org.springframework.beans.factory.annotation.Autowired
     public AssignmentPersistenceService(RideRequestRepository rideRequestRepository,
                                         AssignmentRepository assignmentRepository,
-                                        @org.springframework.beans.factory.annotation.Autowired(required = false) TripRepository tripRepository) {
+                                        @org.springframework.beans.factory.annotation.Autowired(required = false) TripRepository tripRepository,
+                                        @org.springframework.beans.factory.annotation.Autowired(required = false) com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics) {
         this.rideRequestRepository = Objects.requireNonNull(rideRequestRepository, "rideRequestRepository");
         this.assignmentRepository  = Objects.requireNonNull(assignmentRepository, "assignmentRepository");
         this.tripRepository        = tripRepository;
+        this.dispatchMetrics       = dispatchMetrics;
+    }
+
+    public AssignmentPersistenceService(RideRequestRepository rideRequestRepository,
+                                        AssignmentRepository assignmentRepository,
+                                        TripRepository tripRepository) {
+        this(rideRequestRepository, assignmentRepository, tripRepository, null);
     }
 
     public AssignmentPersistenceService(RideRequestRepository rideRequestRepository,
                                         AssignmentRepository assignmentRepository) {
-        this(rideRequestRepository, assignmentRepository, null);
+        this(rideRequestRepository, assignmentRepository, null, null);
     }
 
     // -------------------------------------------------------------------------
@@ -199,35 +209,46 @@ public class AssignmentPersistenceService {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(assignment, "assignment");
 
-        String requestId = request.id();
-        RideRequestEntity requestEntity = rideRequestRepository.findByRequestId(requestId)
-                .orElseGet(() -> new RideRequestEntity(
-                        requestId,
-                        request.pickupLocation().latitude(),
-                        request.pickupLocation().longitude(),
-                        STATUS_MATCHED
-                ));
-        requestEntity.setStatus(STATUS_MATCHED);
-        rideRequestRepository.saveAndFlush(requestEntity);
+        try {
+            String requestId = request.id();
+            RideRequestEntity requestEntity = rideRequestRepository.findByRequestId(requestId)
+                    .orElseGet(() -> new RideRequestEntity(
+                            requestId,
+                            request.pickupLocation().latitude(),
+                            request.pickupLocation().longitude(),
+                            STATUS_MATCHED
+                    ));
+            requestEntity.setStatus(STATUS_MATCHED);
+            rideRequestRepository.saveAndFlush(requestEntity);
 
-        AssignmentEntity assignmentEntity = new AssignmentEntity(
-                requestId,
-                assignment.driver().id(),
-                assignment.cost()
-        );
-        assignmentRepository.saveAndFlush(assignmentEntity);
-
-        if (tripRepository != null) {
-            TripEntity tripEntity = new TripEntity(
+            AssignmentEntity assignmentEntity = new AssignmentEntity(
                     requestId,
                     assignment.driver().id(),
-                    TripStatus.ASSIGNED
+                    assignment.cost()
             );
-            tripRepository.saveAndFlush(tripEntity);
-        }
+            assignmentRepository.saveAndFlush(assignmentEntity);
 
-        log.info("Persisted matched assignment: request={} driver={} cost={}",
-                requestId, assignment.driver().id(), assignment.cost());
+            if (tripRepository != null) {
+                TripEntity tripEntity = new TripEntity(
+                        requestId,
+                        assignment.driver().id(),
+                        TripStatus.ASSIGNED
+                );
+                tripRepository.saveAndFlush(tripEntity);
+            }
+
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordPersistenceWrites(com.aagosh.dispatch.metrics.DispatchMetrics.WRITE_MATCHED, 1);
+            }
+
+            log.info("Persisted matched assignment: request={} driver={} cost={}",
+                    requestId, assignment.driver().id(), assignment.cost());
+        } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordPersistenceFailure(com.aagosh.dispatch.metrics.DispatchMetrics.OP_SINGLE);
+            }
+            throw ex;
+        }
     }
 
     /**
@@ -239,18 +260,29 @@ public class AssignmentPersistenceService {
     public void persistNoDrivers(RideRequest request) {
         Objects.requireNonNull(request, "request");
 
-        String requestId = request.id();
-        RideRequestEntity requestEntity = rideRequestRepository.findByRequestId(requestId)
-                .orElseGet(() -> new RideRequestEntity(
-                        requestId,
-                        request.pickupLocation().latitude(),
-                        request.pickupLocation().longitude(),
-                        STATUS_NO_DRIVERS
-                ));
-        requestEntity.setStatus(STATUS_NO_DRIVERS);
-        rideRequestRepository.saveAndFlush(requestEntity);
+        try {
+            String requestId = request.id();
+            RideRequestEntity requestEntity = rideRequestRepository.findByRequestId(requestId)
+                    .orElseGet(() -> new RideRequestEntity(
+                            requestId,
+                            request.pickupLocation().latitude(),
+                            request.pickupLocation().longitude(),
+                            STATUS_NO_DRIVERS
+                    ));
+            requestEntity.setStatus(STATUS_NO_DRIVERS);
+            rideRequestRepository.saveAndFlush(requestEntity);
 
-        log.info("Persisted terminal outcome NO_DRIVERS for request {}", requestId);
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordPersistenceWrites(com.aagosh.dispatch.metrics.DispatchMetrics.WRITE_NO_DRIVERS, 1);
+            }
+
+            log.info("Persisted terminal outcome NO_DRIVERS for request {}", requestId);
+        } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                dispatchMetrics.recordPersistenceFailure(com.aagosh.dispatch.metrics.DispatchMetrics.OP_SINGLE);
+            }
+            throw ex;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -324,111 +356,129 @@ public class AssignmentPersistenceService {
             return new BatchPersistResult(0, 0, 0);
         }
 
-        // Index assignments by requestId; reject duplicates within the batch
-        Map<String, Assignment> assignmentByRequestId = new HashMap<>();
-        for (Assignment a : assignments) {
-            Objects.requireNonNull(a, "assignment in assignments");
-            String reqId = a.request().id();
-            if (assignmentByRequestId.putIfAbsent(reqId, a) != null) {
-                throw new IllegalArgumentException("Duplicate assignment for requestId in batch: " + reqId);
-            }
-        }
-
-        // Aggregate unique requests (including any assigned requests not in requests collection)
-        Map<String, RideRequest> requestMap = new LinkedHashMap<>();
-        for (RideRequest r : requests) {
-            Objects.requireNonNull(r, "request in requests");
-            requestMap.putIfAbsent(r.id(), r);
-        }
-        for (Assignment a : assignments) {
-            requestMap.putIfAbsent(a.request().id(), a.request());
-        }
-
-        // Deterministic ordering by requestId
-        List<RideRequest> sortedRequests = requestMap.values().stream()
-                .sorted(Comparator.comparing(RideRequest::id))
-                .toList();
-
-        int matchedCount = 0;
-        int noDriversCount = 0;
-        int duplicateCount = 0;
-
-        for (RideRequest request : sortedRequests) {
-            String requestId = request.id();
-            Assignment assignment = assignmentByRequestId.get(requestId);
-
-            // Step 1: Check durable status before mutating
-            Optional<RideRequestEntity> existingReq = rideRequestRepository.findByRequestId(requestId);
-            if (existingReq.isPresent()) {
-                String currentStatus = existingReq.get().getStatus();
-                if (STATUS_MATCHED.equals(currentStatus)
-                        || STATUS_NO_DRIVERS.equals(currentStatus)
-                        || STATUS_NO_DRIVER.equals(currentStatus)) {
-                    log.info("Ride request {} already durably finalized with status {}; skipping duplicate write",
-                            requestId, currentStatus);
-                    duplicateCount++;
-                    continue;
+        long startNanos = System.nanoTime();
+        try {
+            // Index assignments by requestId; reject duplicates within the batch
+            Map<String, Assignment> assignmentByRequestId = new HashMap<>();
+            for (Assignment a : assignments) {
+                Objects.requireNonNull(a, "assignment in assignments");
+                String reqId = a.request().id();
+                if (assignmentByRequestId.putIfAbsent(reqId, a) != null) {
+                    throw new IllegalArgumentException("Duplicate assignment for requestId in batch: " + reqId);
                 }
             }
 
-            if (assignment != null) {
-                // Matched request
-                RideRequestEntity reqEntity = existingReq.orElseGet(() -> new RideRequestEntity(
-                        requestId,
-                        request.pickupLocation().latitude(),
-                        request.pickupLocation().longitude(),
-                        STATUS_MATCHED
-                ));
-                reqEntity.setStatus(STATUS_MATCHED);
-                rideRequestRepository.save(reqEntity);
+            // Aggregate unique requests (including any assigned requests not in requests collection)
+            Map<String, RideRequest> requestMap = new LinkedHashMap<>();
+            for (RideRequest r : requests) {
+                Objects.requireNonNull(r, "request in requests");
+                requestMap.putIfAbsent(r.id(), r);
+            }
+            for (Assignment a : assignments) {
+                requestMap.putIfAbsent(a.request().id(), a.request());
+            }
 
-                // Assignment entity: insert only if not already present
-                if (!assignmentRepository.existsByRequestId(requestId)) {
-                    AssignmentEntity assignmentEntity = new AssignmentEntity(
+            // Deterministic ordering by requestId
+            List<RideRequest> sortedRequests = requestMap.values().stream()
+                    .sorted(Comparator.comparing(RideRequest::id))
+                    .toList();
+
+            int matchedCount = 0;
+            int noDriversCount = 0;
+            int duplicateCount = 0;
+
+            for (RideRequest request : sortedRequests) {
+                String requestId = request.id();
+                Assignment assignment = assignmentByRequestId.get(requestId);
+
+                // Step 1: Check durable status before mutating
+                Optional<RideRequestEntity> existingReq = rideRequestRepository.findByRequestId(requestId);
+                if (existingReq.isPresent()) {
+                    String currentStatus = existingReq.get().getStatus();
+                    if (STATUS_MATCHED.equals(currentStatus)
+                            || STATUS_NO_DRIVERS.equals(currentStatus)
+                            || STATUS_NO_DRIVER.equals(currentStatus)) {
+                        log.info("Ride request {} already durably finalized with status {}; skipping duplicate write",
+                                requestId, currentStatus);
+                        duplicateCount++;
+                        continue;
+                    }
+                }
+
+                if (assignment != null) {
+                    // Matched request
+                    RideRequestEntity reqEntity = existingReq.orElseGet(() -> new RideRequestEntity(
                             requestId,
-                            assignment.driver().id(),
-                            assignment.cost()
-                    );
-                    assignmentRepository.save(assignmentEntity);
-                }
+                            request.pickupLocation().latitude(),
+                            request.pickupLocation().longitude(),
+                            STATUS_MATCHED
+                    ));
+                    reqEntity.setStatus(STATUS_MATCHED);
+                    rideRequestRepository.save(reqEntity);
 
-                // Trip entity: insert only if not already present and tripRepository configured
-                if (tripRepository != null && !tripRepository.existsByRequestId(requestId)) {
-                    TripEntity tripEntity = new TripEntity(
+                    // Assignment entity: insert only if not already present
+                    if (!assignmentRepository.existsByRequestId(requestId)) {
+                        AssignmentEntity assignmentEntity = new AssignmentEntity(
+                                requestId,
+                                assignment.driver().id(),
+                                assignment.cost()
+                        );
+                        assignmentRepository.save(assignmentEntity);
+                    }
+
+                    // Trip entity: insert only if not already present and tripRepository configured
+                    if (tripRepository != null && !tripRepository.existsByRequestId(requestId)) {
+                        TripEntity tripEntity = new TripEntity(
+                                requestId,
+                                assignment.driver().id(),
+                                TripStatus.ASSIGNED
+                        );
+                        tripRepository.save(tripEntity);
+                    }
+
+                    matchedCount++;
+                } else {
+                    // Unmatched request: terminal NO_DRIVERS
+                    RideRequestEntity reqEntity = existingReq.orElseGet(() -> new RideRequestEntity(
                             requestId,
-                            assignment.driver().id(),
-                            TripStatus.ASSIGNED
-                    );
-                    tripRepository.save(tripEntity);
+                            request.pickupLocation().latitude(),
+                            request.pickupLocation().longitude(),
+                            STATUS_NO_DRIVERS
+                    ));
+                    reqEntity.setStatus(STATUS_NO_DRIVERS);
+                    rideRequestRepository.save(reqEntity);
+
+                    noDriversCount++;
                 }
-
-                matchedCount++;
-            } else {
-                // Unmatched request: terminal NO_DRIVERS
-                RideRequestEntity reqEntity = existingReq.orElseGet(() -> new RideRequestEntity(
-                        requestId,
-                        request.pickupLocation().latitude(),
-                        request.pickupLocation().longitude(),
-                        STATUS_NO_DRIVERS
-                ));
-                reqEntity.setStatus(STATUS_NO_DRIVERS);
-                rideRequestRepository.save(reqEntity);
-
-                noDriversCount++;
             }
+
+            // Flush all pending writes within the transaction so any constraint violations surface immediately
+            rideRequestRepository.flush();
+            assignmentRepository.flush();
+            if (tripRepository != null) {
+                tripRepository.flush();
+            }
+
+            if (dispatchMetrics != null) {
+                long duration = System.nanoTime() - startNanos;
+                dispatchMetrics.recordPersistenceDuration(duration);
+                dispatchMetrics.recordBatchSize(sortedRequests.size());
+                dispatchMetrics.recordPersistenceWrites(DispatchMetrics.WRITE_MATCHED, matchedCount);
+                dispatchMetrics.recordPersistenceWrites(DispatchMetrics.WRITE_NO_DRIVERS, noDriversCount);
+            }
+
+            log.info("Persisted batch: matched={}, noDrivers={}, duplicatesSkipped={}",
+                    matchedCount, noDriversCount, duplicateCount);
+
+            return new BatchPersistResult(matchedCount, noDriversCount, duplicateCount);
+        } catch (Exception ex) {
+            if (dispatchMetrics != null) {
+                long duration = System.nanoTime() - startNanos;
+                dispatchMetrics.recordPersistenceDuration(duration);
+                dispatchMetrics.recordPersistenceFailure(DispatchMetrics.OP_BATCH);
+            }
+            throw ex;
         }
-
-        // Flush all pending writes within the transaction so any constraint violations surface immediately
-        rideRequestRepository.flush();
-        assignmentRepository.flush();
-        if (tripRepository != null) {
-            tripRepository.flush();
-        }
-
-        log.info("Persisted batch: matched={}, noDrivers={}, duplicatesSkipped={}",
-                matchedCount, noDriversCount, duplicateCount);
-
-        return new BatchPersistResult(matchedCount, noDriversCount, duplicateCount);
     }
 
     /**

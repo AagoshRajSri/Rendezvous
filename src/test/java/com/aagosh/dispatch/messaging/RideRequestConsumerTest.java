@@ -17,6 +17,8 @@ import com.aagosh.dispatch.matching.Matcher;
 import com.aagosh.dispatch.persistence.AssignmentEntity;
 import com.aagosh.dispatch.persistence.AssignmentPersistenceService;
 import com.aagosh.dispatch.persistence.PersistOutcome;
+import com.aagosh.dispatch.metrics.DispatchMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -854,5 +856,118 @@ class RideRequestConsumerTest {
 
         verify(persistenceService, times(1)).findFinalizedRequestIdsIn(Set.of("REQ-B1", "REQ-B2"));
         verify(mockMatcher, times(1)).match(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("33. Batch processing records inbound arrivals, outcomes, and timers in DispatchMetrics")
+    void batchProcessing_recordsInboundArrivalsAndOutcomesAndTimers() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        RideRequestConsumer instrumentedConsumer = new RideRequestConsumer(
+                mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig,
+                persistenceService, null, metrics);
+
+        Driver driver = freshDriver("D-METRIC", 17.3850, 78.4867);
+        RideRequest req1 = new RideRequest("REQ-M1", new GeoPoint(17.3850, 78.4867));
+        Assignment assignment = new Assignment(req1, driver, 1.0);
+
+        // Matcher returns 1 assignment for 2 requests -> 1 MATCHED, 1 NO_DRIVERS
+        when(mockMatcher.match(any(), any(), any())).thenReturn(List.of(assignment));
+
+        ConsumerRecord<String, RideRequestDto> rec1 =
+                record("REQ-M1", new RideRequestDto("REQ-M1", null, 17.3850, 78.4867));
+        ConsumerRecord<String, RideRequestDto> rec2 =
+                record("REQ-N1", new RideRequestDto("REQ-N1", null, 17.3851, 78.4868));
+
+        instrumentedConsumer.onRideRequests(List.of(rec1, rec2), acknowledgment);
+
+        assertEquals(2.0, registry.get(DispatchMetrics.METRIC_INBOUND_ARRIVALS)
+                .tag("action", DispatchMetrics.ACTION_RIDE_REQUEST).counter().count());
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_DISPATCH_OUTCOMES)
+                .tag("outcome", DispatchMetrics.OUTCOME_MATCHED).counter().count());
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_DISPATCH_OUTCOMES)
+                .tag("outcome", DispatchMetrics.OUTCOME_NO_DRIVERS).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_MATCHING_DURATION).timer().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_BATCH_PROCESSING_DURATION).timer().count());
+    }
+
+    @Test
+    @DisplayName("34. Duplicate skips record in-memory and durable metrics")
+    void duplicateSkips_recordsInMemoryAndDurableMetrics() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        RideRequestConsumer instrumentedConsumer = new RideRequestConsumer(
+                mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig,
+                persistenceService, null, metrics);
+
+        // Pre-mark REQ-MEM as processed
+        instrumentedConsumer.recordProcessed("REQ-MEM");
+
+        // Durable pre-match lookup returns REQ-DUR as finalized
+        when(persistenceService.findFinalizedRequestIdsIn(any())).thenReturn(Set.of("REQ-DUR"));
+
+        ConsumerRecord<String, RideRequestDto> recMem =
+                record("REQ-MEM", new RideRequestDto("REQ-MEM", null, 17.3850, 78.4867));
+        ConsumerRecord<String, RideRequestDto> recDur =
+                record("REQ-DUR", new RideRequestDto("REQ-DUR", null, 17.3851, 78.4868));
+
+        instrumentedConsumer.onRideRequests(List.of(recMem, recDur), acknowledgment);
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_DUPLICATES_SKIPPED)
+                .tag("type", DispatchMetrics.DUP_IN_MEMORY).counter().count());
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_DUPLICATES_SKIPPED)
+                .tag("type", DispatchMetrics.DUP_DURABLE).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_BATCH_PROCESSING_DURATION).timer().count());
+    }
+
+    @Test
+    @DisplayName("35. Pre-match lookup failure records consumer failure metric")
+    void preMatchLookupFailure_recordsConsumerFailureMetric() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        RideRequestConsumer instrumentedConsumer = new RideRequestConsumer(
+                mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig,
+                persistenceService, null, metrics);
+
+        when(persistenceService.findFinalizedRequestIdsIn(any()))
+                .thenThrow(new RuntimeException("Database down during pre-match lookup"));
+
+        ConsumerRecord<String, RideRequestDto> rec =
+                record("REQ-FAIL", new RideRequestDto("REQ-FAIL", null, 17.3850, 78.4867));
+
+        assertThrows(RuntimeException.class, () ->
+                instrumentedConsumer.onRideRequests(List.of(rec), acknowledgment));
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_CONSUMER_FAILURES)
+                .tag("stage", DispatchMetrics.STAGE_PRE_MATCH_LOOKUP).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_BATCH_PROCESSING_DURATION).timer().count());
+    }
+
+    @Test
+    @DisplayName("36. Processing failure records consumer failure metric and does not record outcomes")
+    void processingFailure_recordsConsumerFailureMetricAndDoesNotRecordOutcomes() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        RideRequestConsumer instrumentedConsumer = new RideRequestConsumer(
+                mockMatcher, driverRegistry, DriverFreshnessConfig.DEFAULT, costConfig,
+                persistenceService, null, metrics);
+
+        when(mockMatcher.match(any(), any(), any())).thenReturn(List.of());
+        when(persistenceService.persistBatch(any(), any()))
+                .thenThrow(new RuntimeException("Database down during persistBatch"));
+
+        ConsumerRecord<String, RideRequestDto> rec =
+                record("REQ-FAIL", new RideRequestDto("REQ-FAIL", null, 17.3850, 78.4867));
+
+        assertThrows(RuntimeException.class, () ->
+                instrumentedConsumer.onRideRequests(List.of(rec), acknowledgment));
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_CONSUMER_FAILURES)
+                .tag("stage", DispatchMetrics.STAGE_PROCESSING).counter().count());
+        assertEquals(0.0, registry.get(DispatchMetrics.METRIC_DISPATCH_OUTCOMES)
+                .tag("outcome", DispatchMetrics.OUTCOME_MATCHED).counter().count());
+        assertEquals(0.0, registry.get(DispatchMetrics.METRIC_DISPATCH_OUTCOMES)
+                .tag("outcome", DispatchMetrics.OUTCOME_NO_DRIVERS).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_BATCH_PROCESSING_DURATION).timer().count());
     }
 }

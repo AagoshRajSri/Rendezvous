@@ -15,6 +15,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import com.aagosh.dispatch.domain.TripStatus;
+import com.aagosh.dispatch.metrics.DispatchMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -24,7 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
-import com.aagosh.dispatch.domain.TripStatus;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -455,5 +458,108 @@ class AssignmentPersistenceServiceTest {
 
         assertThrows(RuntimeException.class, () ->
                 service.findFinalizedRequestIdsIn(List.of("REQ-1")));
+    }
+
+    @Test
+    @DisplayName("21. persistMatchedAssignment records writes metric on success")
+    void persistMatchedAssignment_recordsMetricsOnSuccess() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        AssignmentPersistenceService instrumentedService = new AssignmentPersistenceService(
+                rideRequestRepository, assignmentRepository, tripRepository, metrics);
+
+        RideRequest request = sampleRequest("REQ-M1");
+        Assignment assignment = sampleAssignment("REQ-M1", "D-1", 10.0);
+
+        instrumentedService.persistMatchedAssignment(request, assignment);
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_WRITES)
+                .tag("outcome", DispatchMetrics.WRITE_MATCHED).counter().count());
+    }
+
+    @Test
+    @DisplayName("22. persistMatchedAssignment records failure metric and rethrows on failure")
+    void persistMatchedAssignment_recordsMetricsOnFailure() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        AssignmentPersistenceService instrumentedService = new AssignmentPersistenceService(
+                rideRequestRepository, assignmentRepository, tripRepository, metrics);
+
+        RideRequest request = sampleRequest("REQ-FAIL");
+        Assignment assignment = sampleAssignment("REQ-FAIL", "D-1", 10.0);
+
+        doThrow(new DataIntegrityViolationException("Unique constraint violation"))
+                .when(assignmentRepository).saveAndFlush(any());
+
+        assertThrows(DataIntegrityViolationException.class, () ->
+                instrumentedService.persistMatchedAssignment(request, assignment));
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_FAILURES)
+                .tag("operation", DispatchMetrics.OP_SINGLE).counter().count());
+    }
+
+    @Test
+    @DisplayName("23. persistNoDrivers records writes metric on success")
+    void persistNoDrivers_recordsMetricsOnSuccess() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        AssignmentPersistenceService instrumentedService = new AssignmentPersistenceService(
+                rideRequestRepository, assignmentRepository, tripRepository, metrics);
+
+        RideRequest request = sampleRequest("REQ-NODRV");
+
+        instrumentedService.persistNoDrivers(request);
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_WRITES)
+                .tag("outcome", DispatchMetrics.WRITE_NO_DRIVERS).counter().count());
+    }
+
+    @Test
+    @DisplayName("24. persistBatch records batch size, writes, and duration metrics on success")
+    void persistBatch_recordsMetricsOnSuccess() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        AssignmentPersistenceService instrumentedService = new AssignmentPersistenceService(
+                rideRequestRepository, assignmentRepository, tripRepository, metrics);
+
+        RideRequest req1 = sampleRequest("REQ-B1");
+        RideRequest req2 = sampleRequest("REQ-B2");
+        Assignment a1 = sampleAssignment("REQ-B1", "D-1", 12.0);
+
+        AssignmentPersistenceService.BatchPersistResult result =
+                instrumentedService.persistBatch(List.of(req1, req2), List.of(a1));
+
+        assertEquals(1, result.matchedPersisted());
+        assertEquals(1, result.noDriversPersisted());
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_WRITES)
+                .tag("outcome", DispatchMetrics.WRITE_MATCHED).counter().count());
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_WRITES)
+                .tag("outcome", DispatchMetrics.WRITE_NO_DRIVERS).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_BATCH_SIZE).summary().count());
+        assertEquals(2.0, registry.get(DispatchMetrics.METRIC_BATCH_SIZE).summary().totalAmount());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_PERSISTENCE_DURATION).timer().count());
+    }
+
+    @Test
+    @DisplayName("25. persistBatch records failure metric and duration on failure")
+    void persistBatch_recordsMetricsOnFailure() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DispatchMetrics metrics = new DispatchMetrics(registry);
+        AssignmentPersistenceService instrumentedService = new AssignmentPersistenceService(
+                rideRequestRepository, assignmentRepository, tripRepository, metrics);
+
+        RideRequest req1 = sampleRequest("REQ-B1");
+        Assignment a1 = sampleAssignment("REQ-B1", "D-1", 12.0);
+
+        doThrow(new RuntimeException("DB down on flush"))
+                .when(assignmentRepository).flush();
+
+        assertThrows(RuntimeException.class, () ->
+                instrumentedService.persistBatch(List.of(req1), List.of(a1)));
+
+        assertEquals(1.0, registry.get(DispatchMetrics.METRIC_PERSISTENCE_FAILURES)
+                .tag("operation", DispatchMetrics.OP_BATCH).counter().count());
+        assertEquals(1, registry.get(DispatchMetrics.METRIC_PERSISTENCE_DURATION).timer().count());
     }
 }

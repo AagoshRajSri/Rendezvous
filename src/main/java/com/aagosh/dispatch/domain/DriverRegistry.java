@@ -70,6 +70,38 @@ public final class DriverRegistry {
     private final ConcurrentHashMap<String, AtomicReference<Driver>> registry =
             new ConcurrentHashMap<>();
 
+    private final com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics;
+    private final DriverFreshnessConfig freshnessConfig;
+
+    public DriverRegistry() {
+        this(null, DriverFreshnessConfig.DEFAULT);
+    }
+
+    public DriverRegistry(DriverFreshnessConfig freshnessConfig) {
+        this(null, freshnessConfig);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DriverRegistry(@org.springframework.beans.factory.annotation.Autowired(required = false) com.aagosh.dispatch.metrics.DispatchMetrics dispatchMetrics,
+                          @org.springframework.beans.factory.annotation.Autowired(required = false) DriverFreshnessConfig freshnessConfig) {
+        this.dispatchMetrics = dispatchMetrics;
+        this.freshnessConfig = freshnessConfig != null ? freshnessConfig : DriverFreshnessConfig.DEFAULT;
+        if (dispatchMetrics != null) {
+            registerGauges(dispatchMetrics, this.freshnessConfig);
+        }
+    }
+
+    private void registerGauges(com.aagosh.dispatch.metrics.DispatchMetrics metrics, DriverFreshnessConfig config) {
+        metrics.registerDriverStateGauge("AVAILABLE", () -> countByStatus(MatchStatus.AVAILABLE));
+        metrics.registerDriverStateGauge("CLAIMED", () -> countByStatus(MatchStatus.CLAIMED));
+        metrics.registerDriverStateGauge("EN_ROUTE", () -> countByStatus(MatchStatus.EN_ROUTE));
+        metrics.registerDriverStateGauge("ON_TRIP", () -> countByStatus(MatchStatus.ON_TRIP));
+        metrics.registerDriverStateGauge("TOTAL", this::size);
+
+        metrics.registerDriverFreshnessGauge("fresh", () -> countFresh(config));
+        metrics.registerDriverFreshnessGauge("stale", () -> countStale(config));
+    }
+
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
@@ -340,8 +372,77 @@ public final class DriverRegistry {
     // -------------------------------------------------------------------------
 
     /** Returns the number of registered drivers. */
-    int size() {
+    public int size() {
         return registry.size();
+    }
+
+    /**
+     * Returns the count of registered drivers currently in the specified lifecycle status.
+     * Thread-safe query suitable for Prometheus gauge sampling.
+     *
+     * @param status the target lifecycle match status; must not be null
+     * @return the number of drivers currently in the status
+     */
+    public int countByStatus(MatchStatus status) {
+        Objects.requireNonNull(status, "status");
+        int count = 0;
+        for (AtomicReference<Driver> ref : registry.values()) {
+            Driver d = ref.get();
+            if (d != null && d.state().getStatus() == status) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Returns the count of registered drivers with fresh, verified location updates.
+     * Thread-safe query suitable for Prometheus gauge sampling.
+     *
+     * @param config the freshness configuration thresholds
+     * @return count of drivers satisfying the freshness criteria
+     */
+    public int countFresh(DriverFreshnessConfig config) {
+        if (config == null) return 0;
+        long nowMs = System.currentTimeMillis();
+        long stalenessMs = config.stalenessSeconds() * 1000L;
+        long maxFutureSkewMs = config.maxFutureSkewSeconds() * 1000L;
+        int count = 0;
+        for (AtomicReference<Driver> ref : registry.values()) {
+            Driver d = ref.get();
+            if (d != null) {
+                long ts = d.updatedAt();
+                if (ts > 0L && ts >= nowMs - stalenessMs && ts <= nowMs + maxFutureSkewMs) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Returns the count of registered drivers whose location updates are stale or unverified.
+     * Thread-safe query suitable for Prometheus gauge sampling.
+     *
+     * @param config the freshness configuration thresholds
+     * @return count of drivers with stale or missing timestamps
+     */
+    public int countStale(DriverFreshnessConfig config) {
+        if (config == null) return 0;
+        long nowMs = System.currentTimeMillis();
+        long stalenessMs = config.stalenessSeconds() * 1000L;
+        long maxFutureSkewMs = config.maxFutureSkewSeconds() * 1000L;
+        int count = 0;
+        for (AtomicReference<Driver> ref : registry.values()) {
+            Driver d = ref.get();
+            if (d != null) {
+                long ts = d.updatedAt();
+                if (ts <= 0L || ts < nowMs - stalenessMs || ts > nowMs + maxFutureSkewMs) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     // -------------------------------------------------------------------------

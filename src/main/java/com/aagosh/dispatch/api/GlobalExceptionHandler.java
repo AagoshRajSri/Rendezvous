@@ -8,6 +8,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * Centralized exception handler mapping domain and validation exceptions
@@ -56,6 +57,16 @@ public class GlobalExceptionHandler {
                         HttpStatus.SERVICE_UNAVAILABLE.value(),
                         "Service Unavailable",
                         "Event could not be published; the message broker is temporarily unavailable"));
+    }
+
+    /**
+     * Handles requests for routes that do not exist, including unexposed or disabled Actuator endpoints.
+     * Returns 404 rather than allowing the catch-all to map this to 500.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResourceFound(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", "The requested resource was not found"));
     }
 
     @ExceptionHandler(Exception.class)

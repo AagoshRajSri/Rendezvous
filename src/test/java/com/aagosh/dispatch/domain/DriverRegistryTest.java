@@ -523,6 +523,94 @@ class DriverRegistryTest {
     }
 
     // =========================================================================
+    // Phase 9: Metrics and Gauges
+    // =========================================================================
+
+    @Test
+    @DisplayName("countByStatus accurately tallies drivers across lifecycle states")
+    void countByStatusAccuratelyTalliesStates() {
+        Driver d1 = driver("D1", 17.0, 78.0);
+        Driver d2 = driver("D2", 17.1, 78.1);
+        Driver d3 = driver("D3", 17.2, 78.2);
+        Driver d4 = driver("D4", 17.3, 78.3);
+
+        registry.register(d1);
+        registry.register(d2);
+        registry.register(d3);
+        registry.register(d4);
+
+        d2.state().tryClaim("REQ-2");
+        d3.state().tryClaim("REQ-3");
+        d3.state().transitionToEnRoute("REQ-3");
+        d4.state().tryClaim("REQ-4");
+        d4.state().transitionToEnRoute("REQ-4");
+        d4.state().transitionToOnTrip("REQ-4");
+
+        assertEquals(1, registry.countByStatus(MatchStatus.AVAILABLE));
+        assertEquals(1, registry.countByStatus(MatchStatus.CLAIMED));
+        assertEquals(1, registry.countByStatus(MatchStatus.EN_ROUTE));
+        assertEquals(1, registry.countByStatus(MatchStatus.ON_TRIP));
+        assertEquals(4, registry.size());
+    }
+
+    @Test
+    @DisplayName("countFresh and countStale partition fleet accurately based on timestamp")
+    void countFreshAndStalePartitionFleet() {
+        long now = System.currentTimeMillis();
+        com.aagosh.dispatch.config.DriverFreshnessConfig config =
+                new com.aagosh.dispatch.config.DriverFreshnessConfig(60, 5);
+
+        // Fresh driver: updated 5 seconds ago
+        Driver d1 = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState(), now - 5_000);
+        // Stale driver: updated 120 seconds ago (> 60s)
+        Driver d2 = new Driver("D2", new GeoPoint(17.1, 78.1), new DriverState(), now - 120_000);
+        // Unversioned driver: ts = 0L
+        Driver d3 = new Driver("D3", new GeoPoint(17.2, 78.2), new DriverState(), 0L);
+
+        registry.register(d1);
+        registry.register(d2);
+        registry.register(d3);
+
+        assertEquals(1, registry.countFresh(config));
+        assertEquals(2, registry.countStale(config));
+    }
+
+    @Test
+    @DisplayName("DriverRegistry registers live gauges with DispatchMetrics")
+    void driverRegistryRegistersLiveGauges() {
+        io.micrometer.core.instrument.MeterRegistry meterRegistry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        com.aagosh.dispatch.metrics.DispatchMetrics metrics =
+                new com.aagosh.dispatch.metrics.DispatchMetrics(meterRegistry);
+        com.aagosh.dispatch.config.DriverFreshnessConfig config =
+                new com.aagosh.dispatch.config.DriverFreshnessConfig(60, 5);
+
+        DriverRegistry instrumentedRegistry = new DriverRegistry(metrics, config);
+
+        long now = System.currentTimeMillis();
+        Driver d1 = new Driver("D1", new GeoPoint(17.0, 78.0), new DriverState(), now - 1_000);
+        Driver d2 = new Driver("D2", new GeoPoint(17.1, 78.1), new DriverState(), now - 1_000);
+        instrumentedRegistry.register(d1);
+        instrumentedRegistry.register(d2);
+
+        d2.state().tryClaim("REQ-1");
+
+        // Verify state gauges
+        assertEquals(1.0, meterRegistry.find(com.aagosh.dispatch.metrics.DispatchMetrics.METRIC_DRIVERS_COUNT)
+                .tag("state", "AVAILABLE").gauge().value());
+        assertEquals(1.0, meterRegistry.find(com.aagosh.dispatch.metrics.DispatchMetrics.METRIC_DRIVERS_COUNT)
+                .tag("state", "CLAIMED").gauge().value());
+        assertEquals(2.0, meterRegistry.find(com.aagosh.dispatch.metrics.DispatchMetrics.METRIC_DRIVERS_COUNT)
+                .tag("state", "TOTAL").gauge().value());
+
+        // Verify freshness gauges
+        assertEquals(2.0, meterRegistry.find(com.aagosh.dispatch.metrics.DispatchMetrics.METRIC_DRIVERS_FRESHNESS)
+                .tag("status", "fresh").gauge().value());
+        assertEquals(0.0, meterRegistry.find(com.aagosh.dispatch.metrics.DispatchMetrics.METRIC_DRIVERS_FRESHNESS)
+                .tag("status", "stale").gauge().value());
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
