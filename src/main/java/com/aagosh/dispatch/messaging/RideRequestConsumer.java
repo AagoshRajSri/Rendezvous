@@ -230,8 +230,8 @@ public class RideRequestConsumer {
             log.warn("Failed to record batch telemetry in AdaptiveWindowController: {}", ex.getMessage());
         }
 
-        List<RideRequest> validBatchRequests = new ArrayList<>();
         List<String> newlyReservedInFlight = new ArrayList<>();
+        Map<String, RideRequest> candidateRequests = new LinkedHashMap<>();
 
         for (ConsumerRecord<String, RideRequestDto> record : records) {
             RideRequestDto event = record.value();
@@ -264,26 +264,45 @@ public class RideRequestConsumer {
             }
             newlyReservedInFlight.add(requestId);
 
-            // Check durable request state before matching
-            Optional<String> durableStatus = persistenceService.getRequestStatus(requestId);
-            if (durableStatus.isPresent()) {
-                String status = durableStatus.get();
-                if (AssignmentPersistenceService.STATUS_MATCHED.equals(status)
-                        || AssignmentPersistenceService.STATUS_NO_DRIVERS.equals(status)
-                        || "NO_DRIVER".equals(status)) {
-                    log.info("Ride request {} already durably finalized with status {}; acknowledging duplicate",
-                            requestId, status);
-                    markProcessed(requestId);
-                    newlyReservedInFlight.remove(requestId);
-                    continue;
-                }
-            }
-
             GeoPoint pickup = new GeoPoint(event.latitude(), event.longitude());
-            validBatchRequests.add(new RideRequest(requestId, pickup));
+            candidateRequests.put(requestId, new RideRequest(requestId, pickup));
         }
 
-        // If no fresh requests require matching (e.g., batch only contained poison pills, invalid payloads, or duplicates)
+        // If no fresh requests require matching (e.g., batch only contained poison pills, invalid payloads, or in-memory duplicates)
+        if (candidateRequests.isEmpty()) {
+            if (ack != null) {
+                ack.acknowledge();
+            }
+            return;
+        }
+
+        // Batched pre-match check: query durable state for all candidate requests in a single database lookup
+        Set<String> finalizedIds;
+        try {
+            finalizedIds = persistenceService.findFinalizedRequestIdsIn(candidateRequests.keySet());
+        } catch (Exception ex) {
+            log.error("Failed to query durable finalization status for batch of {} requests: {}",
+                    candidateRequests.size(), ex.getMessage(), ex);
+            // On lookup failure, release in-flight reservations for these requests so retries can re-attempt
+            for (String reqId : newlyReservedInFlight) {
+                releaseInFlight(reqId);
+            }
+            throw ex;
+        }
+
+        List<RideRequest> validBatchRequests = new ArrayList<>();
+        for (Map.Entry<String, RideRequest> entry : candidateRequests.entrySet()) {
+            String reqId = entry.getKey();
+            if (finalizedIds.contains(reqId)) {
+                log.info("Ride request {} already durably finalized; acknowledging duplicate", reqId);
+                markProcessed(reqId);
+                newlyReservedInFlight.remove(reqId);
+            } else {
+                validBatchRequests.add(entry.getValue());
+            }
+        }
+
+        // If no fresh requests require matching (all were durably finalized duplicates)
         if (validBatchRequests.isEmpty()) {
             if (ack != null) {
                 ack.acknowledge();

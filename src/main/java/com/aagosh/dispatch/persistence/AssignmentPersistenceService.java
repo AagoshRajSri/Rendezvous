@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Transactional service responsible for durably persisting ride-request events,
@@ -102,6 +104,28 @@ public class AssignmentPersistenceService {
                          || STATUS_NO_DRIVERS.equals(req.getStatus())
                          || "NO_DRIVER".equals(req.getStatus()))
                 .orElse(false);
+    }
+
+    /**
+     * Batch lookup for request IDs that have already reached a durable terminal state (MATCHED or NO_DRIVERS).
+     *
+     * @param requestIds collection of logical request identifiers to query
+     * @return a {@link Set} of request IDs that are already finalized in the database
+     */
+    @Transactional(readOnly = true)
+    public Set<String> findFinalizedRequestIdsIn(Collection<String> requestIds) {
+        if (requestIds == null || requestIds.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> nonNullIds = requestIds.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (nonNullIds.isEmpty()) {
+            return Set.of();
+        }
+        List<String> terminalStatuses = List.of(STATUS_MATCHED, STATUS_NO_DRIVERS, "NO_DRIVER");
+        List<String> found = rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(nonNullIds, terminalStatuses);
+        return found != null ? Set.copyOf(found) : Set.of();
     }
 
     /**

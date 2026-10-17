@@ -14,6 +14,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -418,5 +419,41 @@ class AssignmentPersistenceServiceTest {
 
         // In-memory claim is safely retained, NOT released!
         assertEquals(MatchStatus.CLAIMED, a1.driver().state().getStatus());
+    }
+
+    @Test
+    @DisplayName("18. findFinalizedRequestIdsIn returns empty set for null or empty input without repository call")
+    void findFinalizedRequestIdsIn_returnsEmptySetOnNullOrEmptyInput() {
+        Set<String> resNull = service.findFinalizedRequestIdsIn(null);
+        assertTrue(resNull.isEmpty());
+
+        Set<String> resEmpty = service.findFinalizedRequestIdsIn(List.of());
+        assertTrue(resEmpty.isEmpty());
+
+        verify(rideRequestRepository, never()).findRequestIdsByRequestIdInAndStatusIn(any(), any());
+    }
+
+    @Test
+    @DisplayName("19. findFinalizedRequestIdsIn queries repository with terminal statuses and returns matching IDs")
+    void findFinalizedRequestIdsIn_queriesRepositoryWithTerminalStatuses() {
+        when(rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(
+                Set.of("REQ-MATCHED", "REQ-NODRIVERS", "REQ-NEW"),
+                List.of(AssignmentPersistenceService.STATUS_MATCHED, AssignmentPersistenceService.STATUS_NO_DRIVERS, "NO_DRIVER")
+        )).thenReturn(List.of("REQ-MATCHED", "REQ-NODRIVERS"));
+
+        Set<String> result = service.findFinalizedRequestIdsIn(List.of("REQ-MATCHED", "REQ-NODRIVERS", "REQ-NEW"));
+
+        assertEquals(Set.of("REQ-MATCHED", "REQ-NODRIVERS"), result);
+        verify(rideRequestRepository, times(1)).findRequestIdsByRequestIdInAndStatusIn(any(), any());
+    }
+
+    @Test
+    @DisplayName("20. findFinalizedRequestIdsIn propagates exception when repository fails")
+    void findFinalizedRequestIdsIn_propagatesExceptionOnRepositoryFailure() {
+        when(rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(any(), any()))
+                .thenThrow(new RuntimeException("PostgreSQL connection drop"));
+
+        assertThrows(RuntimeException.class, () ->
+                service.findFinalizedRequestIdsIn(List.of("REQ-1")));
     }
 }

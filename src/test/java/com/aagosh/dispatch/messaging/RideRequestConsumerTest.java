@@ -27,6 +27,7 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -65,6 +66,7 @@ class RideRequestConsumerTest {
         persistenceService = mock(AssignmentPersistenceService.class);
 
         // Default: request is new, persistence succeeds
+        when(persistenceService.findFinalizedRequestIdsIn(any())).thenReturn(Set.of());
         when(persistenceService.getRequestStatus(any())).thenReturn(Optional.empty());
         doNothing().when(persistenceService).persistMatchedAssignment(any(), any());
         doNothing().when(persistenceService).persistNoDrivers(any());
@@ -337,6 +339,8 @@ class RideRequestConsumerTest {
     @Test
     @DisplayName("11. Durable duplicate with MATCHED status in database is acknowledged without rematching")
     void durableDuplicateWithMatchedStatusSkipsMatching() {
+        when(persistenceService.findFinalizedRequestIdsIn(any()))
+                .thenReturn(Set.of("REQ-DB-MATCHED"));
         when(persistenceService.getRequestStatus("REQ-DB-MATCHED"))
                 .thenReturn(Optional.of(AssignmentPersistenceService.STATUS_MATCHED));
 
@@ -351,6 +355,8 @@ class RideRequestConsumerTest {
     @Test
     @DisplayName("12. Durable duplicate with NO_DRIVERS status in database is acknowledged without rematching")
     void durableDuplicateWithNoDriversStatusSkipsMatching() {
+        when(persistenceService.findFinalizedRequestIdsIn(any()))
+                .thenReturn(Set.of("REQ-DB-NODRIVER"));
         when(persistenceService.getRequestStatus("REQ-DB-NODRIVER"))
                 .thenReturn(Optional.of(AssignmentPersistenceService.STATUS_NO_DRIVERS));
 
@@ -758,5 +764,95 @@ class RideRequestConsumerTest {
         verify(acknowledgment, never()).acknowledge();
         assertFalse(consumer.isProcessed("REQ-DB-FAIL-1"));
         assertFalse(consumer.isProcessed("REQ-DB-FAIL-2"));
+    }
+
+    @Test
+    @DisplayName("28. Mixed batch of new and already-finalized requests: only new requests reach the matcher")
+    void mixedBatch_onlyNewRequestsReachMatcher() {
+        ConsumerRecord<String, RideRequestDto> recNew1 =
+                record("REQ-NEW-1", new RideRequestDto("REQ-NEW-1", null, 17.3850, 78.4867));
+        ConsumerRecord<String, RideRequestDto> recFinalized =
+                record("REQ-FINALIZED", new RideRequestDto("REQ-FINALIZED", null, 17.3851, 78.4868));
+        ConsumerRecord<String, RideRequestDto> recNew2 =
+                record("REQ-NEW-2", new RideRequestDto("REQ-NEW-2", null, 17.3852, 78.4869));
+
+        when(persistenceService.findFinalizedRequestIdsIn(Set.of("REQ-NEW-1", "REQ-FINALIZED", "REQ-NEW-2")))
+                .thenReturn(Set.of("REQ-FINALIZED"));
+
+        consumer.onRideRequests(List.of(recNew1, recFinalized, recNew2), acknowledgment);
+
+        // Matcher must receive only the 2 new requests
+        verify(mockMatcher).match(argThat(list ->
+                list.size() == 2
+                && list.stream().anyMatch(r -> "REQ-NEW-1".equals(r.id()))
+                && list.stream().anyMatch(r -> "REQ-NEW-2".equals(r.id()))
+                && list.stream().noneMatch(r -> "REQ-FINALIZED".equals(r.id()))
+        ), any(), any());
+
+        // Finalized duplicate must be marked processed
+        assertTrue(consumer.isProcessed("REQ-FINALIZED"));
+        assertTrue(consumer.isProcessed("REQ-NEW-1"));
+        assertTrue(consumer.isProcessed("REQ-NEW-2"));
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    @DisplayName("29. Database lookup failure releases in-flight reservations and propagates exception without acknowledgement")
+    void databaseLookupFailure_releasesInFlightAndDoesNotAcknowledge() {
+        ConsumerRecord<String, RideRequestDto> rec =
+                record("REQ-LOOKUP-FAIL", new RideRequestDto("REQ-LOOKUP-FAIL", null, 17.3850, 78.4867));
+
+        when(persistenceService.findFinalizedRequestIdsIn(any()))
+                .thenThrow(new RuntimeException("PostgreSQL connection timeout during batch lookup"));
+
+        assertThrows(RuntimeException.class, () ->
+                consumer.onRideRequests(List.of(rec), acknowledgment));
+
+        // Offset must not be acknowledged
+        verify(acknowledgment, never()).acknowledge();
+
+        // In-flight reservation must be released (no leak) so Kafka error handler retry can re-attempt
+        assertFalse(consumer.isInFlight("REQ-LOOKUP-FAIL"));
+        assertFalse(consumer.isProcessed("REQ-LOOKUP-FAIL"));
+    }
+
+    @Test
+    @DisplayName("30. Batch with duplicate request IDs filters in-memory duplicates before database lookup")
+    void batchWithDuplicateRequestIds_filtersInMemoryDuplicatesBeforeDatabaseLookup() {
+        ConsumerRecord<String, RideRequestDto> rec1 =
+                record("REQ-DUP-ID", new RideRequestDto("REQ-DUP-ID", null, 17.3850, 78.4867));
+        ConsumerRecord<String, RideRequestDto> rec2 =
+                record("REQ-DUP-ID", new RideRequestDto("REQ-DUP-ID", null, 17.3850, 78.4867));
+
+        consumer.onRideRequests(List.of(rec1, rec2), acknowledgment);
+
+        // findFinalizedRequestIdsIn should be called with only 1 unique ID
+        verify(persistenceService).findFinalizedRequestIdsIn(Set.of("REQ-DUP-ID"));
+        verify(mockMatcher).match(argThat(list -> list.size() == 1), any(), any());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    @DisplayName("31. Empty batch acknowledges immediately without database lookup or matcher call")
+    void emptyBatch_acknowledgesImmediatelyWithoutDatabaseLookup() {
+        consumer.onRideRequests(List.of(), acknowledgment);
+
+        verify(persistenceService, never()).findFinalizedRequestIdsIn(any());
+        verify(mockMatcher, never()).match(any(), any(), any());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    @DisplayName("32. Batch lookup is invoked exactly once per eligible batch")
+    void batchLookup_invokedExactlyOncePerEligibleBatch() {
+        ConsumerRecord<String, RideRequestDto> rec1 =
+                record("REQ-B1", new RideRequestDto("REQ-B1", null, 17.3850, 78.4867));
+        ConsumerRecord<String, RideRequestDto> rec2 =
+                record("REQ-B2", new RideRequestDto("REQ-B2", null, 17.3851, 78.4868));
+
+        consumer.onRideRequests(List.of(rec1, rec2), acknowledgment);
+
+        verify(persistenceService, times(1)).findFinalizedRequestIdsIn(Set.of("REQ-B1", "REQ-B2"));
+        verify(mockMatcher, times(1)).match(any(), any(), any());
     }
 }

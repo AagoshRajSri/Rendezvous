@@ -2,6 +2,11 @@ package com.aagosh.dispatch.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -17,4 +22,10 @@ public interface RideRequestRepository extends JpaRepository<RideRequestEntity, 
     Optional<RideRequestEntity> findByRequestId(String requestId);
 
     boolean existsByRequestId(String requestId);
+
+    @Query("SELECT r.requestId FROM RideRequestEntity r WHERE r.requestId IN :requestIds AND r.status IN :statuses")
+    List<String> findRequestIdsByRequestIdInAndStatusIn(
+            @Param("requestIds") Collection<String> requestIds,
+            @Param("statuses") Collection<String> statuses
+    );
 }
