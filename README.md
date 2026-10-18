@@ -179,7 +179,7 @@ graph TD
 
     %% Telemetry Consumer Flow
     DPC -->|Atomic Update| DR
-    DPC -->|Conditional Write (30s TTL Lua)| RD
+    DPC -->|Conditional Write - 30s TTL Lua| RD
 
     %% Ride Consumer Matching Flow
     RRC -->|1. Check Finalized State| PG
