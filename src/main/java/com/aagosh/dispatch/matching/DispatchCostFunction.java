@@ -114,6 +114,29 @@ public final class DispatchCostFunction implements CostFunction {
              + config.wOpportunity() * opportunityCost;
     }
 
+    /**
+     * Computes the decomposed cost breakdown for assigning {@code driver} to {@code request}.
+     *
+     * @param driver  the candidate driver; must not be {@code null}
+     * @param request the ride request; must not be {@code null}
+     * @return the decomposed weighted cost components and total cost
+     */
+    public CostBreakdown decompose(Driver driver, RideRequest request) {
+        Objects.requireNonNull(driver, "driver");
+        Objects.requireNonNull(request, "request");
+
+        double normEta = etaComponent(driver, request);
+        double normDensity = densityComponent(driver);
+        double normOpportunity = 0.0;
+
+        double wEta = config.wEta() * normEta;
+        double wDensity = config.wDensity() * normDensity;
+        double wOpportunity = config.wOpportunity() * normOpportunity;
+        double total = wEta + wDensity + wOpportunity;
+
+        return new CostBreakdown(wEta, wDensity, wOpportunity, total);
+    }
+
     // -------------------------------------------------------------------------
     // Private component calculations
     // -------------------------------------------------------------------------

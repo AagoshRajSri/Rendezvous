@@ -6,12 +6,21 @@ import com.aagosh.dispatch.domain.DriverState;
 import com.aagosh.dispatch.domain.MatchStatus;
 import com.aagosh.dispatch.domain.RideRequest;
 
+import com.aagosh.dispatch.tracing.CandidateOutcome;
+import com.aagosh.dispatch.tracing.DispatchTraceCollector;
+import com.aagosh.dispatch.tracing.TraceCandidate;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Assignment optimizer implementing Bertsekas's Auction Algorithm for the
@@ -84,6 +93,26 @@ public final class AuctionMatcher implements Matcher {
     // Matcher contract
     // -------------------------------------------------------------------------
 
+    @Override
+    public List<Assignment> match(
+            List<RideRequest> requests,
+            List<Driver> drivers,
+            CostFunction costFunction
+    ) {
+        return match(requests, drivers, costFunction, (Function<String, DispatchTraceCollector>) null);
+    }
+
+    @Override
+    public List<Assignment> match(
+            List<RideRequest> requests,
+            List<Driver> drivers,
+            CostFunction costFunction,
+            DispatchTraceCollector collector
+    ) {
+        return match(requests, drivers, costFunction,
+                collector != null ? (reqId -> reqId.equals(collector.requestId()) ? collector : null) : null);
+    }
+
     /**
      * Runs the Auction Algorithm to minimize total assignment cost for the
      * supplied batch, then commits each tentative assignment via
@@ -100,25 +129,46 @@ public final class AuctionMatcher implements Matcher {
      *       in the result.</li>
      * </ul>
      *
-     * @param requests     the batch of ride requests; must not be {@code null}
-     *                     and must not contain {@code null} elements
-     * @param drivers      the fleet snapshot; must not be {@code null} and
-     *                     must not contain {@code null} elements
-     * @param costFunction the pairing cost evaluator; must not be
-     *                     {@code null}
+     * @param requests          the batch of ride requests; must not be {@code null}
+     *                          and must not contain {@code null} elements
+     * @param drivers           the fleet snapshot; must not be {@code null} and
+     *                          must not contain {@code null} elements
+     * @param costFunction      the pairing cost evaluator; must not be {@code null}
+     * @param collectorProvider optional function resolving a trace collector by request ID
      * @return an immutable list of committed assignments; may be empty
      */
     @Override
     public List<Assignment> match(
             List<RideRequest> requests,
             List<Driver> drivers,
-            CostFunction costFunction
+            CostFunction costFunction,
+            Function<String, DispatchTraceCollector> collectorProvider
     ) {
         Objects.requireNonNull(requests,     "requests");
         Objects.requireNonNull(drivers,      "drivers");
         Objects.requireNonNull(costFunction, "costFunction");
 
-        if (requests.isEmpty() || drivers.isEmpty()) {
+        long startNanos = System.nanoTime();
+
+        if (requests.isEmpty()) {
+            return List.of();
+        }
+
+        if (drivers.isEmpty()) {
+            for (RideRequest req : requests) {
+                DispatchTraceCollector col = resolveCollector(collectorProvider, req.id());
+                if (col != null && col.isEnabled()) {
+                    try {
+                        col.setAlgorithm("AuctionMatcher (Bertsekas)");
+                        col.setPickupLocation(req.pickupLocation().latitude(), req.pickupLocation().longitude());
+                        col.setTotalFleetSize(0);
+                        col.recordNoDrivers("Fleet is empty; no candidate drivers available");
+                        col.finish(System.nanoTime() - startNanos);
+                    } catch (Exception ignored) {
+                        // Suppress tracing errors to protect dispatch matching
+                    }
+                }
+            }
             return List.of();
         }
 
@@ -128,6 +178,34 @@ public final class AuctionMatcher implements Matcher {
         List<Driver> eligible = eligibleDrivers(drivers);
 
         if (eligible.isEmpty()) {
+            for (RideRequest req : requests) {
+                DispatchTraceCollector col = resolveCollector(collectorProvider, req.id());
+                if (col != null && col.isEnabled()) {
+                    try {
+                        col.setAlgorithm("AuctionMatcher (Bertsekas)");
+                        col.setPickupLocation(req.pickupLocation().latitude(), req.pickupLocation().longitude());
+                        col.setTotalFleetSize(drivers.size());
+                        int rank = 1;
+                        for (Driver d : drivers) {
+                            double distKm = d.location().distanceToKm(req.pickupLocation());
+                            col.addCandidate(new TraceCandidate(
+                                    d.id(),
+                                    d.location().latitude(),
+                                    d.location().longitude(),
+                                    distKm,
+                                    null, null, null, null,
+                                    rank++,
+                                    CandidateOutcome.UNAVAILABLE,
+                                    "Driver is not available (status: " + d.state().getStatus() + ")"
+                            ));
+                        }
+                        col.recordNoDrivers("No available drivers in fleet");
+                        col.finish(System.nanoTime() - startNanos);
+                    } catch (Exception ignored) {
+                        // Suppress tracing errors to protect dispatch matching
+                    }
+                }
+            }
             return List.of();
         }
 
@@ -151,7 +229,7 @@ public final class AuctionMatcher implements Matcher {
         // 4. Commit tentative assignments via tryClaim().
         //    Failures are silently dropped — the request remains unmatched.
         // ------------------------------------------------------------------
-        return commitAssignments(requests, eligible, cost, requestToDriver, R);
+        return commitAssignments(requests, eligible, drivers, cost, costFunction, requestToDriver, R, collectorProvider, startNanos);
     }
 
     // -------------------------------------------------------------------------
@@ -311,32 +389,174 @@ public final class AuctionMatcher implements Matcher {
     private static List<Assignment> commitAssignments(
             List<RideRequest> requests,
             List<Driver> eligible,
+            List<Driver> allDrivers,
             double[][] cost,
+            CostFunction costFunction,
             int[] requestToDriver,
-            int R
+            int R,
+            Function<String, DispatchTraceCollector> collectorProvider,
+            long startNanos
     ) {
         List<Assignment> assignments = new ArrayList<>();
 
         for (int i = 0; i < R; i++) {
-            int j = requestToDriver[i];
-            if (j == UNASSIGNED) {
-                continue; // request was unmatched or dummy
+            RideRequest req = requests.get(i);
+            int assignedDriverIdx = requestToDriver[i];
+
+            DispatchTraceCollector col = resolveCollector(collectorProvider, req.id());
+            boolean tracing = col != null && col.isEnabled();
+
+            if (tracing) {
+                try {
+                    col.setAlgorithm("AuctionMatcher (Bertsekas)");
+                    col.setPickupLocation(req.pickupLocation().latitude(), req.pickupLocation().longitude());
+                    col.setTotalFleetSize(allDrivers.size());
+                } catch (Exception ignored) {
+                    // Suppress tracing errors to protect dispatch matching
+                }
             }
 
-            RideRequest req    = requests.get(i);
-            Driver      driver = eligible.get(j);
+            boolean claimSucceeded = false;
+            Driver winnerDriver = null;
+            double winnerCost = 0.0;
 
-            // Atomic claim — the sole authoritative gate for concurrent safety.
-            boolean claimed = driver.state().tryClaim(req.id());
-            if (!claimed) {
-                // Concurrent external claim took this driver first.
-                // The request is left unmatched. No duplicate assignment emitted.
-                continue;
+            if (assignedDriverIdx != UNASSIGNED) {
+                winnerDriver = eligible.get(assignedDriverIdx);
+                winnerCost = cost[i][assignedDriverIdx];
+
+                // Atomic claim — the sole authoritative gate for concurrent safety.
+                claimSucceeded = winnerDriver.state().tryClaim(req.id());
+                if (claimSucceeded) {
+                    assignments.add(new Assignment(req, winnerDriver, winnerCost));
+                }
             }
 
-            assignments.add(new Assignment(req, driver, cost[i][j]));
+            if (tracing) {
+                try {
+                    recordAuctionCandidates(req, eligible, allDrivers, cost[i], costFunction, assignedDriverIdx, claimSucceeded, col);
+
+                    if (claimSucceeded) {
+                        col.recordMatch(
+                                winnerDriver.id(),
+                                "Assigned via Bertsekas Auction (cost: " + String.format(Locale.US, "%.4f", winnerCost) + ")"
+                        );
+                    } else if (assignedDriverIdx != UNASSIGNED) {
+                        col.recordNoDrivers(
+                                "Auction selected driver " + winnerDriver.id() + " but atomic claim failed (CAS conflict)"
+                        );
+                    } else {
+                        col.recordNoDrivers("No feasible driver assignment found in global auction");
+                    }
+
+                    col.finish(System.nanoTime() - startNanos);
+                } catch (Exception ignored) {
+                    // Suppress tracing errors to ensure committed assignments and subsequent requests are never disrupted
+                }
+            }
         }
 
         return List.copyOf(assignments);
+    }
+
+    private static void recordAuctionCandidates(
+            RideRequest req,
+            List<Driver> eligible,
+            List<Driver> allDrivers,
+            double[] costForReq,
+            CostFunction costFunction,
+            int assignedDriverIdx,
+            boolean claimSucceeded,
+            DispatchTraceCollector col
+    ) {
+        record EvaluatedDriver(Driver driver, int eligibleIdx, double cost, double distKm, CostBreakdown breakdown) {}
+
+        List<EvaluatedDriver> evaluated = new ArrayList<>(eligible.size());
+        for (int j = 0; j < eligible.size(); j++) {
+            Driver d = eligible.get(j);
+            double distKm = d.location().distanceToKm(req.pickupLocation());
+            double c = costForReq[j];
+            CostBreakdown b = (costFunction instanceof DispatchCostFunction dcf)
+                    ? dcf.decompose(d, req)
+                    : null;
+            evaluated.add(new EvaluatedDriver(d, j, c, distKm, b));
+        }
+
+        // Sort candidates by cost ascending, then distance ascending, then id ascending
+        evaluated.sort((e1, e2) -> {
+            int cmp = Double.compare(e1.cost(), e2.cost());
+            if (cmp != 0) return cmp;
+            cmp = Double.compare(e1.distKm(), e2.distKm());
+            if (cmp != 0) return cmp;
+            return e1.driver().id().compareTo(e2.driver().id());
+        });
+
+        int rank = 1;
+        for (EvaluatedDriver ed : evaluated) {
+            CandidateOutcome outcome;
+            String rejectionReason;
+
+            if (ed.eligibleIdx() == assignedDriverIdx) {
+                if (claimSucceeded) {
+                    outcome = CandidateOutcome.MATCHED;
+                    rejectionReason = null;
+                } else {
+                    outcome = CandidateOutcome.CLAIM_LOST;
+                    rejectionReason = "Atomic claim failed (CAS conflict; driver claimed concurrently)";
+                }
+            } else {
+                outcome = CandidateOutcome.OUTCOMPETED;
+                rejectionReason = "Outcompeted in global bipartite utility assignment";
+            }
+
+            col.addCandidate(new TraceCandidate(
+                    ed.driver().id(),
+                    ed.driver().location().latitude(),
+                    ed.driver().location().longitude(),
+                    ed.distKm(),
+                    ed.breakdown() != null ? ed.breakdown().etaCost() : null,
+                    ed.breakdown() != null ? ed.breakdown().densityCost() : null,
+                    ed.breakdown() != null ? ed.breakdown().opportunityCost() : null,
+                    ed.cost(),
+                    rank++,
+                    outcome,
+                    rejectionReason
+            ));
+        }
+
+        // Record unavailable drivers (drivers that were not eligible at auction start)
+        Set<String> eligibleIds = new HashSet<>();
+        for (Driver d : eligible) {
+            eligibleIds.add(d.id());
+        }
+
+        for (Driver d : allDrivers) {
+            if (!eligibleIds.contains(d.id())) {
+                double distKm = d.location().distanceToKm(req.pickupLocation());
+                col.addCandidate(new TraceCandidate(
+                        d.id(),
+                        d.location().latitude(),
+                        d.location().longitude(),
+                        distKm,
+                        null, null, null, null,
+                        rank++,
+                        CandidateOutcome.UNAVAILABLE,
+                        "Driver is not available (status: " + d.state().getStatus() + ")"
+                ));
+            }
+        }
+    }
+
+    private static DispatchTraceCollector resolveCollector(
+            Function<String, DispatchTraceCollector> provider,
+            String requestId
+    ) {
+        if (provider == null || requestId == null) {
+            return null;
+        }
+        try {
+            return provider.apply(requestId);
+        } catch (Exception e) {
+            return null; // tracing errors must not disrupt matching
+        }
     }
 }

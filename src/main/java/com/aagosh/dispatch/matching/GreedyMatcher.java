@@ -6,6 +6,11 @@ import com.aagosh.dispatch.domain.GeoPoint;
 import com.aagosh.dispatch.domain.RideRequest;
 import com.aagosh.dispatch.spatial.BoundingBox;
 import com.aagosh.dispatch.spatial.QuadTree;
+import com.aagosh.dispatch.spatial.QuadTreeSearchStats;
+import com.aagosh.dispatch.tracing.CandidateOutcome;
+import com.aagosh.dispatch.tracing.DispatchTraceCollector;
+import com.aagosh.dispatch.tracing.SpatialStage;
+import com.aagosh.dispatch.tracing.TraceCandidate;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -14,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 public final class GreedyMatcher implements Matcher {
 
@@ -43,6 +49,27 @@ public final class GreedyMatcher implements Matcher {
             List<Driver> drivers,
             CostFunction costFunction
     ) {
+        return match(requests, drivers, costFunction, (Function<String, DispatchTraceCollector>) null);
+    }
+
+    @Override
+    public List<Assignment> match(
+            List<RideRequest> requests,
+            List<Driver> drivers,
+            CostFunction costFunction,
+            DispatchTraceCollector collector
+    ) {
+        return match(requests, drivers, costFunction,
+                collector != null ? (reqId -> reqId.equals(collector.requestId()) ? collector : null) : null);
+    }
+
+    @Override
+    public List<Assignment> match(
+            List<RideRequest> requests,
+            List<Driver> drivers,
+            CostFunction costFunction,
+            Function<String, DispatchTraceCollector> collectorProvider
+    ) {
         Objects.requireNonNull(requests, "requests");
         Objects.requireNonNull(drivers, "drivers");
         Objects.requireNonNull(costFunction, "costFunction");
@@ -53,6 +80,8 @@ public final class GreedyMatcher implements Matcher {
 
         Map<GeoPoint, List<Driver>> driversByLocation =
                 new LinkedHashMap<>();
+
+        int totalFleetSize = drivers.size();
 
         for (Driver driver : drivers) {
             Objects.requireNonNull(driver, "driver");
@@ -78,10 +107,24 @@ public final class GreedyMatcher implements Matcher {
         for (RideRequest request : requests) {
             Objects.requireNonNull(request, "request");
 
+            DispatchTraceCollector collector = resolveCollector(collectorProvider, request.id());
+
             int totalLocations = driversByLocation.size();
 
             if (totalLocations == 0) {
-                break;
+                if (collector != null && collector.isEnabled()) {
+                    try {
+                        long start = System.nanoTime();
+                        collector.setAlgorithm("GreedyMatcher (Spatial QuadTree)");
+                        collector.setPickupLocation(request.pickupLocation().latitude(), request.pickupLocation().longitude());
+                        collector.setTotalFleetSize(0);
+                        collector.recordNoDrivers("Fleet is empty; no candidate drivers available");
+                        collector.finish(System.nanoTime() - start);
+                    } catch (Exception ignored) {
+                        // Suppress tracing errors to protect dispatch matching
+                    }
+                }
+                continue;
             }
 
             tryAssign(
@@ -89,8 +132,10 @@ public final class GreedyMatcher implements Matcher {
                     quadTree,
                     driversByLocation,
                     totalLocations,
+                    totalFleetSize,
                     costFunction,
-                    assignments
+                    assignments,
+                    collector
             );
         }
 
@@ -100,7 +145,8 @@ public final class GreedyMatcher implements Matcher {
     private record DriverCandidate(
             Driver driver,
             double cost,
-            double distanceKm
+            double distanceKm,
+            CostBreakdown breakdown
     ) {}
 
     /**
@@ -117,7 +163,7 @@ public final class GreedyMatcher implements Matcher {
      *   <li>Validate that costs are finite and non-negative.
      *   <li>Sort candidate drivers in ascending cost order, breaking ties
      *       deterministically by distance then driver ID.
-     *   <li>Attempt atomic claims via {@link DriverState#tryClaim(String)} in
+     *   <li>Attempt atomic claims via {@link com.aagosh.dispatch.domain.DriverState#tryClaim(String)} in
      *       cost order. If a claim succeeds, record the assignment and return.
      *   <li>If all candidates in the current window fail to claim or are
      *       unavailable, expand the window by {@code WINDOW_GROWTH_FACTOR}
@@ -131,19 +177,66 @@ public final class GreedyMatcher implements Matcher {
             QuadTree quadTree,
             Map<GeoPoint, List<Driver>> driversByLocation,
             int totalLocations,
+            int totalFleetSize,
             CostFunction costFunction,
-            List<Assignment> assignments
+            List<Assignment> assignments,
+            DispatchTraceCollector collector
     ) {
+        long startNanos = System.nanoTime();
+        boolean tracing = collector != null && collector.isEnabled();
+
         GeoPoint pickup = request.pickupLocation();
+
+        if (tracing) {
+            try {
+                collector.setAlgorithm("GreedyMatcher (Spatial QuadTree)");
+                collector.setPickupLocation(pickup.latitude(), pickup.longitude());
+                collector.setTotalFleetSize(totalFleetSize);
+            } catch (Exception ignored) {
+                // Suppress tracing errors to protect dispatch matching
+            }
+        }
+
         int currentWindow = Math.min(INITIAL_WINDOW, totalLocations);
         Set<GeoPoint> visitedLocations = new HashSet<>();
+        int stageIndex = 0;
+        int evaluatedRank = 1;
+
+        QuadTreeSearchStats stats = tracing ? new QuadTreeSearchStats() : null;
 
         while (true) {
-            // Fetch currentWindow nearest locations, nearest-first.
-            List<GeoPoint> candidates =
-                    quadTree.kNearest(pickup, currentWindow);
+            if (stats != null) {
+                stats.reset();
+            }
+
+            // Fetch currentWindow nearest locations, nearest-first with optional traversal stats
+            List<GeoPoint> candidates = quadTree.kNearest(pickup, currentWindow, stats);
+
+            String stageType = (stageIndex == 0)
+                    ? "INITIAL_WINDOW"
+                    : (currentWindow < totalLocations ? "EXPANDED_WINDOW" : "EXHAUSTIVE_PASS");
+
+            // Calculate explored bounding box for this stage enclosing pickup and candidate locations only when tracing
+            Double minLat = null, maxLat = null, minLon = null, maxLon = null;
+            if (tracing && !candidates.isEmpty()) {
+                double sMinLat = pickup.latitude();
+                double sMaxLat = pickup.latitude();
+                double sMinLon = pickup.longitude();
+                double sMaxLon = pickup.longitude();
+                for (GeoPoint p : candidates) {
+                    if (p.latitude() < sMinLat) sMinLat = p.latitude();
+                    if (p.latitude() > sMaxLat) sMaxLat = p.latitude();
+                    if (p.longitude() < sMinLon) sMinLon = p.longitude();
+                    if (p.longitude() > sMaxLon) sMaxLon = p.longitude();
+                }
+                minLat = sMinLat;
+                maxLat = sMaxLat;
+                minLon = sMinLon;
+                maxLon = sMaxLon;
+            }
 
             List<DriverCandidate> evaluatedCandidates = new ArrayList<>();
+            int newCandidatesDiscovered = 0;
 
             for (GeoPoint location : candidates) {
                 if (visitedLocations.contains(location)) {
@@ -155,8 +248,27 @@ public final class GreedyMatcher implements Matcher {
 
                 if (driversAtLocation != null) {
                     for (Driver driver : driversAtLocation) {
+                        newCandidatesDiscovered++;
+
                         // Skip drivers already claimed in prior assignments
                         if (driver.state().getStatus() != com.aagosh.dispatch.domain.MatchStatus.AVAILABLE) {
+                            if (tracing) {
+                                try {
+                                    double distKm = driver.location().distanceToKm(pickup);
+                                    collector.addCandidate(new TraceCandidate(
+                                            driver.id(),
+                                            driver.location().latitude(),
+                                            driver.location().longitude(),
+                                            distKm,
+                                            null, null, null, null,
+                                            evaluatedRank++,
+                                            CandidateOutcome.UNAVAILABLE,
+                                            "Driver is not available (status: " + driver.state().getStatus() + ")"
+                                    ));
+                                } catch (Exception ignored) {
+                                    // Suppress tracing errors to protect dispatch matching
+                                }
+                            }
                             continue;
                         }
 
@@ -169,8 +281,31 @@ public final class GreedyMatcher implements Matcher {
                         }
 
                         double distKm = driver.location().distanceToKm(pickup);
-                        evaluatedCandidates.add(new DriverCandidate(driver, cost, distKm));
+                        CostBreakdown breakdown = (tracing && costFunction instanceof DispatchCostFunction dcf)
+                                ? dcf.decompose(driver, request)
+                                : null;
+
+                        evaluatedCandidates.add(new DriverCandidate(driver, cost, distKm, breakdown));
                     }
+                }
+            }
+
+            if (tracing) {
+                try {
+                    collector.addStage(new SpatialStage(
+                            stageIndex++,
+                            stageType,
+                            currentWindow,
+                            minLat,
+                            minLon,
+                            maxLat,
+                            maxLon,
+                            stats != null ? stats.visitedNodes() : 0,
+                            stats != null ? stats.prunedNodes() : 0,
+                            newCandidatesDiscovered
+                    ));
+                } catch (Exception ignored) {
+                    // Suppress tracing errors to protect dispatch matching
                 }
             }
 
@@ -191,18 +326,99 @@ public final class GreedyMatcher implements Matcher {
             });
 
             // Attempt atomic claims in cost order
-            for (DriverCandidate candidate : evaluatedCandidates) {
+            for (int i = 0; i < evaluatedCandidates.size(); i++) {
+                DriverCandidate candidate = evaluatedCandidates.get(i);
+                int rank = evaluatedRank++;
+
                 if (candidate.driver().state().tryClaim(request.id())) {
                     assignments.add(
                             new Assignment(request, candidate.driver(), candidate.cost())
                     );
+
+                    if (tracing) {
+                        try {
+                            CostBreakdown b = candidate.breakdown();
+                            collector.addCandidate(new TraceCandidate(
+                                    candidate.driver().id(),
+                                    candidate.driver().location().latitude(),
+                                    candidate.driver().location().longitude(),
+                                    candidate.distanceKm(),
+                                    b != null ? b.etaCost() : null,
+                                    b != null ? b.densityCost() : null,
+                                    b != null ? b.opportunityCost() : null,
+                                    candidate.cost(),
+                                    rank,
+                                    CandidateOutcome.MATCHED,
+                                    null
+                            ));
+
+                            // Record remaining evaluated candidates in this window as OUTCOMPETED
+                            for (int j = i + 1; j < evaluatedCandidates.size(); j++) {
+                                DriverCandidate outcompeted = evaluatedCandidates.get(j);
+                                CostBreakdown ob = outcompeted.breakdown();
+                                collector.addCandidate(new TraceCandidate(
+                                        outcompeted.driver().id(),
+                                        outcompeted.driver().location().latitude(),
+                                        outcompeted.driver().location().longitude(),
+                                        outcompeted.distanceKm(),
+                                        ob != null ? ob.etaCost() : null,
+                                        ob != null ? ob.densityCost() : null,
+                                        ob != null ? ob.opportunityCost() : null,
+                                        outcompeted.cost(),
+                                        evaluatedRank++,
+                                        CandidateOutcome.OUTCOMPETED,
+                                        "Outcompeted by lower-cost candidate " + candidate.driver().id()
+                                ));
+                            }
+
+                            collector.recordMatch(
+                                    candidate.driver().id(),
+                                    "Matched driver " + candidate.driver().id() + " (cost: " + String.format(java.util.Locale.US, "%.4f", candidate.cost()) + ")"
+                            );
+                            collector.finish(System.nanoTime() - startNanos);
+                        } catch (Exception ignored) {
+                            // Suppress tracing errors to protect dispatch matching
+                        }
+                    }
+
                     return; // successfully claimed
+                } else {
+                    if (tracing) {
+                        try {
+                            CostBreakdown b = candidate.breakdown();
+                            collector.addCandidate(new TraceCandidate(
+                                    candidate.driver().id(),
+                                    candidate.driver().location().latitude(),
+                                    candidate.driver().location().longitude(),
+                                    candidate.distanceKm(),
+                                    b != null ? b.etaCost() : null,
+                                    b != null ? b.densityCost() : null,
+                                    b != null ? b.opportunityCost() : null,
+                                    candidate.cost(),
+                                    rank,
+                                    CandidateOutcome.CLAIM_LOST,
+                                    "Atomic claim failed (CAS conflict; driver claimed concurrently)"
+                            ));
+                        } catch (Exception ignored) {
+                            // Suppress tracing errors to protect dispatch matching
+                        }
+                    }
                 }
             }
 
             // All candidates in this window were already claimed or unavailable.
             if (currentWindow >= totalLocations) {
                 // Exhaustive pass completed with no success — request unmatched.
+                if (tracing) {
+                    try {
+                        collector.recordNoDrivers(
+                                "Exhausted all " + totalLocations + " locations in fleet without a successful match"
+                        );
+                        collector.finish(System.nanoTime() - startNanos);
+                    } catch (Exception ignored) {
+                        // Suppress tracing errors to protect dispatch matching
+                    }
+                }
                 return;
             }
 
@@ -211,6 +427,20 @@ public final class GreedyMatcher implements Matcher {
                     currentWindow * WINDOW_GROWTH_FACTOR,
                     totalLocations
             );
+        }
+    }
+
+    private static DispatchTraceCollector resolveCollector(
+            Function<String, DispatchTraceCollector> provider,
+            String requestId
+    ) {
+        if (provider == null || requestId == null) {
+            return null;
+        }
+        try {
+            return provider.apply(requestId);
+        } catch (Exception e) {
+            return null; // tracing errors must not disrupt matching
         }
     }
 }

@@ -211,6 +211,10 @@ public final class QuadTree {
     }
 
     public List<GeoPoint> kNearest(GeoPoint query, int k) {
+        return kNearest(query, k, null);
+    }
+
+    public List<GeoPoint> kNearest(GeoPoint query, int k, QuadTreeObserver observer) {
         Objects.requireNonNull(query, "query");
 
         if (k <= 0) {
@@ -227,7 +231,7 @@ public final class QuadTree {
         // until the heap reaches capacity k.
         double[] worstKm = {Double.POSITIVE_INFINITY};
 
-        collectNearest(query, k, nearest, worstKm);
+        collectNearest(query, k, nearest, worstKm, observer);
 
         // Extract in nearest-first order using the cached distances.
         // The heap holds at most k elements; sort is O(k log k) on
@@ -245,14 +249,30 @@ public final class QuadTree {
             GeoPoint query,
             int k,
             PriorityQueue<Candidate> nearest,
-            double[] worstKm
+            double[] worstKm,
+            QuadTreeObserver observer
     ) {
         if (nearest.size() == k) {
             double lowerBound = minimumPossibleDistanceKm(query);
 
             // worstKm[0] is always nearest.peek().distKm — no re-computation.
             if (lowerBound > worstKm[0] + PRUNING_TOLERANCE_KM) {
+                if (observer != null) {
+                    try {
+                        observer.onNodePruned(this.boundary);
+                    } catch (Exception ignored) {
+                        // Suppress observer failures to protect spatial search
+                    }
+                }
                 return;
+            }
+        }
+
+        if (observer != null) {
+            try {
+                observer.onNodeVisited(this.boundary, northWest == null);
+            } catch (Exception ignored) {
+                // Suppress observer failures to protect spatial search
             }
         }
 
@@ -278,10 +298,10 @@ public final class QuadTree {
             return;
         }
 
-        northWest.collectNearest(query, k, nearest, worstKm);
-        northEast.collectNearest(query, k, nearest, worstKm);
-        southWest.collectNearest(query, k, nearest, worstKm);
-        southEast.collectNearest(query, k, nearest, worstKm);
+        northWest.collectNearest(query, k, nearest, worstKm, observer);
+        northEast.collectNearest(query, k, nearest, worstKm, observer);
+        southWest.collectNearest(query, k, nearest, worstKm, observer);
+        southEast.collectNearest(query, k, nearest, worstKm, observer);
     }
 
     /**
