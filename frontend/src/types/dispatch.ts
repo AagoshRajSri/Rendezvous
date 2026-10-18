@@ -50,13 +50,31 @@ export interface EligibleDriver {
   updatedAt: string;
 }
 
-/** HTTP 200 response from POST /api/trips/{requestId}/cancel */
-export interface TripCancelResponse {
+/**
+ * Phase 11.3 — Response payload detailing the outcome of a lifecycle transition attempt.
+ * Matches backend TripLifecycleResponse record.
+ */
+export interface TripLifecycleResponse {
   requestId: string;
   driverId: string;
-  status: string;
-  outcome: string;
+  status: 'ASSIGNED' | 'EN_ROUTE' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | string;
+  outcome: 'TRANSITIONED' | 'ALREADY_IN_TARGET_STATE' | string;
   message: string;
+}
+
+/** Legacy alias for backwards compatibility */
+export type TripCancelResponse = TripLifecycleResponse;
+
+/**
+ * Phase 11.3 — Response payload from GET /api/trips/{requestId}.
+ * Matches backend TripResponse record.
+ */
+export interface TripResponse {
+  requestId: string;
+  driverId: string;
+  status: 'ASSIGNED' | 'EN_ROUTE' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -109,7 +127,11 @@ export type DispatchPhase =
   | 'registering'   // POST /api/register in flight
   | 'submitting'    // POST /api/request in flight
   | 'polling'       // GET  /api/requests/{id} — awaiting terminal result
-  | 'matched'       // terminal: driver found
+  | 'matched'       // match confirmed
+  | 'en_route'      // Phase 11.3: driver en route to pickup (POST /api/trips/{id}/en-route confirmed)
+  | 'arrived'       // Phase 11.3: driver arrived at pickup, waiting for boarding
+  | 'in_progress'   // Phase 11.3: passenger boarded, ride in progress (POST /api/trips/{id}/start confirmed)
+  | 'completed'     // Phase 11.3: ride completed (POST /api/trips/{id}/complete confirmed)
   | 'cancelled'     // Phase 11.2: ride cancelled prior to pickup
   | 'no_drivers'    // terminal: no driver available
   | 'error';        // terminal: network or server error

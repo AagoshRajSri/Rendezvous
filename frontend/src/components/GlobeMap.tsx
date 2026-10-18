@@ -6,6 +6,7 @@ import type { FeatureCollection } from 'geojson';
 import type { MapReadyState } from '../hooks/useMapReady';
 import type { PlaceSuggestion } from '../types/place';
 import type { SimulatedDriver } from '../types/driver';
+import type { DispatchPhase } from '../types/dispatch';
 import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
@@ -384,6 +385,10 @@ interface GlobeMapProps {
    * Phase 11.2 — Current vehicle bearing in degrees [0, 360).
    */
   animatedVehicleBearing?: number;
+  /**
+   * Phase 11.3 — Active lifecycle phase to trigger destination camera framing.
+   */
+  activePhase?: DispatchPhase;
 }
 
 /**
@@ -411,6 +416,7 @@ export function GlobeMap({
   driverApproachRoute = null,
   animatedVehiclePosition = null,
   animatedVehicleBearing = 0,
+  activePhase = 'idle',
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -428,6 +434,7 @@ export function GlobeMap({
    */
   const lastFittedDriverLocationRef = useRef<string | null>(null);
   const lastFittedApproachRouteRef = useRef<string | null>(null);
+  const lastFittedTripRouteRef = useRef<string | null>(null);
 
   // Controls whether the loading overlay is still mounted (fades out after ready)
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -734,6 +741,61 @@ export function GlobeMap({
       source.setData(EMPTY_FEATURE_COLLECTION);
     }
   }, [routeCoordinates]);
+
+  // ── Sync destination road route camera framing on in_progress (Phase 11.3) ──
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    if (activePhase !== 'in_progress') {
+      if (activePhase === 'idle') {
+        lastFittedTripRouteRef.current = null;
+      }
+      return;
+    }
+
+    if (!routeCoordinates || routeCoordinates.length < 2) return;
+
+    const firstCoord = routeCoordinates[0];
+    const lastCoord = routeCoordinates[routeCoordinates.length - 1];
+    const routeKey = `trip:${firstCoord[0]},${firstCoord[1]}:${lastCoord[0]},${lastCoord[1]}`;
+
+    if (lastFittedTripRouteRef.current !== routeKey) {
+      lastFittedTripRouteRef.current = routeKey;
+
+      let minLon = Infinity;
+      let maxLon = -Infinity;
+      let minLat = Infinity;
+      let maxLat = -Infinity;
+
+      for (const [lon, lat] of routeCoordinates) {
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+
+      if (
+        isFinite(minLon) &&
+        isFinite(maxLon) &&
+        isFinite(minLat) &&
+        isFinite(maxLat)
+      ) {
+        map.fitBounds(
+          [
+            [minLon, minLat],
+            [maxLon, maxLat],
+          ],
+          {
+            padding: { top: 90, bottom: 90, left: 90, right: 380 },
+            maxZoom: 15,
+            duration: FLY_DURATION_MS,
+            essential: true,
+          },
+        );
+      }
+    }
+  }, [activePhase, routeCoordinates]);
 
   // ── Sync driver approach road route and camera framing (Phase 11.2) ────────
   useEffect(() => {

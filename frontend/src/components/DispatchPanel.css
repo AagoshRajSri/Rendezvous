@@ -379,3 +379,151 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* ── Phase 11.3: In-Progress Destination ETA Variant ────────────────────────── */
+
+.dispatch-panel__eta-card--destination {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.25);
+}
+
+.dispatch-panel__eta-card--destination .dispatch-panel__eta-value {
+  color: #38bdf8;
+}
+
+/* ── Phase 11.3: Start & Complete buttons ───────────────────────────────────── */
+
+.dispatch-panel__btn--success {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.dispatch-panel__btn--success:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+  transform: translateY(-1px);
+}
+
+.dispatch-panel__btn--success:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ── Phase 11.3: Destination Missing Guidance ───────────────────────────────── */
+
+.dispatch-panel__guidance-box {
+  padding: 10px 12px;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dispatch-panel__guidance-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #facc15;
+}
+
+.dispatch-panel__guidance-msg {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.4;
+}
+
+/* ── Phase 11.3: Trip Completed Summary Card ────────────────────────────────── */
+
+.dispatch-panel__summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(16, 185, 129, 0.07);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 10px;
+}
+
+.dispatch-panel__summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dispatch-panel__summary-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #34d399;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dispatch-panel__summary-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.dispatch-panel__summary-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.dispatch-panel__summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.dispatch-panel__summary-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.dispatch-panel__summary-value {
+  font-weight: 600;
+  color: #f1f5f9;
+  text-align: right;
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dispatch-panel__summary-fare-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.dispatch-panel__summary-fare-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.dispatch-panel__summary-fare-note {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.dispatch-panel__summary-fare-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+

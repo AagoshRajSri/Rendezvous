@@ -24,9 +24,10 @@ import type { PlaceSuggestion } from './types/place';
  *   - destinationPlace : destination place; drives route calculation and preview (Phase 11.1)
  *   - routeState       : road-network route, distance, duration, and fares (Phase 11.1)
  *   - drivers          : deterministic simulated drivers generated for selectedPlace (Phase 7C)
- *   - dispatchState    : real backend dispatch lifecycle with fleet sync (Phase 11.2)
+ *   - dispatchState    : real backend dispatch lifecycle with full trip progression (Phase 11.3)
  *   - driverApproach   : road route from assigned driver origin to pickup (Phase 11.2)
- *   - vehicleAnimation : road-following vehicle animation with live ETA and distance (Phase 11.2)
+ *   - approachAnimation: vehicle animation along approach route to pickup (Phase 11.2)
+ *   - tripAnimation    : vehicle animation along road route to destination (Phase 11.3)
  */
 export default function App() {
   const { state: mapState, onLoad, onError } = useMapReady();
@@ -41,29 +42,71 @@ export default function App() {
     requestDispatch,
     cancelRide,
     isCancelling,
+    startRide,
+    isStarting,
+    completeRide,
+    isCompleting,
+    markArrived,
     reset: resetDispatch,
   } = useDispatch(selectedPlace, drivers);
   const { state: routeState, setSelectedTier, clearRoute } = useRoute(selectedPlace, destinationPlace);
 
-  // Phase 11.2: Assigned driver road approach route & road-following vehicle animation
+  // Phase 11.2: Assigned driver road approach route
   const driverApproach = useDriverApproach(
     dispatchState.matchedDriverLocation,
     selectedPlace,
-    dispatchState.phase === 'matched',
+    dispatchState.phase === 'matched' || dispatchState.phase === 'en_route',
   );
 
-  const vehicleAnimation = useVehicleAnimation({
+  // Approach animation: vehicle travels from matched driver origin to pickup pin
+  const approachAnimation = useVehicleAnimation({
     routeCoordinates: driverApproach.route?.coordinates ?? null,
     nominalDurationSeconds: driverApproach.route?.durationSeconds ?? 60,
     speedMultiplier: 8,
-    isActive: driverApproach.status === 'ready' && dispatchState.phase === 'matched',
+    isActive:
+      (dispatchState.phase === 'matched' || dispatchState.phase === 'en_route') &&
+      driverApproach.status === 'ready',
+    onArrival: markArrived,
   });
+
+  // Trip animation: vehicle travels from pickup to destination along road route
+  const tripAnimation = useVehicleAnimation({
+    routeCoordinates: routeState.route?.coordinates ?? null,
+    nominalDurationSeconds: routeState.route?.durationSeconds ?? 120,
+    speedMultiplier: 8,
+    isActive: dispatchState.phase === 'in_progress' && !!routeState.route,
+  });
+
+  // Destination validation for starting the trip
+  const canStartTrip = Boolean(
+    destinationPlace &&
+    routeState.route &&
+    routeState.route.coordinates.length >= 2 &&
+    routeState.status === 'ready'
+  );
+
+  const missingDestinationMessage = !destinationPlace
+    ? 'Please select a destination using the search bar before starting your trip.'
+    : routeState.status === 'error'
+      ? (routeState.errorMessage || 'Unable to calculate road route to destination.')
+      : routeState.status === 'loading'
+        ? 'Calculating road route to destination…'
+        : null;
+
+  async function handleStartTrip() {
+    if (!canStartTrip) {
+      if (!destinationPlace) {
+        setActiveTarget('destination');
+      }
+      return;
+    }
+    await startRide();
+  }
 
   function handleSelect(place: PlaceSuggestion, target: SearchTarget = activeTarget) {
     if (target === 'pickup') {
       setSelectedPlace(place);
       search.setQuery(place.name);
-      // Auto-advance to destination search if not yet chosen
       if (!destinationPlace) {
         setActiveTarget('destination');
         search.clearQuery();
@@ -104,6 +147,51 @@ export default function App() {
     }
   }
 
+  function handleBookAnotherRide() {
+    resetDispatch();
+    setDestinationPlace(null);
+    clearRoute();
+    setActiveTarget('pickup');
+  }
+
+  // Active vehicle marker position across lifecycle stages
+  const animatedVehiclePosition: [number, number] | null =
+    dispatchState.phase === 'in_progress'
+      ? (tripAnimation.currentPosition ?? (selectedPlace ? [selectedPlace.lon, selectedPlace.lat] : null))
+      : dispatchState.phase === 'arrived'
+        ? (selectedPlace ? [selectedPlace.lon, selectedPlace.lat] : null)
+        : dispatchState.phase === 'completed'
+          ? (destinationPlace ? [destinationPlace.lon, destinationPlace.lat] : null)
+          : (dispatchState.phase === 'matched' || dispatchState.phase === 'en_route')
+            ? approachAnimation.currentPosition
+            : null;
+
+  const animatedVehicleBearing: number =
+    dispatchState.phase === 'in_progress'
+      ? tripAnimation.bearing
+      : approachAnimation.bearing;
+
+  const remainingDistanceMeters =
+    dispatchState.phase === 'in_progress'
+      ? tripAnimation.remainingDistanceMeters
+      : approachAnimation.remainingDistanceMeters;
+
+  const remainingDurationSeconds =
+    dispatchState.phase === 'in_progress'
+      ? tripAnimation.remainingDurationSeconds
+      : approachAnimation.remainingDurationSeconds;
+
+  // Obsolete approach route and origin marker are hidden once trip starts or completes
+  const activeApproachRoute =
+    (dispatchState.phase === 'matched' || dispatchState.phase === 'en_route')
+      ? (driverApproach.route?.coordinates ?? null)
+      : null;
+
+  const activeMatchedDriverLocation =
+    (dispatchState.phase === 'matched' || dispatchState.phase === 'en_route')
+      ? dispatchState.matchedDriverLocation
+      : null;
+
   return (
     <>
       <Header mapState={mapState} />
@@ -132,14 +220,15 @@ export default function App() {
         destinationPlace={destinationPlace}
         routeCoordinates={routeState.route?.coordinates ?? null}
         drivers={drivers}
-        matchedDriverLocation={dispatchState.matchedDriverLocation}
-        driverApproachRoute={driverApproach.route?.coordinates ?? null}
-        animatedVehiclePosition={vehicleAnimation.currentPosition}
-        animatedVehicleBearing={vehicleAnimation.bearing}
+        matchedDriverLocation={activeMatchedDriverLocation}
+        driverApproachRoute={activeApproachRoute}
+        animatedVehiclePosition={animatedVehiclePosition}
+        animatedVehicleBearing={animatedVehicleBearing}
+        activePhase={dispatchState.phase}
       />
 
-      {/* ── Phase 11.1: Road route preview & fare card ────────────────────────── */}
-      {selectedPlace && destinationPlace && routeState.route && mapState.status === 'ready' && (
+      {/* ── Phase 11.1: Road route preview & fare card (only while idle) ──────── */}
+      {selectedPlace && destinationPlace && routeState.route && mapState.status === 'ready' && dispatchState.phase === 'idle' && (
         <RoutePreviewCard
           pickup={selectedPlace}
           destination={destinationPlace}
@@ -148,11 +237,11 @@ export default function App() {
           onSelectTier={setSelectedTier}
           onRequestDispatch={requestDispatch}
           onClearDestination={handleClearDestination}
-          isLoading={dispatchState.phase === 'registering' || dispatchState.phase === 'submitting'}
+          isLoading={false}
         />
       )}
 
-      {/* ── Phase 11.2: Real dispatch & vehicle tracking panel ─────────────── */}
+      {/* ── Phase 11.2 & 11.3: Real dispatch & vehicle tracking panel ────────── */}
       {selectedPlace && mapState.status === 'ready' && (!destinationPlace || dispatchState.phase !== 'idle') && (
         <DispatchPanel
           placeName={selectedPlace.name}
@@ -160,11 +249,20 @@ export default function App() {
           onRequestDispatch={requestDispatch}
           onCancelRide={cancelRide}
           isCancelling={isCancelling}
-          onReset={resetDispatch}
+          onStartTrip={handleStartTrip}
+          isStarting={isStarting}
+          canStartTrip={canStartTrip}
+          missingDestinationMessage={missingDestinationMessage}
+          onCompleteTrip={completeRide}
+          isCompleting={isCompleting}
+          destinationPlace={destinationPlace}
+          route={routeState.route}
+          selectedTier={routeState.selectedTier}
+          onReset={handleBookAnotherRide}
           approachStatus={driverApproach.status}
-          remainingDistanceMeters={vehicleAnimation.remainingDistanceMeters}
-          remainingDurationSeconds={vehicleAnimation.remainingDurationSeconds}
-          isVehicleArrived={vehicleAnimation.isArrived}
+          remainingDistanceMeters={remainingDistanceMeters}
+          remainingDurationSeconds={remainingDurationSeconds}
+          isVehicleArrived={dispatchState.phase === 'arrived'}
         />
       )}
     </>

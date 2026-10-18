@@ -23,6 +23,8 @@ import type {
   EligibleDriver,
   RequestStatusResponse,
   TripCancelResponse,
+  TripLifecycleResponse,
+  TripResponse,
 } from '../types/dispatch';
 
 const BASE = '/api';
@@ -160,5 +162,86 @@ export async function cancelTrip(
   signal?: AbortSignal,
 ): Promise<TripCancelResponse> {
   return postJson<TripCancelResponse>(`/trips/${encodeURIComponent(requestId)}/cancel`, { driverId }, signal ?? new AbortController().signal);
+}
+
+/**
+ * Phase 11.3 — Advances trip status from ASSIGNED to EN_ROUTE when driver begins approach.
+ * POST /api/trips/{requestId}/en-route → HTTP 200 with TripLifecycleResponse.
+ *
+ * @throws Error on network failure, conflict (409), or server error (5xx).
+ */
+export async function beginEnRoute(
+  requestId: string,
+  driverId: string,
+  signal?: AbortSignal,
+): Promise<TripLifecycleResponse> {
+  return postJson<TripLifecycleResponse>(
+    `/trips/${encodeURIComponent(requestId)}/en-route`,
+    { driverId },
+    signal ?? new AbortController().signal,
+  );
+}
+
+/**
+ * Phase 11.3 — Advances trip status from EN_ROUTE to IN_PROGRESS upon passenger boarding.
+ * POST /api/trips/{requestId}/start → HTTP 200 with TripLifecycleResponse.
+ *
+ * @throws Error on network failure, conflict (409), or server error (5xx).
+ */
+export async function startTrip(
+  requestId: string,
+  driverId: string,
+  signal?: AbortSignal,
+): Promise<TripLifecycleResponse> {
+  return postJson<TripLifecycleResponse>(
+    `/trips/${encodeURIComponent(requestId)}/start`,
+    { driverId },
+    signal ?? new AbortController().signal,
+  );
+}
+
+/**
+ * Phase 11.3 — Advances trip status from IN_PROGRESS to COMPLETED upon drop-off.
+ * POST /api/trips/{requestId}/complete → HTTP 200 with TripLifecycleResponse.
+ *
+ * @throws Error on network failure, conflict (409), or server error (5xx).
+ */
+export async function completeTrip(
+  requestId: string,
+  driverId: string,
+  signal?: AbortSignal,
+): Promise<TripLifecycleResponse> {
+  return postJson<TripLifecycleResponse>(
+    `/trips/${encodeURIComponent(requestId)}/complete`,
+    { driverId },
+    signal ?? new AbortController().signal,
+  );
+}
+
+/**
+ * Phase 11.3 — Queries the persisted operational status of a trip.
+ * GET /api/trips/{requestId} → HTTP 200 with TripResponse, or null on 404.
+ *
+ * @throws Error on network failure or server error (5xx).
+ */
+export async function getTripStatus(
+  requestId: string,
+  signal?: AbortSignal,
+): Promise<TripResponse | null> {
+  const res = await fetch(`${BASE}/trips/${encodeURIComponent(requestId)}`, {
+    method: 'GET',
+    signal,
+  });
+
+  if (res.status === 404) {
+    return null;
+  }
+
+  if (!res.ok) {
+    const message = await parseErrorBody(res);
+    throw new Error(message);
+  }
+
+  return res.json() as Promise<TripResponse>;
 }
 

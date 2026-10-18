@@ -69,6 +69,10 @@ vi.mock('./services/dispatch', () => ({
   getRequestStatus: vi.fn(),
   cancelTrip: vi.fn(),
   fetchEligibleDrivers: vi.fn(),
+  beginEnRoute: vi.fn(),
+  startTrip: vi.fn(),
+  completeTrip: vi.fn(),
+  getTripStatus: vi.fn(),
 }));
 
 vi.mock('./services/geocoding', () => ({
@@ -136,6 +140,14 @@ describe('App integrated dispatch & map flows (Phase 7E.3)', () => {
           type: 'city',
         },
       ],
+    });
+
+    vi.mocked(dispatchService.beginEnRoute).mockResolvedValue({
+      requestId: 'req-app-test',
+      driverId: 'drv-app-test',
+      status: 'EN_ROUTE',
+      outcome: 'TRANSITIONED',
+      message: 'OK',
     });
   });
 
@@ -488,6 +500,164 @@ describe('App integrated dispatch & map flows (Phase 7E.3)', () => {
     // 6. UI transitions cleanly to cancelled state
     expect(await screen.findByText('Ride Cancelled')).not.toBeNull();
     expect(screen.getByRole('button', { name: /Book Another Ride/i })).not.toBeNull();
+  });
+
+  it('completes the full trip lifecycle end-to-end (Phase 11.3)', async () => {
+    vi.mocked(dispatchService.registerDriver).mockResolvedValue({
+      driverId: 'D-FULL-11-3',
+      message: 'Driver registration accepted and queued for processing',
+    });
+    vi.mocked(dispatchService.submitRideRequest).mockResolvedValue({
+      requestId: 'REQ-FULL-11-3',
+      message: 'Ride request accepted and queued for matching',
+    });
+    vi.mocked(dispatchService.getRequestStatus).mockResolvedValue({
+      requestId: 'REQ-FULL-11-3',
+      status: 'MATCHED',
+      driverId: 'D-FULL-11-3',
+      receivedAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+      driverLatitude: 48.86,
+      driverLongitude: 2.36,
+      driverLocationAt: '2026-10-18T10:00:55Z',
+    });
+    vi.mocked(dispatchService.beginEnRoute).mockResolvedValue({
+      requestId: 'REQ-FULL-11-3',
+      driverId: 'D-FULL-11-3',
+      status: 'EN_ROUTE',
+      outcome: 'TRANSITIONED',
+      message: 'En-route',
+    });
+    vi.mocked(dispatchService.startTrip).mockResolvedValue({
+      requestId: 'REQ-FULL-11-3',
+      driverId: 'D-FULL-11-3',
+      status: 'IN_PROGRESS',
+      outcome: 'TRANSITIONED',
+      message: 'Started',
+    });
+    vi.mocked(dispatchService.completeTrip).mockResolvedValue({
+      requestId: 'REQ-FULL-11-3',
+      driverId: 'D-FULL-11-3',
+      status: 'COMPLETED',
+      outcome: 'TRANSITIONED',
+      message: 'Completed',
+    });
+
+    // Destination search suggestion for Eiffel
+    vi.mocked(geocodingService.search).mockImplementation(async (query: string) => {
+      if (query.toLowerCase().includes('eiffel')) {
+        return {
+          status: 'ok',
+          suggestions: [
+            {
+              id: 'eiffel-1',
+              name: 'Eiffel Tower',
+              subtitle: 'Paris, France',
+              lat: 48.8584,
+              lon: 2.2945,
+              type: 'place',
+            },
+          ],
+        };
+      }
+      return {
+        status: 'ok',
+        suggestions: [
+          {
+            id: 'paris-1',
+            name: 'Paris, France',
+            subtitle: 'Île-de-France, France',
+            lat: 48.8566,
+            lon: 2.3522,
+            type: 'city',
+          },
+        ],
+      };
+    });
+
+    render(<App />);
+
+    // 1. Select pickup ("Paris")
+    await selectParis();
+
+    // 2. Select destination ("Eiffel Tower")
+    const destInput = await screen.findByRole('combobox', { name: /Search destination/i });
+    destInput.focus();
+    fireEvent.change(destInput, { target: { value: 'Eiffel' } });
+
+    await screen.findByRole('option', { name: /Eiffel Tower/i });
+    fireEvent.keyDown(destInput, { key: 'Enter' });
+
+    // 3. Route preview card appears
+    expect(await screen.findByText('Trip Route Preview')).not.toBeNull();
+
+    // 4. Request dispatch
+    const requestBtn = await screen.findByRole('button', { name: /Request Rendezvous Go/i });
+    fireEvent.click(requestBtn);
+
+    await drainPolling();
+
+    // 5. En-route: driver approaching pickup
+    expect(screen.getByText('D-FULL-11-3')).not.toBeNull();
+    expect(screen.getByText('Driver heading to pickup')).not.toBeNull();
+
+    // 6. Fast forward vehicle approach animation to trigger arrival (duration is 900s / 8 = 112.5s)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+
+    // 7. Driver arrived at pickup waiting state
+    expect(await screen.findByText('Driver arrived at pickup')).not.toBeNull();
+    const startTripBtn = await screen.findByRole('button', { name: /Start Trip/i });
+    expect(startTripBtn).not.toBeNull();
+
+    // 8. Rider boards and clicks Start Trip
+    fireEvent.click(startTripBtn);
+
+    await waitFor(() => {
+      expect(dispatchService.startTrip).toHaveBeenCalledWith(
+        expect.stringMatching(/^req-/),
+        'D-FULL-11-3',
+        expect.any(Object),
+      );
+    });
+
+    // 9. Trip In Progress
+    expect(await screen.findByText('On road to destination')).not.toBeNull();
+    expect(screen.getByText(/Traveling to Eiffel Tower/i)).not.toBeNull();
+    // Cancellation must be locked out
+    expect(screen.queryByRole('button', { name: /Cancel Ride/i })).toBeNull();
+
+    // Complete trip button is present
+    const completeBtn = screen.getByRole('button', { name: /Complete Trip/i });
+    expect(completeBtn).not.toBeNull();
+
+    // 10. Click Complete Trip
+    fireEvent.click(completeBtn);
+
+    await waitFor(() => {
+      expect(dispatchService.completeTrip).toHaveBeenCalledWith(
+        expect.stringMatching(/^req-/),
+        'D-FULL-11-3',
+        expect.any(Object),
+      );
+    });
+
+    // 11. Trip Completed Summary Card
+    expect(await screen.findByText('Ride Completed')).not.toBeNull();
+    expect(screen.getByText('D-FULL-11-3')).not.toBeNull();
+    expect(screen.getByText('Eiffel Tower')).not.toBeNull();
+    expect(screen.getByText(/Quoted Fare \(Fixed Quote\)/i)).not.toBeNull();
+
+    // 12. Book another ride resets cleanly
+    const bookAnotherBtn = screen.getByRole('button', { name: /Book Another Ride/i });
+    fireEvent.click(bookAnotherBtn);
+
+    // After reset, we are back in idle with no active trip
+    await waitFor(() => {
+      expect(screen.queryByText('Ride Completed')).toBeNull();
+      expect(screen.queryByText('D-FULL-11-3')).toBeNull();
+    });
   });
 });
 

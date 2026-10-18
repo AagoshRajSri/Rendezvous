@@ -19,9 +19,22 @@ vi.mock('../services/dispatch', () => ({
   submitRideRequest: vi.fn(),
   getRequestStatus: vi.fn(),
   cancelTrip: vi.fn(),
+  beginEnRoute: vi.fn(),
+  startTrip: vi.fn(),
+  completeTrip: vi.fn(),
+  getTripStatus: vi.fn(),
 }));
 
-import { cancelTrip, registerDriver, submitRideRequest, getRequestStatus } from '../services/dispatch';
+import {
+  beginEnRoute,
+  cancelTrip,
+  completeTrip,
+  getRequestStatus,
+  getTripStatus,
+  registerDriver,
+  startTrip,
+  submitRideRequest,
+} from '../services/dispatch';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -48,6 +61,13 @@ async function drainHook(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ shouldAdvanceTime: false });
+  vi.mocked(beginEnRoute).mockResolvedValue({
+    requestId: 'req-default',
+    driverId: 'drv-default',
+    status: 'EN_ROUTE',
+    outcome: 'TRANSITIONED',
+    message: 'OK',
+  });
 });
 
 afterEach(() => {
@@ -73,7 +93,7 @@ describe('useDispatch — initial state', () => {
 });
 
 describe('useDispatch — happy path: MATCHED', () => {
-  it('transitions through registering → submitting → polling → matched', async () => {
+  it('transitions through registering → submitting → polling → matched → en_route', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'DRIVER-1', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-1', message: 'ok' });
     vi.mocked(getRequestStatus).mockResolvedValue({
@@ -92,7 +112,7 @@ describe('useDispatch — happy path: MATCHED', () => {
 
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('DRIVER-42');
     // No telemetry in this response — coordinates remain null
     expect(result.current.dispatchState.matchedDriverLocation).toBeNull();
@@ -119,7 +139,7 @@ describe('useDispatch — happy path: MATCHED', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverLocation).toEqual({ lat: 48.8566, lon: 2.3522 });
     expect(result.current.dispatchState.matchedDriverLocationAt).toBe('2026-01-01T00:00:55Z');
   });
@@ -163,7 +183,7 @@ describe('useDispatch — happy path: MATCHED', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverLocation).toBeNull();
     expect(result.current.dispatchState.matchedDriverLocationAt).toBeNull();
   });
@@ -186,7 +206,7 @@ describe('useDispatch — happy path: MATCHED', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('DRIVER-NO-GPS');
     expect(result.current.dispatchState.matchedDriverLocation).toBeNull();
     expect(result.current.dispatchState.matchedDriverLocationAt).toBeNull();
@@ -401,9 +421,9 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
     act(() => { result.current.requestDispatch(); });
 
-    // Run to completion — timer resolves normally, flow reaches MATCHED
+    // Run to completion — timer resolves normally, flow reaches EN_ROUTE
     await drainHook();
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
 
     // Subsequent reset (abort after timer already resolved) must not throw
     expect(() => act(() => { result.current.reset(); })).not.toThrow();
@@ -455,7 +475,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('D-RETRY');
 
     consoleErrorSpy.mockRestore();
@@ -515,7 +535,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('D-NEW');
   });
 
@@ -585,7 +605,7 @@ describe('useDispatch — fleet synchronization (Phase 11.2)', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('place-sim-1');
 
     // Only available drivers (sim-1 and sim-2) registered, not busy (sim-3)
@@ -624,7 +644,7 @@ describe('useDispatch — cancelRide (Phase 11.2)', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
 
     let success = false;
     await act(async () => {
@@ -687,7 +707,7 @@ describe('useDispatch — cancelRide (Phase 11.2)', () => {
     act(() => { result.current.requestDispatch(); });
     await drainHook();
 
-    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.isCancelling).toBe(false);
 
     let promise1!: Promise<boolean>;
@@ -763,5 +783,355 @@ describe('isValidDriverCoords', () => {
   it('rejects longitude outside [-180, 180]', () => {
     expect(isValidDriverCoords(0, 180.0001)).toBe(false);
     expect(isValidDriverCoords(0, -180.0001)).toBe(false);
+  });
+});
+
+// ── Phase 11.3: End-to-End Trip Lifecycle ────────────────────────────────────
+
+describe('useDispatch — Phase 11.3 Trip Lifecycle', () => {
+  const setupMatchedTrip = async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D1', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-11-3', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-11-3',
+      status: 'MATCHED',
+      driverId: 'D1',
+      receivedAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+    });
+    vi.mocked(beginEnRoute).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'EN_ROUTE',
+      outcome: 'TRANSITIONED',
+      message: 'OK',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+    return result;
+  };
+
+  it('progresses end-to-end: matched → en_route → arrived → in_progress → completed', async () => {
+    vi.mocked(startTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      outcome: 'TRANSITIONED',
+      message: 'Started',
+    });
+    vi.mocked(completeTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'COMPLETED',
+      outcome: 'TRANSITIONED',
+      message: 'Completed',
+    });
+
+    const result = await setupMatchedTrip();
+    expect(result.current.dispatchState.phase).toBe('en_route');
+    expect(beginEnRoute).toHaveBeenCalledWith(expect.stringMatching(/^req-/), 'D1', expect.any(Object));
+
+    // Vehicle reaches pickup → mark arrived
+    act(() => {
+      result.current.markArrived();
+    });
+    expect(result.current.dispatchState.phase).toBe('arrived');
+
+    // Passenger boards → rider starts trip
+    let startSuccess = false;
+    await act(async () => {
+      startSuccess = await result.current.startRide();
+    });
+    expect(startSuccess).toBe(true);
+    expect(startTrip).toHaveBeenCalledWith(expect.stringMatching(/^req-/), 'D1', expect.any(Object));
+    expect(result.current.dispatchState.phase).toBe('in_progress');
+
+    // Vehicle reaches destination → complete trip
+    let completeSuccess = false;
+    await act(async () => {
+      completeSuccess = await result.current.completeRide();
+    });
+    expect(completeSuccess).toBe(true);
+    expect(completeTrip).toHaveBeenCalledWith(expect.stringMatching(/^req-/), 'D1', expect.any(Object));
+    expect(result.current.dispatchState.phase).toBe('completed');
+  });
+
+  it('keeps phase as matched and sets error if beginEnRoute fails without reconciliation', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D1', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-fail', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-fail',
+      status: 'MATCHED',
+      driverId: 'D1',
+      receivedAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+    });
+    vi.mocked(beginEnRoute).mockRejectedValue(new Error('Network error starting approach'));
+    vi.mocked(getTripStatus).mockResolvedValue({
+      requestId: 'req-fail',
+      driverId: 'D1',
+      status: 'ASSIGNED',
+      createdAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.errorMessage).toContain('Network error starting approach');
+  });
+
+  it('reconciles to en_route if beginEnRoute fails but authoritative status is EN_ROUTE', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D1', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-rec', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-rec',
+      status: 'MATCHED',
+      driverId: 'D1',
+      receivedAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+    });
+    vi.mocked(beginEnRoute).mockRejectedValue(new Error('HTTP 503 broker hiccup'));
+    vi.mocked(getTripStatus).mockResolvedValue({
+      requestId: 'req-rec',
+      driverId: 'D1',
+      status: 'EN_ROUTE',
+      createdAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:01:00Z',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('en_route');
+    expect(result.current.dispatchState.errorMessage).toBeNull();
+  });
+
+  it('prevents duplicate startRide calls while in flight and exposes isStarting', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+
+    let resolveStart!: (val: any) => void;
+    vi.mocked(startTrip).mockReturnValue(
+      new Promise((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+
+    let p1!: Promise<boolean>;
+    act(() => {
+      p1 = result.current.startRide();
+    });
+
+    expect(result.current.isStarting).toBe(true);
+    expect(startTrip).toHaveBeenCalledTimes(1);
+
+    // Concurrent call must be rejected
+    let p2Result = true;
+    await act(async () => {
+      p2Result = await result.current.startRide();
+    });
+    expect(p2Result).toBe(false);
+    expect(startTrip).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveStart({
+        requestId: 'req-11-3',
+        driverId: 'D1',
+        status: 'IN_PROGRESS',
+        outcome: 'TRANSITIONED',
+        message: 'Started',
+      });
+      await p1;
+    });
+
+    expect(result.current.isStarting).toBe(false);
+    expect(result.current.dispatchState.phase).toBe('in_progress');
+  });
+
+  it('reconciles startRide to in_progress on 503 if backend status confirms IN_PROGRESS', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+
+    vi.mocked(startTrip).mockRejectedValue(new Error('HTTP 503 Driver registry timeout'));
+    vi.mocked(getTripStatus).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      createdAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:05:00Z',
+    });
+
+    let success = false;
+    await act(async () => {
+      success = await result.current.startRide();
+    });
+
+    expect(success).toBe(true);
+    expect(result.current.dispatchState.phase).toBe('in_progress');
+    expect(result.current.dispatchState.errorMessage).toBeNull();
+  });
+
+  it('prevents duplicate completeRide calls while in flight and exposes isCompleting', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+
+    vi.mocked(startTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      outcome: 'TRANSITIONED',
+      message: 'Started',
+    });
+    await act(async () => {
+      await result.current.startRide();
+    });
+
+    let resolveComplete!: (val: any) => void;
+    vi.mocked(completeTrip).mockReturnValue(
+      new Promise((resolve) => {
+        resolveComplete = resolve;
+      }),
+    );
+
+    let p1!: Promise<boolean>;
+    act(() => {
+      p1 = result.current.completeRide();
+    });
+
+    expect(result.current.isCompleting).toBe(true);
+    expect(completeTrip).toHaveBeenCalledTimes(1);
+
+    // Duplicate click
+    let p2Result = true;
+    await act(async () => {
+      p2Result = await result.current.completeRide();
+    });
+    expect(p2Result).toBe(false);
+    expect(completeTrip).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveComplete({
+        requestId: 'req-11-3',
+        driverId: 'D1',
+        status: 'COMPLETED',
+        outcome: 'TRANSITIONED',
+        message: 'Completed',
+      });
+      await p1;
+    });
+
+    expect(result.current.isCompleting).toBe(false);
+    expect(result.current.dispatchState.phase).toBe('completed');
+  });
+
+  it('strictly locks out cancellation once the trip is in_progress or completed', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+
+    vi.mocked(startTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      outcome: 'TRANSITIONED',
+      message: 'Started',
+    });
+    await act(async () => {
+      await result.current.startRide();
+    });
+    expect(result.current.dispatchState.phase).toBe('in_progress');
+
+    // Attempting cancellation during in_progress
+    let cancelAttempt1 = true;
+    await act(async () => {
+      cancelAttempt1 = await result.current.cancelRide();
+    });
+    expect(cancelAttempt1).toBe(false);
+    expect(cancelTrip).not.toHaveBeenCalled();
+
+    // Complete trip
+    vi.mocked(completeTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'COMPLETED',
+      outcome: 'TRANSITIONED',
+      message: 'Completed',
+    });
+    await act(async () => {
+      await result.current.completeRide();
+    });
+    expect(result.current.dispatchState.phase).toBe('completed');
+
+    // Attempting cancellation after completion
+    let cancelAttempt2 = true;
+    await act(async () => {
+      cancelAttempt2 = await result.current.cancelRide();
+    });
+    expect(cancelAttempt2).toBe(false);
+    expect(cancelTrip).not.toHaveBeenCalled();
+  });
+
+  it('allows cancellation while arrived at pickup prior to boarding', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+    expect(result.current.dispatchState.phase).toBe('arrived');
+
+    vi.mocked(cancelTrip).mockResolvedValue({
+      requestId: 'req-11-3',
+      driverId: 'D1',
+      status: 'CANCELLED',
+      outcome: 'TRANSITIONED',
+      message: 'Cancelled',
+    });
+
+    let cancelSuccess = false;
+    await act(async () => {
+      cancelSuccess = await result.current.cancelRide();
+    });
+
+    expect(cancelSuccess).toBe(true);
+    expect(cancelTrip).toHaveBeenCalledWith(expect.stringMatching(/^req-/), 'D1', expect.any(Object));
+    expect(result.current.dispatchState.phase).toBe('cancelled');
+  });
+
+  it('prevents stale async lifecycle responses from overwriting a reset or new trip', async () => {
+    const result = await setupMatchedTrip();
+    act(() => { result.current.markArrived(); });
+
+    let resolveSlowStart!: (val: any) => void;
+    vi.mocked(startTrip).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSlowStart = resolve;
+      }),
+    );
+
+    act(() => {
+      result.current.startRide();
+    });
+
+    // User resets back to idle
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.dispatchState.phase).toBe('idle');
+
+    // Slow start finally resolves
+    await act(async () => {
+      resolveSlowStart({
+        requestId: 'req-11-3',
+        driverId: 'D1',
+        status: 'IN_PROGRESS',
+        outcome: 'TRANSITIONED',
+        message: 'Late start',
+      });
+    });
+
+    // Stale resolution must NOT have advanced the reset hook to in_progress!
+    expect(result.current.dispatchState.phase).toBe('idle');
   });
 });

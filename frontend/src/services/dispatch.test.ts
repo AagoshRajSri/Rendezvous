@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cancelTrip, fetchEligibleDrivers, getRequestStatus, registerDriver, submitRideRequest } from './dispatch';
+import { beginEnRoute, cancelTrip, completeTrip, fetchEligibleDrivers, getRequestStatus, getTripStatus, registerDriver, startTrip, submitRideRequest } from './dispatch';
 import type { DriverRegisterRequest, DispatchRequest } from '../types/dispatch';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -232,6 +232,153 @@ describe('cancelTrip', () => {
   it('throws on conflict (409) when trip cannot be cancelled', async () => {
     mockFetch(409, { message: 'Cannot cancel trip in IN_PROGRESS state' });
     await expect(cancelTrip('req-1', 'D1', abortSignal())).rejects.toThrow('Cannot cancel trip in IN_PROGRESS state');
+  });
+});
+
+// ── beginEnRoute ─────────────────────────────────────────────────────────────
+
+describe('beginEnRoute', () => {
+  it('posts to /api/trips/{requestId}/en-route with driverId and returns response', async () => {
+    mockFetch(200, {
+      requestId: 'req-1',
+      driverId: 'D1',
+      status: 'EN_ROUTE',
+      outcome: 'TRANSITIONED',
+      message: 'Trip successfully transitioned to EN_ROUTE',
+    });
+
+    const result = await beginEnRoute('req-1', 'D1', abortSignal());
+    expect(result.status).toBe('EN_ROUTE');
+    expect(result.outcome).toBe('TRANSITIONED');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/trips/req-1/en-route');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ driverId: 'D1' });
+  });
+
+  it('throws on conflict (409) if transition is invalid', async () => {
+    mockFetch(409, { message: 'Invalid trip status transition' });
+    await expect(beginEnRoute('req-1', 'D1', abortSignal())).rejects.toThrow('Invalid trip status transition');
+  });
+
+  it('URL-encodes the requestId in the path', async () => {
+    mockFetch(200, {
+      requestId: 'req/special',
+      driverId: 'D1',
+      status: 'EN_ROUTE',
+      outcome: 'TRANSITIONED',
+      message: 'OK',
+    });
+
+    await beginEnRoute('req/special', 'D1', abortSignal());
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(encodeURIComponent('req/special'));
+  });
+});
+
+// ── startTrip ────────────────────────────────────────────────────────────────
+
+describe('startTrip', () => {
+  it('posts to /api/trips/{requestId}/start with driverId and returns response', async () => {
+    mockFetch(200, {
+      requestId: 'req-1',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      outcome: 'TRANSITIONED',
+      message: 'Trip successfully transitioned to IN_PROGRESS',
+    });
+
+    const result = await startTrip('req-1', 'D1', abortSignal());
+    expect(result.status).toBe('IN_PROGRESS');
+    expect(result.outcome).toBe('TRANSITIONED');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/trips/req-1/start');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ driverId: 'D1' });
+  });
+
+  it('throws on conflict (409) when starting from ASSIGNED directly without EN_ROUTE', async () => {
+    mockFetch(409, { message: 'Cannot start trip: predecessor state must be EN_ROUTE' });
+    await expect(startTrip('req-1', 'D1', abortSignal())).rejects.toThrow('Cannot start trip: predecessor state must be EN_ROUTE');
+  });
+});
+
+// ── completeTrip ─────────────────────────────────────────────────────────────
+
+describe('completeTrip', () => {
+  it('posts to /api/trips/{requestId}/complete with driverId and returns response', async () => {
+    mockFetch(200, {
+      requestId: 'req-1',
+      driverId: 'D1',
+      status: 'COMPLETED',
+      outcome: 'TRANSITIONED',
+      message: 'Trip successfully transitioned to COMPLETED',
+    });
+
+    const result = await completeTrip('req-1', 'D1', abortSignal());
+    expect(result.status).toBe('COMPLETED');
+    expect(result.outcome).toBe('TRANSITIONED');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/trips/req-1/complete');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ driverId: 'D1' });
+  });
+
+  it('throws on conflict (409) when completing non-in-progress trip', async () => {
+    mockFetch(409, { message: 'Cannot complete trip: not in IN_PROGRESS state' });
+    await expect(completeTrip('req-1', 'D1', abortSignal())).rejects.toThrow('Cannot complete trip: not in IN_PROGRESS state');
+  });
+});
+
+// ── getTripStatus ────────────────────────────────────────────────────────────
+
+describe('getTripStatus', () => {
+  it('returns trip details on 200', async () => {
+    mockFetch(200, {
+      requestId: 'req-1',
+      driverId: 'D1',
+      status: 'IN_PROGRESS',
+      createdAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:05:00Z',
+    });
+
+    const result = await getTripStatus('req-1', abortSignal());
+    expect(result).not.toBeNull();
+    expect(result!.requestId).toBe('req-1');
+    expect(result!.driverId).toBe('D1');
+    expect(result!.status).toBe('IN_PROGRESS');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/trips/req-1');
+    expect(init.method).toBe('GET');
+  });
+
+  it('returns null on 404', async () => {
+    mockFetch(404, { message: 'Trip not found' });
+    const result = await getTripStatus('req-404', abortSignal());
+    expect(result).toBeNull();
+  });
+
+  it('throws on 500 error', async () => {
+    mockFetch(500, { message: 'Database query failed' });
+    await expect(getTripStatus('req-err', abortSignal())).rejects.toThrow('Database query failed');
+  });
+
+  it('URL-encodes the requestId in the path', async () => {
+    mockFetch(200, {
+      requestId: 'req/123',
+      driverId: 'D1',
+      status: 'COMPLETED',
+      createdAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:05:00Z',
+    });
+
+    await getTripStatus('req/123', abortSignal());
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(encodeURIComponent('req/123'));
   });
 });
 

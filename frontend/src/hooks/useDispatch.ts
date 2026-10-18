@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlaceSuggestion } from '../types/place';
-import type { DispatchState } from '../types/dispatch';
+import type { DispatchState, TripResponse } from '../types/dispatch';
 import type { SimulatedDriver } from '../types/driver';
-import { cancelTrip, getRequestStatus, registerDriver, submitRideRequest } from '../services/dispatch';
+import {
+  beginEnRoute,
+  cancelTrip,
+  completeTrip,
+  getRequestStatus,
+  getTripStatus,
+  registerDriver,
+  startTrip,
+  submitRideRequest,
+} from '../services/dispatch';
 
 // ── Polling configuration ────────────────────────────────────────────────────
 
@@ -45,27 +54,42 @@ export interface UseDispatchReturn {
   dispatchState: DispatchState;
   /** Call to begin the full dispatch flow: register visible fleet → submit request → poll. */
   requestDispatch: () => void;
-  /** Phase 11.2: Cancels the ride prior to passenger pickup (when phase is matched). */
+  /** Phase 11.3: Transitions backend trip to EN_ROUTE when driver approach begins. */
+  beginEnRoute: () => Promise<boolean>;
+  /** Phase 11.3: Start trip upon passenger boarding (calls POST /api/trips/{requestId}/start). */
+  startRide: () => Promise<boolean>;
+  /** Phase 11.3: Whether a start trip request is in flight. */
+  isStarting: boolean;
+  /** Phase 11.3: Complete trip upon reaching destination (calls POST /api/trips/{requestId}/complete). */
+  completeRide: () => Promise<boolean>;
+  /** Phase 11.3: Whether a complete trip request is in flight. */
+  isCompleting: boolean;
+  /** Phase 11.3: Marks driver arrival at pickup (frontend visual milestone). */
+  markArrived: () => void;
+  /** Phase 11.3: Authoritatively queries backend trip status to reconcile state. */
+  refreshTripStatus: () => Promise<TripResponse | null>;
+  /** Phase 11.2: Cancels the ride prior to passenger pickup (permitted in matched, en_route, arrived). */
   cancelRide: () => Promise<boolean>;
   /** Phase 11.2: Whether a cancellation request is currently in flight. */
   isCancelling: boolean;
-  /** Resets to idle (e.g., after place change, on user cancel). */
+  /** Resets to idle (e.g., after place change, on user cancel, book another ride). */
   reset: () => void;
 }
 
 /**
- * Phase 11.2 — Frontend dispatch lifecycle hook with fleet synchronization.
+ * Phase 11.3 — Frontend dispatch lifecycle hook with full trip progression.
  *
  * Orchestrates:
- *   1. Register available drivers from the visible fleet (or demo driver fallback)
- *      with their actual map coordinates and stable IDs (POST /api/register).
- *   2. Submit a ride request at the selected place (POST /api/request → 202).
- *   3. Poll GET /api/requests/{id} with bounded exponential backoff until a
- *      terminal state (MATCHED or NO_DRIVERS) is reached, or until exhausted.
- *   4. Supports cancellation via POST /api/trips/{requestId}/cancel while matched.
- *
- * @param selectedPlace - The currently selected map location.
- * @param visibleDrivers - Optional visible simulated drivers to register in the backend registry.
+ *   1. Register available drivers from visible fleet (POST /api/register).
+ *   2. Submit ride request (POST /api/request → 202).
+ *   3. Poll GET /api/requests/{id} until MATCHED or NO_DRIVERS.
+ *   4. Advance to EN_ROUTE via POST /api/trips/{requestId}/en-route when approach begins.
+ *   5. Driver arrival marks visual arrival at pickup (phase: arrived).
+ *   6. Passenger boards and rider starts trip via POST /api/trips/{requestId}/start (phase: in_progress).
+ *   7. Trip completes via POST /api/trips/{requestId}/complete (phase: completed).
+ *   8. Supports pre-pickup cancellation (ASSIGNED, EN_ROUTE) while locking out post-boarding cancellation.
+ *   9. Protects against duplicate concurrent actions via synchronous ref guards.
+ *  10. Reconciles state against GET /api/trips/{requestId} on uncertain outcomes (e.g., 503).
  */
 export function useDispatch(
   selectedPlace: PlaceSuggestion | null,
@@ -73,14 +97,20 @@ export function useDispatch(
 ): UseDispatchReturn {
   const [dispatchState, setDispatchState] = useState<DispatchState>(IDLE_STATE);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   // Ref to the current AbortController so we can cancel on place change / reset / unmount
   const abortRef = useRef<AbortController | null>(null);
 
   // Track whether a dispatch flow is active to prevent duplicate submissions
   const activeRef = useRef(false);
-  // Track whether a cancellation request is in-flight to prevent duplicate cancellations
+  // Track whether action requests are in-flight to prevent duplicate clicks
   const isCancellingRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const isCompletingRef = useRef(false);
+  // Track whether en-route transition has been initiated for the active trip
+  const enRouteTripIdRef = useRef<string | null>(null);
 
   const visibleDriversRef = useRef(visibleDrivers);
   visibleDriversRef.current = visibleDrivers;
@@ -94,7 +124,12 @@ export function useDispatch(
     abortRef.current = null;
     activeRef.current = false;
     isCancellingRef.current = false;
+    isStartingRef.current = false;
+    isCompletingRef.current = false;
+    enRouteTripIdRef.current = null;
     setIsCancelling(false);
+    setIsStarting(false);
+    setIsCompleting(false);
     setDispatchState(IDLE_STATE);
   }, [selectedPlaceId]);
 
@@ -137,17 +172,13 @@ export function useDispatch(
         activeRef.current = false;
       }
 
-      // AbortErrors from intentional cancellation (reset / place change / unmount)
-      // are silently discarded.
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
       if (isAbort) {
         return;
       }
 
-      // Preserve visibility for unexpected errors via logging even if signal was aborted
       console.error('Unhandled error in dispatch flow:', err);
 
-      // Only update UI error state if this dispatch is still the current active one and not aborted
       if (isCurrent && !signal.aborted) {
         setDispatchState({
           ...IDLE_STATE,
@@ -158,12 +189,198 @@ export function useDispatch(
     });
   }, [selectedPlace]);
 
-  // ── Trip cancellation (Phase 11.2) ────────────────────────────────────────
+  // ── Automatic transition to EN_ROUTE when driver approach begins ───────────
+
+  useEffect(() => {
+    if (
+      dispatchState.phase === 'matched' &&
+      dispatchState.requestId &&
+      dispatchState.matchedDriverId &&
+      enRouteTripIdRef.current !== dispatchState.requestId
+    ) {
+      const reqId = dispatchState.requestId;
+      const drvId = dispatchState.matchedDriverId;
+      enRouteTripIdRef.current = reqId;
+
+      beginEnRoute(reqId, drvId, abortRef.current?.signal)
+        .then(() => {
+          setDispatchState((s) => (s.requestId === reqId ? { ...s, phase: 'en_route', errorMessage: null } : s));
+        })
+        .catch(async (err) => {
+          if (abortRef.current?.signal?.aborted) return;
+          // Reconcile status on uncertain error (e.g. 503)
+          try {
+            const trip = await getTripStatus(reqId, abortRef.current?.signal);
+            if (trip?.status === 'EN_ROUTE') {
+              setDispatchState((s) => (s.requestId === reqId ? { ...s, phase: 'en_route', errorMessage: null } : s));
+              return;
+            }
+          } catch {
+            // ignore reconciliation fetch failure
+          }
+          setDispatchState((s) => (s.requestId === reqId ? { ...s, errorMessage: toMessage(err) || 'Failed to start driver approach' } : s));
+        });
+    }
+  }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
+  // ── Manual beginEnRoute action (for retries after failure) ─────────────────
+
+  const handleBeginEnRoute = useCallback(async (): Promise<boolean> => {
+    if (
+      dispatchState.phase !== 'matched' ||
+      !dispatchState.requestId ||
+      !dispatchState.matchedDriverId
+    ) {
+      return false;
+    }
+    const reqId = dispatchState.requestId;
+    const drvId = dispatchState.matchedDriverId;
+
+    try {
+      await beginEnRoute(reqId, drvId, abortRef.current?.signal);
+      setDispatchState((s) => (s.requestId === reqId ? { ...s, phase: 'en_route', errorMessage: null } : s));
+      return true;
+    } catch (err) {
+      if (abortRef.current?.signal?.aborted) return false;
+      let reconciled = false;
+      try {
+        const trip = await getTripStatus(reqId, abortRef.current?.signal);
+        if (trip?.status === 'EN_ROUTE') {
+          setDispatchState((s) => (s.requestId === reqId ? { ...s, phase: 'en_route', errorMessage: null } : s));
+          reconciled = true;
+        }
+      } catch {
+        // ignore
+      }
+      if (!reconciled) {
+        setDispatchState((s) => (s.requestId === reqId ? { ...s, errorMessage: toMessage(err) || 'Failed to start driver approach' } : s));
+      }
+      return reconciled;
+    }
+  }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
+  // ── Mark arrived at pickup (frontend visual milestone) ────────────────────
+
+  const markArrived = useCallback(() => {
+    setDispatchState((s) => {
+      if (s.phase === 'en_route' || s.phase === 'matched') {
+        return { ...s, phase: 'arrived' };
+      }
+      return s;
+    });
+  }, []);
+
+  // ── Start trip (passenger boarding) ───────────────────────────────────────
+
+  const startRide = useCallback(async (): Promise<boolean> => {
+    if (
+      isStartingRef.current ||
+      (dispatchState.phase !== 'arrived' && dispatchState.phase !== 'en_route') ||
+      !dispatchState.requestId ||
+      !dispatchState.matchedDriverId
+    ) {
+      return false;
+    }
+
+    const requestId = dispatchState.requestId;
+    const driverId = dispatchState.matchedDriverId;
+
+    isStartingRef.current = true;
+    setIsStarting(true);
+
+    try {
+      await startTrip(requestId, driverId, abortRef.current?.signal);
+      setDispatchState((s) => {
+        if (s.requestId !== requestId) return s;
+        return {
+          ...s,
+          phase: 'in_progress',
+          errorMessage: null,
+        };
+      });
+      return true;
+    } catch (err) {
+      if (abortRef.current?.signal?.aborted) return false;
+      let reconciled = false;
+      try {
+        const trip = await getTripStatus(requestId, abortRef.current?.signal);
+        if (trip?.status === 'IN_PROGRESS') {
+          setDispatchState((s) => (s.requestId === requestId ? { ...s, phase: 'in_progress', errorMessage: null } : s));
+          reconciled = true;
+        }
+      } catch {
+        // ignore
+      }
+      if (!reconciled) {
+        setDispatchState((s) => (s.requestId === requestId ? { ...s, errorMessage: toMessage(err) || 'Failed to start trip' } : s));
+      }
+      return reconciled;
+    } finally {
+      isStartingRef.current = false;
+      setIsStarting(false);
+    }
+  }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
+  // ── Complete trip ─────────────────────────────────────────────────────────
+
+  const completeRide = useCallback(async (): Promise<boolean> => {
+    if (
+      isCompletingRef.current ||
+      dispatchState.phase !== 'in_progress' ||
+      !dispatchState.requestId ||
+      !dispatchState.matchedDriverId
+    ) {
+      return false;
+    }
+
+    const requestId = dispatchState.requestId;
+    const driverId = dispatchState.matchedDriverId;
+
+    isCompletingRef.current = true;
+    setIsCompleting(true);
+
+    try {
+      await completeTrip(requestId, driverId, abortRef.current?.signal);
+      setDispatchState((s) => {
+        if (s.requestId !== requestId) return s;
+        return {
+          ...s,
+          phase: 'completed',
+          errorMessage: null,
+        };
+      });
+      return true;
+    } catch (err) {
+      if (abortRef.current?.signal?.aborted) return false;
+      let reconciled = false;
+      try {
+        const trip = await getTripStatus(requestId, abortRef.current?.signal);
+        if (trip?.status === 'COMPLETED') {
+          setDispatchState((s) => (s.requestId === requestId ? { ...s, phase: 'completed', errorMessage: null } : s));
+          reconciled = true;
+        }
+      } catch {
+        // ignore
+      }
+      if (!reconciled) {
+        setDispatchState((s) => (s.requestId === requestId ? { ...s, errorMessage: toMessage(err) || 'Failed to complete trip' } : s));
+      }
+      return reconciled;
+    } finally {
+      isCompletingRef.current = false;
+      setIsCompleting(false);
+    }
+  }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
+  // ── Trip cancellation (Phase 11.2 & 11.3) ─────────────────────────────────
 
   const cancelRide = useCallback(async (): Promise<boolean> => {
+    // Strictly disallowed if trip is in_progress, completed, or already cancelling
     if (
       isCancellingRef.current ||
-      dispatchState.phase !== 'matched' ||
+      (dispatchState.phase !== 'matched' &&
+        dispatchState.phase !== 'en_route' &&
+        dispatchState.phase !== 'arrived') ||
       !dispatchState.requestId ||
       !dispatchState.matchedDriverId
     ) {
@@ -178,24 +395,59 @@ export function useDispatch(
 
     try {
       await cancelTrip(requestId, driverId, abortRef.current?.signal);
-      setDispatchState((s) => ({
+      setDispatchState((s) => (s.requestId === requestId ? {
         ...s,
         phase: 'cancelled',
         errorMessage: null,
-      }));
+      } : s));
       return true;
     } catch (err) {
       if (abortRef.current?.signal?.aborted) return false;
-      setDispatchState((s) => ({
-        ...s,
-        errorMessage: toMessage(err) || 'Failed to cancel trip',
-      }));
-      return false;
+      let reconciled = false;
+      try {
+        const trip = await getTripStatus(requestId, abortRef.current?.signal);
+        if (trip?.status === 'CANCELLED') {
+          setDispatchState((s) => (s.requestId === requestId ? { ...s, phase: 'cancelled', errorMessage: null } : s));
+          reconciled = true;
+        }
+      } catch {
+        // ignore
+      }
+      if (!reconciled) {
+        setDispatchState((s) => (s.requestId === requestId ? {
+          ...s,
+          errorMessage: toMessage(err) || 'Failed to cancel trip',
+        } : s));
+      }
+      return reconciled;
     } finally {
       isCancellingRef.current = false;
       setIsCancelling(false);
     }
   }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
+  // ── Authoritative trip status check / reconciliation ──────────────────────
+
+  const refreshTripStatus = useCallback(async (): Promise<TripResponse | null> => {
+    if (!dispatchState.requestId) return null;
+    try {
+      const trip = await getTripStatus(dispatchState.requestId, abortRef.current?.signal);
+      if (trip && trip.requestId === dispatchState.requestId) {
+        if (trip.status === 'COMPLETED' && dispatchState.phase !== 'completed') {
+          setDispatchState((s) => (s.requestId === trip.requestId ? { ...s, phase: 'completed', errorMessage: null } : s));
+        } else if (trip.status === 'IN_PROGRESS' && dispatchState.phase !== 'in_progress') {
+          setDispatchState((s) => (s.requestId === trip.requestId ? { ...s, phase: 'in_progress', errorMessage: null } : s));
+        } else if (trip.status === 'CANCELLED' && dispatchState.phase !== 'cancelled') {
+          setDispatchState((s) => (s.requestId === trip.requestId ? { ...s, phase: 'cancelled', errorMessage: null } : s));
+        } else if (trip.status === 'EN_ROUTE' && dispatchState.phase === 'matched') {
+          setDispatchState((s) => (s.requestId === trip.requestId ? { ...s, phase: 'en_route', errorMessage: null } : s));
+        }
+      }
+      return trip;
+    } catch {
+      return null;
+    }
+  }, [dispatchState.requestId, dispatchState.phase]);
 
   // ── Reset ─────────────────────────────────────────────────────────────────
 
@@ -204,11 +456,29 @@ export function useDispatch(
     abortRef.current = null;
     activeRef.current = false;
     isCancellingRef.current = false;
+    isStartingRef.current = false;
+    isCompletingRef.current = false;
+    enRouteTripIdRef.current = null;
     setIsCancelling(false);
+    setIsStarting(false);
+    setIsCompleting(false);
     setDispatchState(IDLE_STATE);
   }, []);
 
-  return { dispatchState, requestDispatch, cancelRide, isCancelling, reset };
+  return {
+    dispatchState,
+    requestDispatch,
+    beginEnRoute: handleBeginEnRoute,
+    startRide,
+    isStarting,
+    completeRide,
+    isCompleting,
+    markArrived,
+    refreshTripStatus,
+    cancelRide,
+    isCancelling,
+    reset,
+  };
 }
 
 // ── Flow orchestration (outside the hook for testability) ────────────────────
