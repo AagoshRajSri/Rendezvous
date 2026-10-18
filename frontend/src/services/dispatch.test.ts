@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getRequestStatus, registerDriver, submitRideRequest } from './dispatch';
+import { cancelTrip, fetchEligibleDrivers, getRequestStatus, registerDriver, submitRideRequest } from './dispatch';
 import type { DriverRegisterRequest, DispatchRequest } from '../types/dispatch';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -175,3 +175,63 @@ describe('getRequestStatus', () => {
     expect(url).toContain(encodeURIComponent('req/with/slashes'));
   });
 });
+
+// ── fetchEligibleDrivers ──────────────────────────────────────────────────────
+
+describe('fetchEligibleDrivers', () => {
+  it('calls GET /api/drivers and returns eligible driver array', async () => {
+    const mockDrivers = [
+      {
+        driverId: 'D1',
+        latitude: 17.385,
+        longitude: 78.4867,
+        status: 'AVAILABLE',
+        updatedAt: '2026-10-18T10:00:00Z',
+      },
+    ];
+    mockFetch(200, mockDrivers);
+
+    const result = await fetchEligibleDrivers(abortSignal());
+    expect(result).toHaveLength(1);
+    expect(result[0].driverId).toBe('D1');
+    expect(result[0].status).toBe('AVAILABLE');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/drivers');
+    expect(init.method).toBe('GET');
+  });
+
+  it('throws when server returns error', async () => {
+    mockFetch(500, { message: 'Internal registry error' });
+    await expect(fetchEligibleDrivers(abortSignal())).rejects.toThrow('Internal registry error');
+  });
+});
+
+// ── cancelTrip ────────────────────────────────────────────────────────────────
+
+describe('cancelTrip', () => {
+  it('posts to /api/trips/{requestId}/cancel with driverId and returns response', async () => {
+    mockFetch(200, {
+      requestId: 'req-1',
+      driverId: 'D1',
+      status: 'CANCELLED',
+      outcome: 'TRANSITIONED',
+      message: 'Trip successfully transitioned to CANCELLED',
+    });
+
+    const result = await cancelTrip('req-1', 'D1', abortSignal());
+    expect(result.status).toBe('CANCELLED');
+    expect(result.outcome).toBe('TRANSITIONED');
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/trips/req-1/cancel');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ driverId: 'D1' });
+  });
+
+  it('throws on conflict (409) when trip cannot be cancelled', async () => {
+    mockFetch(409, { message: 'Cannot cancel trip in IN_PROGRESS state' });
+    await expect(cancelTrip('req-1', 'D1', abortSignal())).rejects.toThrow('Cannot cancel trip in IN_PROGRESS state');
+  });
+});
+

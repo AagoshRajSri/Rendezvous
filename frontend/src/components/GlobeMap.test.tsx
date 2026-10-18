@@ -393,4 +393,52 @@ describe('GlobeMap component', () => {
     // Simulated source was not modified again by the matched driver change
     expect(simSource?.setData).toHaveBeenCalledTimes(initialCalls);
   });
+
+  it('updates road route GeoJSON source and frames camera when routeCoordinates are provided (Phase 11.1)', () => {
+    const routeCoords: [number, number][] = [
+      [2.3522, 48.8566],
+      [2.3550, 48.8580],
+      [2.2945, 48.8584],
+    ];
+
+    const destPlace: PlaceSuggestion = {
+      id: 'eiffel',
+      name: 'Eiffel Tower',
+      subtitle: 'Paris',
+      lat: 48.8584,
+      lon: 2.2945,
+      type: 'monument',
+    };
+
+    render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        destinationPlace={destPlace}
+        routeCoordinates={routeCoords}
+      />
+    );
+
+    const routeSource = mockSources.get('rendezvous-road-route');
+    expect(routeSource).toBeDefined();
+    expect(routeSource?.setData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [
+          expect.objectContaining({
+            geometry: {
+              type: 'LineString',
+              coordinates: routeCoords,
+            },
+          }),
+        ],
+      })
+    );
+
+    // fitBounds was called to frame the entire route
+    expect(mockMapInstance.fitBounds).toHaveBeenCalled();
+  });
 });
+

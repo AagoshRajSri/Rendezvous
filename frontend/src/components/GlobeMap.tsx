@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
@@ -206,6 +206,125 @@ function ensureConnectorLayer(map: MapLibreMap) {
   }
 }
 
+// ── Road route layer constants (Phase 11.1) ──────────────────────────────────
+const ROUTE_SOURCE_ID = 'rendezvous-road-route';
+const ROUTE_CASING_LAYER_ID = 'rendezvous-road-route-casing';
+const ROUTE_CORE_LAYER_ID = 'rendezvous-road-route-core';
+
+function ensureRouteLayers(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(ROUTE_SOURCE_ID)) {
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  // Insert below driver halo layer so drivers sit on top of the road line
+  const beforeLayer = map.getLayer(DRIVER_HALO_LAYER_ID) ? DRIVER_HALO_LAYER_ID : undefined;
+
+  if (!map.getLayer(ROUTE_CASING_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: ROUTE_CASING_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        paint: {
+          'line-color': '#0369a1',
+          'line-width': 7,
+          'line-opacity': 0.7,
+          'line-blur': 1,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeLayer,
+    );
+  }
+
+  if (!map.getLayer(ROUTE_CORE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: ROUTE_CORE_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        paint: {
+          'line-color': '#38bdf8',
+          'line-width': 4,
+          'line-opacity': 0.95,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeLayer,
+    );
+  }
+}
+
+// ── Driver approach route layer constants (Phase 11.2) ────────────────────────
+const DRIVER_APPROACH_SOURCE_ID = 'rendezvous-driver-approach-route';
+const DRIVER_APPROACH_CASING_LAYER_ID = 'rendezvous-driver-approach-casing';
+const DRIVER_APPROACH_CORE_LAYER_ID = 'rendezvous-driver-approach-core';
+
+function ensureDriverApproachLayers(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(DRIVER_APPROACH_SOURCE_ID)) {
+    map.addSource(DRIVER_APPROACH_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  const beforeLayer = map.getLayer(DRIVER_HALO_LAYER_ID) ? DRIVER_HALO_LAYER_ID : undefined;
+
+  if (!map.getLayer(DRIVER_APPROACH_CASING_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: DRIVER_APPROACH_CASING_LAYER_ID,
+        type: 'line',
+        source: DRIVER_APPROACH_SOURCE_ID,
+        paint: {
+          'line-color': '#b45309',
+          'line-width': 6.5,
+          'line-opacity': 0.75,
+          'line-blur': 1,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeLayer,
+    );
+  }
+
+  if (!map.getLayer(DRIVER_APPROACH_CORE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: DRIVER_APPROACH_CORE_LAYER_ID,
+        type: 'line',
+        source: DRIVER_APPROACH_SOURCE_ID,
+        paint: {
+          'line-color': '#f59e0b',
+          'line-width': 3.5,
+          'line-opacity': 0.95,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeLayer,
+    );
+  }
+}
+
 // ── OpenFreeMap "liberty" style ──────────────────────────────────────────────
 // Free, no API key, OSM data. Attribution is rendered automatically by the
 // MapLibre AttributionControl when the style JSON includes attribution metadata.
@@ -241,6 +360,10 @@ interface GlobeMapProps {
   mapState: MapReadyState;
   /** When non-null, animates the globe to the selected place. */
   selectedPlace: PlaceSuggestion | null;
+  /** Destination place for route preview (Phase 11.1). */
+  destinationPlace?: PlaceSuggestion | null;
+  /** GeoJSON coordinates [[lon, lat], ...] for road route preview (Phase 11.1). */
+  routeCoordinates?: [number, number][] | null;
   /** Simulated drivers to render on the map (Phase 7C). Empty array = no drivers shown. */
   drivers?: SimulatedDriver[];
   /**
@@ -249,6 +372,18 @@ interface GlobeMapProps {
    * Never falls back to pickup coordinates or simulated-driver positions.
    */
   matchedDriverLocation?: { lat: number; lon: number } | null;
+  /**
+   * Phase 11.2 — Road coordinates [[lon, lat], ...] from assigned driver to pickup.
+   */
+  driverApproachRoute?: [number, number][] | null;
+  /**
+   * Phase 11.2 — Current animated vehicle position [lon, lat] along approach route.
+   */
+  animatedVehiclePosition?: [number, number] | null;
+  /**
+   * Phase 11.2 — Current vehicle bearing in degrees [0, 360).
+   */
+  animatedVehicleBearing?: number;
 }
 
 /**
@@ -269,12 +404,20 @@ export function GlobeMap({
   onError,
   mapState,
   selectedPlace,
+  destinationPlace = null,
+  routeCoordinates = null,
   drivers = [],
   matchedDriverLocation = null,
+  driverApproachRoute = null,
+  animatedVehiclePosition = null,
+  animatedVehicleBearing = 0,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
+  const destinationMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const vehicleMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const vehicleElRef = useRef<HTMLElement | null>(null);
   const driversRef = useRef<SimulatedDriver[]>(drivers);
   driversRef.current = drivers;
 
@@ -284,6 +427,7 @@ export function GlobeMap({
    * React re-renders. Keyed as "lat,lon" string; null means no animation done.
    */
   const lastFittedDriverLocationRef = useRef<string | null>(null);
+  const lastFittedApproachRouteRef = useRef<string | null>(null);
 
   // Controls whether the loading overlay is still mounted (fades out after ready)
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -333,6 +477,8 @@ export function GlobeMap({
       // -- Initialize real matched-driver and connector layers idempotently (Phase 7E.2) --
       ensureMatchedDriverLayers(map);
       ensureConnectorLayer(map);
+      ensureRouteLayers(map);
+      ensureDriverApproachLayers(map);
 
       onLoad();
     });
@@ -346,6 +492,8 @@ export function GlobeMap({
     mapRef.current = map;
 
     return () => {
+      vehicleMarkerRef.current?.remove();
+      vehicleMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -502,6 +650,202 @@ export function GlobeMap({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchedDriverLocation, selectedPlace]);
+
+  // ── Destination pin marker synchronization (Phase 11.1) ─────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (destinationMarkerRef.current) {
+      destinationMarkerRef.current.remove();
+      destinationMarkerRef.current = null;
+    }
+
+    if (!destinationPlace) return;
+
+    const { lon, lat } = destinationPlace;
+    const markerEl = document.createElement('div');
+    markerEl.className = 'globe-map__pin globe-map__pin--destination';
+    markerEl.setAttribute('aria-label', `Destination: ${destinationPlace.name}`);
+
+    const marker = new maplibregl.Marker({ element: markerEl, anchor: 'bottom' })
+      .setLngLat([lon, lat])
+      .addTo(map);
+
+    destinationMarkerRef.current = marker;
+  }, [destinationPlace]);
+
+  // ── Sync road route layer and camera framing (Phase 11.1) ───────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    ensureRouteLayers(map);
+    const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+
+    if (routeCoordinates && routeCoordinates.length >= 2) {
+      source.setData({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: routeCoordinates,
+            },
+            properties: {},
+          },
+        ],
+      });
+
+      let minLon = Infinity;
+      let maxLon = -Infinity;
+      let minLat = Infinity;
+      let maxLat = -Infinity;
+
+      for (const [lon, lat] of routeCoordinates) {
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+
+      if (
+        isFinite(minLon) &&
+        isFinite(maxLon) &&
+        isFinite(minLat) &&
+        isFinite(maxLat)
+      ) {
+        map.fitBounds(
+          [
+            [minLon, minLat],
+            [maxLon, maxLat],
+          ],
+          {
+            padding: { top: 90, bottom: 90, left: 90, right: 380 },
+            maxZoom: 15,
+            duration: FLY_DURATION_MS,
+            essential: true,
+          },
+        );
+      }
+    } else {
+      source.setData(EMPTY_FEATURE_COLLECTION);
+    }
+  }, [routeCoordinates]);
+
+  // ── Sync driver approach road route and camera framing (Phase 11.2) ────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    ensureDriverApproachLayers(map);
+    const source = map.getSource(DRIVER_APPROACH_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+
+    if (driverApproachRoute && driverApproachRoute.length >= 2) {
+      source.setData({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: driverApproachRoute,
+            },
+            properties: {},
+          },
+        ],
+      });
+
+      // Fit camera once per unique approach route
+      const firstCoord = driverApproachRoute[0];
+      const lastCoord = driverApproachRoute[driverApproachRoute.length - 1];
+      const routeKey = `${firstCoord[0]},${firstCoord[1]}:${lastCoord[0]},${lastCoord[1]}`;
+
+      if (lastFittedApproachRouteRef.current !== routeKey) {
+        lastFittedApproachRouteRef.current = routeKey;
+
+        let minLon = Infinity;
+        let maxLon = -Infinity;
+        let minLat = Infinity;
+        let maxLat = -Infinity;
+
+        for (const [lon, lat] of driverApproachRoute) {
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        }
+
+        if (
+          isFinite(minLon) &&
+          isFinite(maxLon) &&
+          isFinite(minLat) &&
+          isFinite(maxLat)
+        ) {
+          map.fitBounds(
+            [
+              [minLon, minLat],
+              [maxLon, maxLat],
+            ],
+            {
+              padding: { top: 90, bottom: 90, left: 90, right: 380 },
+              maxZoom: 16,
+              duration: FLY_DURATION_MS,
+              essential: true,
+            },
+          );
+        }
+      }
+    } else {
+      source.setData(EMPTY_FEATURE_COLLECTION);
+      lastFittedApproachRouteRef.current = null;
+    }
+  }, [driverApproachRoute]);
+
+  // ── Animated vehicle marker along driver approach route (Phase 11.2) ───────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!animatedVehiclePosition) {
+      if (vehicleMarkerRef.current) {
+        vehicleMarkerRef.current.remove();
+        vehicleMarkerRef.current = null;
+        vehicleElRef.current = null;
+      }
+      return;
+    }
+
+    const [lon, lat] = animatedVehiclePosition;
+
+    if (!vehicleMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'globe-map__vehicle-marker';
+      el.setAttribute('aria-label', 'Assigned dispatch vehicle approaching pickup');
+      el.innerHTML = `
+        <div class="globe-map__vehicle-icon">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="14" r="12" fill="#080b12" fill-opacity="0.85" stroke="#f59e0b" stroke-width="2"/>
+            <path d="M14 6L20 21L14 18L8 21L14 6Z" fill="#f59e0b"/>
+          </svg>
+        </div>
+      `;
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([lon, lat])
+        .addTo(map);
+      vehicleMarkerRef.current = marker;
+      vehicleElRef.current = el;
+    } else {
+      vehicleMarkerRef.current.setLngLat([lon, lat]);
+      const el = vehicleElRef.current ?? (vehicleMarkerRef.current.getElement ? vehicleMarkerRef.current.getElement() : null);
+      if (el) {
+        el.style.transform = `rotate(${Math.round(animatedVehicleBearing)}deg)`;
+      }
+    }
+  }, [animatedVehiclePosition, animatedVehicleBearing]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.

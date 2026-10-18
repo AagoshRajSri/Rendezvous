@@ -286,4 +286,132 @@ describe('DispatchPanel', () => {
     ).not.toBeNull();
     expect(screen.getByText('DRIVER-NO-GPS')).not.toBeNull();
   });
+
+  it('renders live ETA and remaining distance when provided in matched phase', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-LIVE',
+      matchedDriverLocation: { lat: 17.385, lon: 78.4867 },
+      updatedAt: '2026-10-18T10:00:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Hyderabad"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+        remainingDistanceMeters={1500}
+        remainingDurationSeconds={120}
+        approachStatus="ready"
+      />
+    );
+
+    expect(screen.getByText('1.5 km')).not.toBeNull();
+    expect(screen.getByText('~2 mins')).not.toBeNull();
+    expect(screen.getByText('Driver heading to pickup')).not.toBeNull();
+  });
+
+  it('renders Cancel Ride button and invokes onCancelRide', () => {
+    const onCancelRide = vi.fn();
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-TO-CANCEL',
+      updatedAt: '2026-10-18T10:00:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Hyderabad"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onCancelRide={onCancelRide}
+        onReset={vi.fn()}
+      />
+    );
+
+    const cancelBtn = screen.getByRole('button', { name: /Cancel Ride/i });
+    expect(cancelBtn).not.toBeNull();
+    fireEvent.click(cancelBtn);
+    expect(onCancelRide).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables Cancel Ride button and displays pending state when isCancelling is true', () => {
+    const onCancelRide = vi.fn();
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-CANCEL-IN-FLIGHT',
+      updatedAt: '2026-10-18T10:00:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Hyderabad"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onCancelRide={onCancelRide}
+        isCancelling={true}
+        onReset={vi.fn()}
+      />
+    );
+
+    const cancelBtn = screen.getByRole('button', { name: /Cancelling…/i }) as HTMLButtonElement;
+    expect(cancelBtn).not.toBeNull();
+    expect(cancelBtn.disabled).toBe(true);
+
+    fireEvent.click(cancelBtn);
+    expect(onCancelRide).not.toHaveBeenCalled();
+  });
+
+  it('renders driver arrived status when isVehicleArrived is true', () => {
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      matchedDriverId: 'DRIVER-ARRIVED',
+      updatedAt: '2026-10-18T10:00:00Z',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Hyderabad"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+        isVehicleArrived={true}
+        remainingDistanceMeters={0}
+        remainingDurationSeconds={0}
+      />
+    );
+
+    expect(screen.getByText('Driver arrived at pickup')).not.toBeNull();
+    expect(screen.getByText('Arrived')).not.toBeNull();
+  });
+
+  it('renders cancelled phase with Book Another Ride and Reset buttons', () => {
+    const onRequestDispatch = vi.fn();
+    const onReset = vi.fn();
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'cancelled',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="Hyderabad"
+        dispatchState={state}
+        onRequestDispatch={onRequestDispatch}
+        onReset={onReset}
+      />
+    );
+
+    expect(screen.getByText('Ride Cancelled')).not.toBeNull();
+    const bookAgainBtn = screen.getByRole('button', { name: /Book Another Ride/i });
+    expect(bookAgainBtn).not.toBeNull();
+    fireEvent.click(bookAgainBtn);
+    expect(onRequestDispatch).toHaveBeenCalledTimes(1);
+  });
 });
+

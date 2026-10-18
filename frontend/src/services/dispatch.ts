@@ -20,7 +20,9 @@ import type {
   DispatchRequest,
   DriverRegisterAccepted,
   DriverRegisterRequest,
+  EligibleDriver,
   RequestStatusResponse,
+  TripCancelResponse,
 } from '../types/dispatch';
 
 const BASE = '/api';
@@ -123,3 +125,40 @@ export async function getRequestStatus(
 
   return res.json() as Promise<RequestStatusResponse>;
 }
+
+/**
+ * Phase 11.2 — Fetches currently fresh, eligible drivers from the backend registry.
+ * GET /api/drivers → HTTP 200 with EligibleDriver[].
+ *
+ * @throws Error on network failure or server error (5xx).
+ */
+export async function fetchEligibleDrivers(
+  signal?: AbortSignal,
+): Promise<EligibleDriver[]> {
+  const res = await fetch(`${BASE}/drivers`, {
+    method: 'GET',
+    signal,
+  });
+
+  if (!res.ok) {
+    const message = await parseErrorBody(res);
+    throw new Error(message);
+  }
+
+  return res.json() as Promise<EligibleDriver[]>;
+}
+
+/**
+ * Phase 11.2 — Cancels an assigned or en-route trip prior to passenger pickup.
+ * POST /api/trips/{requestId}/cancel → HTTP 200 with TripCancelResponse.
+ *
+ * @throws Error on network failure, conflict (409), or server error (5xx).
+ */
+export async function cancelTrip(
+  requestId: string,
+  driverId: string,
+  signal?: AbortSignal,
+): Promise<TripCancelResponse> {
+  return postJson<TripCancelResponse>(`/trips/${encodeURIComponent(requestId)}/cancel`, { driverId }, signal ?? new AbortController().signal);
+}
+

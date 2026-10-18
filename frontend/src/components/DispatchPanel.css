@@ -319,3 +319,63 @@
   font-size: 11px;
   color: rgba(255, 255, 255, 0.55);
 }
+
+/* ── Danger / Cancel button (Phase 11.2) ────────────────────────────────────── */
+
+.dispatch-panel__btn--danger {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.dispatch-panel__btn--danger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: rgba(244, 63, 94, 0.5);
+  transform: translateY(-1px);
+}
+
+.dispatch-panel__btn--danger:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ── Live ETA & Remaining Distance Card (Phase 11.2) ───────────────────────── */
+
+.dispatch-panel__eta-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 10px;
+  margin-top: 2px;
+}
+
+.dispatch-panel__eta-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.dispatch-panel__eta-label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.dispatch-panel__eta-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fbbf24;
+  letter-spacing: -0.01em;
+}
+
+.dispatch-panel__eta-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.1);
+}
+

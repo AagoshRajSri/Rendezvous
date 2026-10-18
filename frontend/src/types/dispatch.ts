@@ -40,6 +40,26 @@ export interface DispatchAccepted {
 }
 
 /**
+ * Phase 11.2 — Fresh eligible driver response from GET /api/drivers.
+ */
+export interface EligibleDriver {
+  driverId: string;
+  latitude: number;
+  longitude: number;
+  status: 'AVAILABLE' | 'CLAIMED' | 'EN_ROUTE' | 'ON_TRIP' | string;
+  updatedAt: string;
+}
+
+/** HTTP 200 response from POST /api/trips/{requestId}/cancel */
+export interface TripCancelResponse {
+  requestId: string;
+  driverId: string;
+  status: string;
+  outcome: string;
+  message: string;
+}
+
+/**
  * HTTP 200 response from GET /api/requests/{requestId}.
  *
  * status values:
@@ -90,6 +110,7 @@ export type DispatchPhase =
   | 'submitting'    // POST /api/request in flight
   | 'polling'       // GET  /api/requests/{id} — awaiting terminal result
   | 'matched'       // terminal: driver found
+  | 'cancelled'     // Phase 11.2: ride cancelled prior to pickup
   | 'no_drivers'    // terminal: no driver available
   | 'error';        // terminal: network or server error
 

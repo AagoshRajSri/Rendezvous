@@ -18,9 +18,10 @@ vi.mock('../services/dispatch', () => ({
   registerDriver: vi.fn(),
   submitRideRequest: vi.fn(),
   getRequestStatus: vi.fn(),
+  cancelTrip: vi.fn(),
 }));
 
-import { registerDriver, submitRideRequest, getRequestStatus } from '../services/dispatch';
+import { cancelTrip, registerDriver, submitRideRequest, getRequestStatus } from '../services/dispatch';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -557,6 +558,169 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
 });
 
 // ── isValidDriverCoords unit tests (Phase 7E.2) ───────────────────────────────────
+
+describe('useDispatch — fleet synchronization (Phase 11.2)', () => {
+  it('registers all available visible drivers with their exact IDs and coordinates', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'd-1', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-sync', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-sync',
+      status: 'MATCHED',
+      driverId: 'place-sim-1',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+      driverLatitude: 51.51,
+      driverLongitude: -0.12,
+    });
+
+    const visibleDrivers = [
+      { id: 'place-sim-1', lat: 51.51, lon: -0.12, status: 'available' as const },
+      { id: 'place-sim-2', lat: 51.52, lon: -0.13, status: 'available' as const },
+      { id: 'place-sim-3', lat: 51.53, lon: -0.14, status: 'busy' as const },
+    ];
+
+    const place = makePlaceSuggestion();
+    const { result } = renderHook(() => useDispatch(place, visibleDrivers));
+
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.dispatchState.matchedDriverId).toBe('place-sim-1');
+
+    // Only available drivers (sim-1 and sim-2) registered, not busy (sim-3)
+    expect(registerDriver).toHaveBeenCalledTimes(2);
+    expect(registerDriver).toHaveBeenCalledWith(
+      expect.objectContaining({ driverId: 'place-sim-1', latitude: 51.51, longitude: -0.12 }),
+      expect.any(Object),
+    );
+    expect(registerDriver).toHaveBeenCalledWith(
+      expect.objectContaining({ driverId: 'place-sim-2', latitude: 51.52, longitude: -0.13 }),
+      expect.any(Object),
+    );
+  });
+});
+
+describe('useDispatch — cancelRide (Phase 11.2)', () => {
+  it('calls cancelTrip and transitions phase to cancelled', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-cancel', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-cancel',
+      status: 'MATCHED',
+      driverId: 'D-CANCEL',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+    });
+    vi.mocked(cancelTrip).mockResolvedValue({
+      requestId: 'req-cancel',
+      driverId: 'D-CANCEL',
+      status: 'CANCELLED',
+      outcome: 'TRANSITIONED',
+      message: 'Trip cancelled',
+    });
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+
+    let success = false;
+    await act(async () => {
+      success = await result.current.cancelRide();
+    });
+
+    expect(success).toBe(true);
+    expect(cancelTrip).toHaveBeenCalledWith(
+      expect.stringMatching(/^req-/),
+      'D-CANCEL',
+      expect.any(Object),
+    );
+    expect(result.current.dispatchState.phase).toBe('cancelled');
+  });
+
+  it('handles cancellation error gracefully', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-cancel-err', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-cancel-err',
+      status: 'MATCHED',
+      driverId: 'D-CANCEL-ERR',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+    });
+    vi.mocked(cancelTrip).mockRejectedValue(new Error('Trip already in progress'));
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    let success = true;
+    await act(async () => {
+      success = await result.current.cancelRide();
+    });
+
+    expect(success).toBe(false);
+    expect(result.current.dispatchState.errorMessage).toBe('Trip already in progress');
+  });
+
+  it('prevents duplicate cancellation requests while in-flight and exposes isCancelling', async () => {
+    vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
+    vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-cancel-dup', message: 'ok' });
+    vi.mocked(getRequestStatus).mockResolvedValue({
+      requestId: 'req-cancel-dup',
+      status: 'MATCHED',
+      driverId: 'D-CANCEL-DUP',
+      receivedAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:01:00Z',
+    });
+
+    let resolveCancel!: (res: any) => void;
+    vi.mocked(cancelTrip).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCancel = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
+    act(() => { result.current.requestDispatch(); });
+    await drainHook();
+
+    expect(result.current.dispatchState.phase).toBe('matched');
+    expect(result.current.isCancelling).toBe(false);
+
+    let promise1!: Promise<boolean>;
+    act(() => {
+      promise1 = result.current.cancelRide();
+    });
+
+    expect(result.current.isCancelling).toBe(true);
+    expect(cancelTrip).toHaveBeenCalledTimes(1);
+
+    let promise2Result = true;
+    await act(async () => {
+      promise2Result = await result.current.cancelRide();
+    });
+
+    expect(promise2Result).toBe(false);
+    expect(cancelTrip).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCancel({
+        requestId: 'req-cancel-dup',
+        driverId: 'D-CANCEL-DUP',
+        status: 'CANCELLED',
+        outcome: 'TRANSITIONED',
+        message: 'Trip cancelled',
+      });
+      await promise1;
+    });
+
+    expect(result.current.isCancelling).toBe(false);
+    expect(result.current.dispatchState.phase).toBe('cancelled');
+  });
+});
 
 describe('isValidDriverCoords', () => {
   it('accepts valid WGS-84 coordinates', () => {

@@ -403,4 +403,29 @@ class DriverControllerTest {
                 .andExpect(jsonPath("$.error").value("Service Unavailable"))
                 .andExpect(jsonPath("$.message").value("Driver location cache is temporarily unavailable: connection failure: refused"));
     }
+
+    @Test
+    @DisplayName("15. GET /api/drivers and GET /drivers return fresh eligible drivers from registry")
+    void getEligibleDriversReturnsFreshDrivers() throws Exception {
+        long now = System.currentTimeMillis();
+        Driver freshDriver = new Driver("D_FRESH_1", new GeoPoint(17.3850, 78.4867), new DriverState(), now - 1000L);
+        Driver staleDriver = new Driver("D_STALE_1", new GeoPoint(17.3860, 78.4870), new DriverState(), now - 120_000L);
+
+        driverRegistry.register(freshDriver);
+        driverRegistry.register(staleDriver);
+
+        mockMvc.perform(get("/api/drivers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].driverId").value("D_FRESH_1"))
+                .andExpect(jsonPath("$[0].latitude").value(17.3850))
+                .andExpect(jsonPath("$[0].longitude").value(78.4867))
+                .andExpect(jsonPath("$[0].status").value("AVAILABLE"))
+                .andExpect(jsonPath("$[0].updatedAt").isNotEmpty());
+
+        mockMvc.perform(get("/drivers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].driverId").value("D_FRESH_1"));
+    }
 }

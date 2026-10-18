@@ -20,15 +20,24 @@ import type { PlaceSuggestion } from '../types/place';
 import type { SearchState } from '../hooks/usePlaceSearch';
 import './SearchBar.css';
 
-interface SearchBarProps {
+export type SearchTarget = 'pickup' | 'destination';
+
+export interface SearchBarProps {
   query: string;
   state: SearchState;
   onQueryChange: (q: string) => void;
   onClear: () => void;
   onRetry: () => void;
-  onSelect: (place: PlaceSuggestion) => void;
+  onSelect: (place: PlaceSuggestion, target?: SearchTarget) => void;
   /** Whether the map is ready — hides the bar until the globe is interactive. */
   mapReady: boolean;
+  /** Phase 11.1: Active search target (defaults to 'pickup') */
+  activeTarget?: SearchTarget;
+  onTargetChange?: (target: SearchTarget) => void;
+  pickupPlace?: PlaceSuggestion | null;
+  destinationPlace?: PlaceSuggestion | null;
+  onSwap?: () => void;
+  onClearDestination?: () => void;
 }
 
 // Maps a place type/osm_value to a readable icon character
@@ -63,6 +72,12 @@ export function SearchBar({
   onRetry,
   onSelect,
   mapReady,
+  activeTarget = 'pickup',
+  onTargetChange,
+  pickupPlace = null,
+  destinationPlace = null,
+  onSwap,
+  onClearDestination,
 }: SearchBarProps) {
   const uid = useId();
   const listboxId = `${uid}-listbox`;
@@ -105,9 +120,9 @@ export function SearchBar({
       setIsOpen(false);
       setActiveIndex(-1);
       inputRef.current?.blur();
-      onSelect(place);
+      onSelect(place, activeTarget);
     },
-    [onSelect],
+    [onSelect, activeTarget],
   );
 
   const handleKeyDown = useCallback(
@@ -189,63 +204,206 @@ export function SearchBar({
 
   if (!mapReady) return null;
 
+  const isDualMode = Boolean(pickupPlace && onTargetChange);
+
   return (
     <div className="search-bar" ref={containerRef}>
       {/* ── Input row ─────────────────────────────────────────────────────── */}
-      <div className="search-bar__row">
-        {/* Search icon */}
-        <svg
-          className="search-bar__icon"
-          viewBox="0 0 20 20"
-          fill="none"
-          aria-hidden="true"
-        >
-          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M13 13l3.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-
-        {/* Combobox input */}
-        <input
-          id={`${uid}-input`}
-          ref={inputRef}
-          className="search-bar__input"
-          type="text"
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          placeholder="Search cities, countries, landmarks…"
-          value={query}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          onFocus={() => query.trim().length >= 2 && setIsOpen(true)}
-          role="combobox"
-          aria-label="Search for a place"
-          aria-expanded={showDropdown}
-          aria-autocomplete="list"
-          aria-controls={listboxId}
-          aria-activedescendant={activeOptionId}
-        />
-
-        {/* Loading spinner */}
-        {state.status === 'loading' && (
-          <div className="search-bar__spinner" aria-hidden="true" />
-        )}
-
-        {/* Clear button */}
-        {query.length > 0 && (
-          <button
-            id={`${uid}-clear`}
-            className="search-bar__clear"
-            type="button"
-            aria-label="Clear search"
-            onClick={handleClear}
-            tabIndex={0}
+      {isDualMode ? (
+        <div className="search-bar__dual-container">
+          {/* Row 1: Pickup */}
+          <div
+            className={`search-bar__dual-row${activeTarget === 'pickup' ? ' search-bar__dual-row--active' : ''}`}
           >
-            ×
-          </button>
-        )}
-      </div>
+            <span className="search-bar__dual-dot search-bar__dual-dot--pickup" aria-hidden="true" />
+            {activeTarget === 'pickup' ? (
+              <input
+                id={`${uid}-pickup-input`}
+                ref={inputRef}
+                className="search-bar__input"
+                type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder="Search pickup location…"
+                value={query}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  if (onTargetChange && activeTarget !== 'pickup') onTargetChange('pickup');
+                  if (query.trim().length >= 2) setIsOpen(true);
+                }}
+                role="combobox"
+                aria-label="Search for a place"
+                aria-expanded={showDropdown}
+                aria-autocomplete="list"
+                aria-controls={listboxId}
+                aria-activedescendant={activeOptionId}
+              />
+            ) : (
+              <button
+                type="button"
+                className="search-bar__pill"
+                onClick={() => onTargetChange && onTargetChange('pickup')}
+                title="Click to edit pickup location"
+              >
+                <span>{pickupPlace?.name}</span>
+              </button>
+            )}
+
+            {activeTarget === 'pickup' && state.status === 'loading' && (
+              <div className="search-bar__spinner" aria-hidden="true" />
+            )}
+
+            {activeTarget === 'pickup' && query.length > 0 && (
+              <button
+                type="button"
+                className="search-bar__clear"
+                aria-label="Clear pickup search"
+                onClick={handleClear}
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          {/* Swap button */}
+          {destinationPlace && onSwap && (
+            <button
+              type="button"
+              className="search-bar__swap-btn"
+              onClick={onSwap}
+              aria-label="Swap pickup and destination"
+              title="Swap pickup and destination"
+            >
+              ⇅
+            </button>
+          )}
+
+          {/* Row 2: Destination */}
+          <div
+            className={`search-bar__dual-row${activeTarget === 'destination' ? ' search-bar__dual-row--active' : ''}`}
+          >
+            <span className="search-bar__dual-dot search-bar__dual-dot--destination" aria-hidden="true" />
+            {activeTarget === 'destination' ? (
+              <input
+                id={`${uid}-destination-input`}
+                ref={inputRef}
+                className="search-bar__input"
+                type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder="Where to? (Enter destination)…"
+                value={query}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  if (onTargetChange && activeTarget !== 'destination') onTargetChange('destination');
+                  if (query.trim().length >= 2) setIsOpen(true);
+                }}
+                role="combobox"
+                aria-label="Search destination"
+                aria-expanded={showDropdown}
+                aria-autocomplete="list"
+                aria-controls={listboxId}
+                aria-activedescendant={activeOptionId}
+              />
+            ) : (
+              <button
+                type="button"
+                className={`search-bar__pill${!destinationPlace ? ' search-bar__pill--placeholder' : ''}`}
+                onClick={() => onTargetChange && onTargetChange('destination')}
+                title="Click to enter destination"
+              >
+                <span>{destinationPlace ? destinationPlace.name : 'Where to? (Enter destination)…'}</span>
+              </button>
+            )}
+
+            {activeTarget === 'destination' && state.status === 'loading' && (
+              <div className="search-bar__spinner" aria-hidden="true" />
+            )}
+
+            {activeTarget === 'destination' && query.length > 0 && (
+              <button
+                type="button"
+                className="search-bar__clear"
+                aria-label="Clear destination search"
+                onClick={handleClear}
+              >
+                ×
+              </button>
+            )}
+            {activeTarget !== 'destination' && destinationPlace && onClearDestination && (
+              <button
+                type="button"
+                className="search-bar__clear"
+                aria-label="Remove destination"
+                onClick={onClearDestination}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="search-bar__row">
+          {/* Search icon */}
+          <svg
+            className="search-bar__icon"
+            viewBox="0 0 20 20"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M13 13l3.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+
+          {/* Combobox input */}
+          <input
+            id={`${uid}-input`}
+            ref={inputRef}
+            className="search-bar__input"
+            type="text"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="Search cities, countries, landmarks…"
+            value={query}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onFocus={() => query.trim().length >= 2 && setIsOpen(true)}
+            role="combobox"
+            aria-label="Search for a place"
+            aria-expanded={showDropdown}
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            aria-activedescendant={activeOptionId}
+          />
+
+          {/* Loading spinner */}
+          {state.status === 'loading' && (
+            <div className="search-bar__spinner" aria-hidden="true" />
+          )}
+
+          {/* Clear button */}
+          {query.length > 0 && (
+            <button
+              id={`${uid}-clear`}
+              className="search-bar__clear"
+              type="button"
+              aria-label="Clear search"
+              onClick={handleClear}
+              tabIndex={0}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Dropdown ──────────────────────────────────────────────────────── */}
       {showDropdown && (

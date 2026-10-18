@@ -123,6 +123,38 @@ public class DriverController {
     }
 
     // -------------------------------------------------------------------------
+    // Fleet query (Phase 11.2)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a snapshot of fresh, registered drivers eligible for dispatch.
+     *
+     * <p>Queries the authoritative in-memory {@link DriverRegistry#snapshotFresh(DriverFreshnessConfig)}.
+     * Filters out stale drivers (older than configured staleness threshold) and clock-skewed timestamps.
+     * Exposes strictly map-required coordinates, driver ID, and status.
+     *
+     * <p>Compatible URL routes:
+     * <ul>
+     *   <li>{@code GET /drivers}</li>
+     *   <li>{@code GET /api/drivers}</li>
+     * </ul>
+     */
+    @GetMapping({"/drivers", "/api/drivers"})
+    public ResponseEntity<java.util.List<EligibleDriverResponse>> getEligibleDrivers() {
+        java.util.List<Driver> freshDrivers = driverRegistry.snapshotFresh(freshnessConfig);
+        java.util.List<EligibleDriverResponse> responses = freshDrivers.stream()
+                .map(d -> new EligibleDriverResponse(
+                        d.id(),
+                        d.location().latitude(),
+                        d.location().longitude(),
+                        d.state().getStatus().name(),
+                        Instant.ofEpochMilli(d.updatedAt())))
+                .toList();
+
+        return ResponseEntity.ok(responses);
+    }
+
+    // -------------------------------------------------------------------------
     // Location query
     // -------------------------------------------------------------------------
 

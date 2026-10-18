@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlaceSuggestion } from '../types/place';
 import type { DispatchState } from '../types/dispatch';
-import { getRequestStatus, registerDriver, submitRideRequest } from '../services/dispatch';
+import type { SimulatedDriver } from '../types/driver';
+import { cancelTrip, getRequestStatus, registerDriver, submitRideRequest } from '../services/dispatch';
 
 // ── Polling configuration ────────────────────────────────────────────────────
 
@@ -42,55 +43,47 @@ function generateDriverId(placeName: string): string {
 
 export interface UseDispatchReturn {
   dispatchState: DispatchState;
-  /** Call to begin the full dispatch flow: register demo driver → submit request → poll. */
+  /** Call to begin the full dispatch flow: register visible fleet → submit request → poll. */
   requestDispatch: () => void;
+  /** Phase 11.2: Cancels the ride prior to passenger pickup (when phase is matched). */
+  cancelRide: () => Promise<boolean>;
+  /** Phase 11.2: Whether a cancellation request is currently in flight. */
+  isCancelling: boolean;
   /** Resets to idle (e.g., after place change, on user cancel). */
   reset: () => void;
 }
 
 /**
- * Phase 7E.2 — Frontend dispatch lifecycle hook.
+ * Phase 11.2 — Frontend dispatch lifecycle hook with fleet synchronization.
  *
- * Orchestrates three sequential steps:
- *   1. Register a demo driver near the selected place (POST /api/register).
+ * Orchestrates:
+ *   1. Register available drivers from the visible fleet (or demo driver fallback)
+ *      with their actual map coordinates and stable IDs (POST /api/register).
  *   2. Submit a ride request at the selected place (POST /api/request → 202).
  *   3. Poll GET /api/requests/{id} with bounded exponential backoff until a
  *      terminal state (MATCHED or NO_DRIVERS) is reached, or until exhausted.
+ *   4. Supports cancellation via POST /api/trips/{requestId}/cancel while matched.
  *
- * When MATCHED, the hook extracts and validates optional driver telemetry
- * fields (driverLatitude, driverLongitude, driverLocationAt) from the response.
- * These represent the last-known fresh fix at status-query time — not live
- * tracking. Telemetry may be null even when status is MATCHED; null telemetry
- * does not invalidate the match.
- *
- * Safety guarantees:
- * - Duplicate submissions are prevented: a second requestDispatch() call while
- *   a flow is in-flight is a no-op.
- * - AbortController cancels all in-flight fetch requests when the selected place
- *   changes, when reset() is called, or when the component unmounts.
- * - Cancellation notice: aborting frontend polling cancels client-side network
- *   operations only; it does not cancel an already-submitted dispatch request
- *   in the backend Kafka/PostgreSQL pipeline.
- * - Driver registration HTTP 202 is treated strictly as queued acceptance, not
- *   verified readiness. No artificial delay is presumed as readiness proof.
- *   If no driver is ready when matching runs, NO_DRIVERS is handled cleanly with
- *   a safe manual retry action without automatic resubmission.
- * - State-changing POST calls (register, request) are never automatically retried.
- * - Polling is retried up to POLL_MAX_ATTEMPTS times with exponential backoff.
- * - Simulated drivers are never fed into this pipeline; they are managed
- *   entirely by useSimulatedDrivers.
- *
- * @param selectedPlace - The currently selected map location. The hook auto-resets
- *   when this changes, cancelling any in-flight requests.
+ * @param selectedPlace - The currently selected map location.
+ * @param visibleDrivers - Optional visible simulated drivers to register in the backend registry.
  */
-export function useDispatch(selectedPlace: PlaceSuggestion | null): UseDispatchReturn {
+export function useDispatch(
+  selectedPlace: PlaceSuggestion | null,
+  visibleDrivers?: SimulatedDriver[],
+): UseDispatchReturn {
   const [dispatchState, setDispatchState] = useState<DispatchState>(IDLE_STATE);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Ref to the current AbortController so we can cancel on place change / reset / unmount
   const abortRef = useRef<AbortController | null>(null);
 
   // Track whether a dispatch flow is active to prevent duplicate submissions
   const activeRef = useRef(false);
+  // Track whether a cancellation request is in-flight to prevent duplicate cancellations
+  const isCancellingRef = useRef(false);
+
+  const visibleDriversRef = useRef(visibleDrivers);
+  visibleDriversRef.current = visibleDrivers;
 
   // ── Reset when selected place changes ─────────────────────────────────────
 
@@ -100,6 +93,8 @@ export function useDispatch(selectedPlace: PlaceSuggestion | null): UseDispatchR
     abortRef.current?.abort();
     abortRef.current = null;
     activeRef.current = false;
+    isCancellingRef.current = false;
+    setIsCancelling(false);
     setDispatchState(IDLE_STATE);
   }, [selectedPlaceId]);
 
@@ -124,12 +119,18 @@ export function useDispatch(selectedPlace: PlaceSuggestion | null): UseDispatchR
     abortRef.current = controller;
     const signal = controller.signal;
 
-    runDispatchFlow(selectedPlace, signal, setDispatchState, () => {
-      // Only release active lock if this flow is still the current active one
-      if (abortRef.current === controller) {
-        activeRef.current = false;
-      }
-    }).catch((err) => {
+    runDispatchFlow(
+      selectedPlace,
+      signal,
+      setDispatchState,
+      () => {
+        // Only release active lock if this flow is still the current active one
+        if (abortRef.current === controller) {
+          activeRef.current = false;
+        }
+      },
+      visibleDriversRef.current,
+    ).catch((err) => {
       const isCurrent = abortRef.current === controller;
       // Only release active lock if this flow is still the current active one
       if (isCurrent) {
@@ -157,16 +158,57 @@ export function useDispatch(selectedPlace: PlaceSuggestion | null): UseDispatchR
     });
   }, [selectedPlace]);
 
+  // ── Trip cancellation (Phase 11.2) ────────────────────────────────────────
+
+  const cancelRide = useCallback(async (): Promise<boolean> => {
+    if (
+      isCancellingRef.current ||
+      dispatchState.phase !== 'matched' ||
+      !dispatchState.requestId ||
+      !dispatchState.matchedDriverId
+    ) {
+      return false;
+    }
+
+    const requestId = dispatchState.requestId;
+    const driverId = dispatchState.matchedDriverId;
+
+    isCancellingRef.current = true;
+    setIsCancelling(true);
+
+    try {
+      await cancelTrip(requestId, driverId, abortRef.current?.signal);
+      setDispatchState((s) => ({
+        ...s,
+        phase: 'cancelled',
+        errorMessage: null,
+      }));
+      return true;
+    } catch (err) {
+      if (abortRef.current?.signal?.aborted) return false;
+      setDispatchState((s) => ({
+        ...s,
+        errorMessage: toMessage(err) || 'Failed to cancel trip',
+      }));
+      return false;
+    } finally {
+      isCancellingRef.current = false;
+      setIsCancelling(false);
+    }
+  }, [dispatchState.phase, dispatchState.requestId, dispatchState.matchedDriverId]);
+
   // ── Reset ─────────────────────────────────────────────────────────────────
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     activeRef.current = false;
+    isCancellingRef.current = false;
+    setIsCancelling(false);
     setDispatchState(IDLE_STATE);
   }, []);
 
-  return { dispatchState, requestDispatch, reset };
+  return { dispatchState, requestDispatch, cancelRide, isCancelling, reset };
 }
 
 // ── Flow orchestration (outside the hook for testability) ────────────────────
@@ -180,22 +222,43 @@ async function runDispatchFlow(
   signal: AbortSignal,
   setState: React.Dispatch<React.SetStateAction<DispatchState>>,
   onComplete: () => void,
+  visibleDrivers?: SimulatedDriver[],
 ): Promise<void> {
-  // Step 1: Register a demo driver near the selected location.
-  const driverId = generateDriverId(place.name);
+  // Step 1: Register available drivers from the visible fleet (or fallback single demo driver)
   setState((s) => ({ ...s, phase: 'registering' }));
 
+  const availableVisible = (visibleDrivers ?? []).filter((d) => d.status === 'available');
+
   try {
-    await registerDriver(
-      {
-        driverId,
-        latitude: place.lat,
-        longitude: place.lon,
-        action: 'REGISTER',
-        capturedAt: Date.now(),
-      },
-      signal,
-    );
+    if (availableVisible.length > 0) {
+      // Register all visible available drivers with stable IDs and their actual coordinates
+      await Promise.all(
+        availableVisible.map((d) =>
+          registerDriver(
+            {
+              driverId: d.id,
+              latitude: d.lat,
+              longitude: d.lon,
+              action: 'REGISTER',
+              capturedAt: Date.now(),
+            },
+            signal,
+          ),
+        ),
+      );
+    } else {
+      const driverId = generateDriverId(place.name);
+      await registerDriver(
+        {
+          driverId,
+          latitude: place.lat,
+          longitude: place.lon,
+          action: 'REGISTER',
+          capturedAt: Date.now(),
+        },
+        signal,
+      );
+    }
   } catch (err) {
     if (signal.aborted) return;
     setState({
