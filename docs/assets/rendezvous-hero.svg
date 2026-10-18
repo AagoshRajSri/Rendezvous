@@ -1,0 +1,198 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="100%" height="auto" style="background: transparent; border-radius: 12px; overflow: hidden;">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070A12" />
+      <stop offset="50%" stop-color="#0B132B" />
+      <stop offset="100%" stop-color="#111B38" />
+    </linearGradient>
+
+    <!-- Glowing Text & Element Gradients -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E5FF" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#34D399" />
+    </linearGradient>
+    <linearGradient id="accentLine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00E5FF" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0.2" />
+    </linearGradient>
+
+    <!-- Subtle Dot Grid Pattern -->
+    <pattern id="dotGrid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#1E293B" opacity="0.6" />
+    </pattern>
+
+    <!-- Radar Sweep Blur -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Container Base -->
+  <rect width="1200" height="360" rx="14" fill="url(#bgGrad)" stroke="#1E293B" stroke-width="1.5" />
+  <rect width="1200" height="360" rx="14" fill="url(#dotGrid)" />
+
+  <!-- Background Ambient Glow -->
+  <circle cx="960" cy="180" r="160" fill="#00E5FF" opacity="0.04" filter="url(#glow)" />
+  <circle cx="200" cy="80" r="120" fill="#38BDF8" opacity="0.03" filter="url(#glow)" />
+
+  <!-- LEFT HERO CONTENT: Typography & Positioning -->
+  <g transform="translate(60, 48)">
+    <!-- Pill Badge: Domain Classification -->
+    <rect x="0" y="0" width="276" height="26" rx="13" fill="#0369A1" fill-opacity="0.2" stroke="#0284C7" stroke-width="1" />
+    <circle cx="12" cy="13" r="4" fill="#00E5FF">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="2.4s" repeatCount="indefinite" />
+    </circle>
+    <text x="24" y="17" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10.5" font-weight="700" letter-spacing="1.5">URBAN MOBILITY × REAL-TIME SYSTEMS</text>
+
+    <!-- Project Title -->
+    <text x="0" y="74" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">RENDEZVOUS</text>
+    
+    <!-- Tagline -->
+    <text x="0" y="104" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="400">Autonomous Real-Time Ride Dispatch &amp; Spatial Matching Engine</text>
+
+    <!-- Value Statement / Sub-text -->
+    <text x="0" y="132" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="400">
+      Decoupled Kafka event ingestion, 2D QuadTree spatial candidate discovery,
+    </text>
+    <text x="0" y="152" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="400">
+      atomic CAS concurrency (0 double-bookings), and sub-70ms p99 dispatch latency.
+    </text>
+
+    <!-- Architectural Capability Pills -->
+    <g transform="translate(0, 186)">
+      <!-- Pill 1 -->
+      <g transform="translate(0, 0)">
+        <rect width="144" height="28" rx="6" fill="#0F172A" stroke="#334155" stroke-width="1" />
+        <circle cx="12" cy="14" r="3.5" fill="#38BDF8" />
+        <text x="22" y="18" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="600">Kafka 3.7 Streaming</text>
+      </g>
+      <!-- Pill 2 -->
+      <g transform="translate(152, 0)">
+        <rect width="138" height="28" rx="6" fill="#0F172A" stroke="#334155" stroke-width="1" />
+        <circle cx="12" cy="14" r="3.5" fill="#10B981" />
+        <text x="22" y="18" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="600">QuadTree 2D Index</text>
+      </g>
+      <!-- Pill 3 -->
+      <g transform="translate(298, 0)">
+        <rect width="146" height="28" rx="6" fill="#0F172A" stroke="#334155" stroke-width="1" />
+        <circle cx="12" cy="14" r="3.5" fill="#F59E0B" />
+        <text x="22" y="18" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="600">Atomic CAS Claims</text>
+      </g>
+      <!-- Pill 4 -->
+      <g transform="translate(452, 0)">
+        <rect width="142" height="28" rx="6" fill="#0F172A" stroke="#334155" stroke-width="1" />
+        <circle cx="12" cy="14" r="3.5" fill="#EC4899" />
+        <text x="22" y="18" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="600">Prometheus / Grafana</text>
+      </g>
+    </g>
+
+    <!-- Key Performance Stat Strip -->
+    <g transform="translate(0, 234)">
+      <text x="0" y="14" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="800">518</text>
+      <text x="32" y="14" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500">Backend Tests</text>
+
+      <text x="130" y="14" fill="#10B981" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="800">122</text>
+      <text x="156" y="14" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500">Frontend Tests</text>
+
+      <text x="260" y="14" fill="#00E5FF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="800">66ms</text>
+      <text x="300" y="14" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500">Dispatch p99</text>
+
+      <text x="390" y="14" fill="#F59E0B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="800">100%</text>
+      <text x="435" y="14" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500">HTTP 202 Ingestion</text>
+
+      <text x="555" y="14" fill="#A855F7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="800">0</text>
+      <text x="568" y="14" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500">Double-Bookings</text>
+    </g>
+  </g>
+
+  <!-- RIGHT HERO GRAPHIC: Spatial Radar & QuadTree Dispatch Grid -->
+  <g transform="translate(710, 25)">
+    <!-- Radar Grid Frame -->
+    <rect x="0" y="0" width="440" height="310" rx="10" fill="#090E1A" fill-opacity="0.8" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- QuadTree Hierarchical Quadrant Grid -->
+    <line x1="220" y1="20" x2="220" y2="290" stroke="#334155" stroke-width="1" stroke-dasharray="3 3" opacity="0.7" />
+    <line x1="30" y1="155" x2="410" y2="155" stroke="#334155" stroke-width="1" stroke-dasharray="3 3" opacity="0.7" />
+    <!-- Sub-quadrants in NE quadrant -->
+    <line x1="315" y1="20" x2="315" y2="155" stroke="#1E293B" stroke-width="1" stroke-dasharray="2 2" />
+    <line x1="220" y1="87" x2="410" y2="87" stroke="#1E293B" stroke-width="1" stroke-dasharray="2 2" />
+
+    <!-- Spatial Range Rings (Haversine 1km, 3km, 5km) -->
+    <circle cx="220" cy="155" r="45" fill="none" stroke="#38BDF8" stroke-width="1" stroke-dasharray="4 4" opacity="0.3" />
+    <circle cx="220" cy="155" r="90" fill="none" stroke="#38BDF8" stroke-width="1" stroke-dasharray="4 4" opacity="0.2" />
+    <circle cx="220" cy="155" r="130" fill="none" stroke="#38BDF8" stroke-width="1" stroke-dasharray="4 4" opacity="0.1" />
+
+    <!-- Distance Annotations -->
+    <text x="224" y="105" fill="#475569" font-family="monospace" font-size="8.5">1.0 km</text>
+    <text x="224" y="60" fill="#475569" font-family="monospace" font-size="8.5">3.0 km</text>
+    <text x="224" y="28" fill="#475569" font-family="monospace" font-size="8.5">5.0 km</text>
+
+    <!-- Quadrant Identifiers -->
+    <text x="40" y="38" fill="#334155" font-family="monospace" font-size="9" font-weight="700">NW</text>
+    <text x="390" y="38" fill="#334155" font-family="monospace" font-size="9" font-weight="700">NE</text>
+    <text x="40" y="280" fill="#334155" font-family="monospace" font-size="9" font-weight="700">SW</text>
+    <text x="390" y="280" fill="#334155" font-family="monospace" font-size="9" font-weight="700">SE</text>
+
+    <!-- Connecting Match Vector: REQ-789 to D101 -->
+    <line x1="220" y1="155" x2="278" y2="116" stroke="url(#accentLine)" stroke-width="2" stroke-linecap="round" />
+    <circle cx="249" cy="135" r="14" fill="#0B132B" stroke="#00E5FF" stroke-width="1" />
+    <text x="241" y="139" fill="#00E5FF" font-family="monospace" font-size="8.5" font-weight="700">0.14</text>
+
+    <!-- Rider Pickup Node: REQ-789 (Pulsing Cyan) -->
+    <g transform="translate(220, 155)">
+      <circle r="12" fill="#00E5FF" opacity="0.15">
+        <animate attributeName="r" values="8;18;8" dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.3;0.05;0.3" dur="2s" repeatCount="indefinite" />
+      </circle>
+      <circle r="5" fill="#00E5FF" stroke="#0F172A" stroke-width="1.5" />
+      <rect x="8" y="-9" width="58" height="18" rx="4" fill="#0F172A" stroke="#00E5FF" stroke-width="0.8" />
+      <text x="13" y="4" fill="#00E5FF" font-family="monospace" font-size="9" font-weight="700">REQ-789</text>
+    </g>
+
+    <!-- Matched Driver Node: D101 (Green Emerald) -->
+    <g transform="translate(278, 116)">
+      <circle r="6" fill="#10B981" stroke="#0F172A" stroke-width="1.5" />
+      <rect x="8" y="-9" width="46" height="18" rx="4" fill="#0F172A" stroke="#10B981" stroke-width="0.8" />
+      <text x="13" y="4" fill="#10B981" font-family="monospace" font-size="9" font-weight="700">D101</text>
+      <text x="13" y="19" fill="#34D399" font-family="monospace" font-size="7.5">CLAIMED</text>
+    </g>
+
+    <!-- Available Driver Nodes: Fleet -->
+    <!-- D204 (Available in SW) -->
+    <g transform="translate(130, 220)">
+      <circle r="4.5" fill="#38BDF8" stroke="#0F172A" stroke-width="1.2" />
+      <text x="8" y="4" fill="#94A3B8" font-family="monospace" font-size="8">D204</text>
+    </g>
+    <!-- D312 (Available in NE) -->
+    <g transform="translate(350, 68)">
+      <circle r="4.5" fill="#38BDF8" stroke="#0F172A" stroke-width="1.2" />
+      <text x="8" y="4" fill="#94A3B8" font-family="monospace" font-size="8">D312</text>
+    </g>
+    <!-- D088 (Available in SE) -->
+    <g transform="translate(320, 235)">
+      <circle r="4.5" fill="#38BDF8" stroke="#0F172A" stroke-width="1.2" />
+      <text x="8" y="4" fill="#94A3B8" font-family="monospace" font-size="8">D088</text>
+    </g>
+    <!-- D145 (Available in NW) -->
+    <g transform="translate(105, 95)">
+      <circle r="4.5" fill="#38BDF8" stroke="#0F172A" stroke-width="1.2" />
+      <text x="8" y="4" fill="#94A3B8" font-family="monospace" font-size="8">D145</text>
+    </g>
+
+    <!-- Live Status Overlay Card (Bottom) -->
+    <g transform="translate(15, 260)">
+      <rect width="410" height="38" rx="6" fill="#0B132B" stroke="#1E293B" stroke-width="1" />
+      <circle cx="15" cy="19" r="4" fill="#10B981" />
+      <text x="26" y="22" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10.5" font-weight="600">Auction Engine</text>
+      <text x="110" y="22" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10">ε-scaling: converged</text>
+      <text x="240" y="22" fill="#38BDF8" font-family="monospace" font-size="10">cost: 0.142</text>
+      <text x="325" y="22" fill="#10B981" font-family="monospace" font-size="10">CAS: OK</text>
+    </g>
+  </g>
+</svg>

@@ -1,111 +1,414 @@
-# Real-Time Ride Dispatch Matching Engine
+<p align="center">
+  <img src="docs/assets/rendezvous-hero.svg" alt="Rendezvous — Real-Time Ride Dispatch Matching Engine" width="100%">
+</p>
 
-A high-performance, concurrency-safe dispatch matching platform implemented with a Java 17 and Spring Boot backend and an interactive React, TypeScript, and Vite frontend. The platform models a two-sided mobility network featuring asynchronous event ingestion via Apache Kafka for high-throughput driver location telemetry and ride requests, 2D hierarchical spatial indexing, multi-objective dispatch cost evaluation, atomic driver-rider bipartite assignment with zero double-booking under extreme concurrency, durable PostgreSQL state persistence, non-authoritative Redis location caching, and Prometheus/Grafana observability.
+# Rendezvous
+
+> **Autonomous, concurrency-safe ride dispatch and spatial matching engine.**  
+> Built with Java 17, Spring Boot, Apache Kafka, PostgreSQL, Redis, and React.
+
+<p align="left">
+  <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17"></a>
+  <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring_Boot-4.1.1-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot"></a>
+  <a href="https://kafka.apache.org/"><img src="https://img.shields.io/badge/Apache_Kafka-3.7.0-231F20?style=flat-square&logo=apachekafka&logoColor=white" alt="Apache Kafka"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL"></a>
+  <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.3-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19"></a>
+  <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-8.3-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite"></a>
+  <a href="#verified-engineering-statistics"><img src="https://img.shields.io/badge/Backend_Tests-518_passing-success?style=flat-square" alt="Backend Tests"></a>
+  <a href="#verified-engineering-statistics"><img src="https://img.shields.io/badge/Frontend_Tests-122_passing-success?style=flat-square" alt="Frontend Tests"></a>
+  <a href="#performance--benchmark-evidence"><img src="https://img.shields.io/badge/Dispatch_p99-66ms-blue?style=flat-square" alt="Dispatch Latency"></a>
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License">
+</p>
+
+**Rendezvous** is a real-time mobility dispatch platform that decouples high-throughput ride request ingestion via Apache Kafka, indexes driver fleets in a hierarchical 2D QuadTree, computes multi-objective bipartite driver-rider matching in sub-70ms, and enforces zero double-bookings through atomic Compare-And-Set (CAS) state transitions backed by durable PostgreSQL persistence and Redis read caching.
 
 ---
 
-## 1. Problem Statement & Architecture
+## Navigation
 
-In real-time ride-hailing networks, dispatching rides involves competing operational requirements:
-1. **Asynchronous High-Throughput Ingestion:** Decoupling HTTP submission from matching computation using Kafka message queues, returning immediate `202 Accepted` receipts to clients.
-2. **Low Latency & Spatial Indexing:** Finding candidate drivers near a pickup location without full-fleet $O(N)$ linear scans using hierarchical spatial indexes.
-3. **Global Assignment Optimality:** Minimizing deadhead travel time and balancing fleet distribution rather than greedily consuming suboptimal drivers.
-4. **Strict Concurrency Safety:** Guaranteeing that under thousands of concurrent dispatch requests, no driver can ever be double-booked to two distinct ride requests (lost-update anomaly), and driver location telemetry updates never overwrite or clear active ride claims.
-5. **Durable Persistence & End-to-End Observability:** Storing terminal ride outcomes and trip lifecycles in PostgreSQL, providing non-authoritative driver location caching in Redis, and exposing real-time Micrometer metrics scraped by Prometheus and visualized in Grafana.
+- [Part A — Visual Showcase](#part-a--visual-showcase)
+  - [Project at a Glance](#project-at-a-glance)
+  - [What Rendezvous Does](#what-rendezvous-does)
+  - [System Architecture](#system-architecture)
+  - [Feature Showcase](#feature-showcase)
+  - [Engineering Highlights](#engineering-highlights)
+- [Part B — Technical Statistics & Engineering Evidence](#part-b--technical-statistics--engineering-evidence)
+  - [Verified Technology Stack](#verified-technology-stack)
+  - [Verified Engineering Statistics](#verified-engineering-statistics)
+  - [Performance & Benchmark Evidence](#performance--benchmark-evidence)
+  - [Engineering Decisions & Trade-Offs](#engineering-decisions--trade-offs)
+  - [Testing, Setup & Verification](#testing-setup--verification)
+  - [Architectural Status & Honest Limitations](#architectural-status--honest-limitations)
+  - [Reference Documentation](#reference-documentation)
 
-### System Architecture
+---
+
+# Part A — Visual Showcase
+
+## Project at a Glance
+
+| Dimension | Architectural Implementation |
+| :--- | :--- |
+| **Domain Problem** | Low-latency urban ride dispatch balancing customer wait times, spatial supply distribution, and absolute concurrency safety under peak request spikes. |
+| **Ingestion Pipeline** | Asynchronous Kafka event streaming returning immediate `202 Accepted` receipts; partitioned by `driverId` and `requestId`. |
+| **Spatial Matching Core** | Hierarchical 2D `QuadTree` spatial index with progressive radius expansion ($1\text{ km} \to 3\text{ km} \to 5\text{ km}$) and Bertsekas Auction Algorithm with $\varepsilon$-scaling. |
+| **Concurrency Safety** | In-memory `AtomicReference<State>` Compare-And-Set (CAS) state transitions; zero double-booking under extreme concurrency; GPS pings strictly preserve active ride claims. |
+| **Durability & Caching** | PostgreSQL 16 (Flyway V1–V3) for durable terminal states; Redis 7 non-authoritative read cache with 30s TTL Lua script writes and automatic in-memory fallback. |
+| **Automated Verification** | **640 total tests (100% passing)**: 518 backend unit/slice/integration tests across 33 test classes + 122 frontend Vitest tests across 11 test files. |
+| **Measured Performance** | High-load benchmark (4,424 requests, 60 req/s sustained): **100% HTTP 202 acceptance**, **100% durable persistence**, **p95 dispatch 63 ms**, **p99 dispatch 66 ms**, zero timeouts. |
+| **Active Topology** | 7 active network endpoints: Spring Boot (`:8080`), React/Vite (`:5173`), PostgreSQL (`:5434`), Redis (`:6380`), Kafka (`:9092`), Prometheus (`:9090`), Grafana (`:3000`). |
+
+---
+
+## What Rendezvous Does
+
+In on-demand transportation networks, dispatch engines operate under competing operational constraints: they must ingest thousands of concurrent driver telemetry updates and rider pickup requests without blocking, discover proximate drivers without expensive $O(N)$ fleet scans, evaluate global dispatch cost, and guarantee that two riders can never claim the same driver simultaneously.
+
+Rendezvous addresses this through a 6-stage asynchronous workflow:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Rider as Rider / Client
+    actor Driver as Driver Device
+    participant API as Spring Boot Web (:8080)
+    participant Kafka as Apache Kafka (:9092)
+    participant Consumer as Batch Consumer Loop
+    participant Matching as QuadTree & Auction Engine
+    participant Domain as DriverRegistry & CAS State
+    participant Storage as PostgreSQL (:5434) & Redis (:6380)
+
+    Driver->>API: POST /ping (GPS coordinates)
+    API->>Kafka: Publish to driver-pings (key: driverId)
+    API-->>Driver: 202 Accepted (immediate receipt)
+
+    Rider->>API: POST /request (Pickup location)
+    API->>Kafka: Publish to ride-requests (key: requestId)
+    API-->>Rider: 202 Accepted (immediate receipt)
+
+    Kafka->>Consumer: Poll batch (records with partition affinity)
+    Consumer->>Storage: Check 2-tier idempotency (skip finalized requests)
+    Consumer->>Domain: Snapshot fresh drivers (under 60s staleness)
+    Consumer->>Matching: Query QuadTree range & compute Bertsekas auction
+    Matching->>Domain: Atomic CAS claim via DriverState.tryClaim()
+    Domain-->>Matching: Claim granted (0 double-booking)
+    Consumer->>Storage: Transactional commit: persist assignment & set MATCHED
+    Consumer->>Kafka: Acknowledge offsets strictly post-commit
+
+    Rider->>API: GET /api/requests/{requestId} (Poll status)
+    API-->>Rider: 200 OK (MATCHED, driverId, cost, assignedAt)
+```
+
+1. **Ingest Events Asynchronously:** Clients submit driver pings and ride requests. The REST layer validates inputs and immediately returns `202 Accepted` receipts with Kafka broker confirmation, decoupling HTTP producers from matching computation.
+2. **Stream Events via Apache Kafka:** Telemetry and ride events route through dedicated topics (`driver-pings` and `ride-requests`) using entity IDs as partition keys, preserving ordering and locality.
+3. **Index & Discover Candidates Spatially:** A 2D `QuadTree` indexes driver coordinates into quadrants (NW, NE, SW, SE). Range pruning narrows candidate discovery to active search windows without full-fleet scans.
+4. **Evaluate Multi-Objective Matching:** Candidate pairings are scored using a normalized composite cost function (ETA travel time + localized pickup competition density). Bertsekas' Auction Algorithm with $\varepsilon$-scaling resolves global assignment.
+5. **Enforce Atomic Claiming & Durable Persistence:** The winning driver is claimed atomically in memory via `AtomicReference` CAS. The assignment and request state are written to PostgreSQL inside a single transaction. Kafka offsets commit strictly after database confirmation.
+6. **Expose Trip Lifecycle & Real-Time Observability:** Clients poll trip status and advance through the trip lifecycle (`/en-route` $\to$ `/start` $\to$ `/complete` or `/cancel`), automatically releasing driver claims upon completion. System throughput, latency distributions, and contention rates are continuously monitored via Prometheus and Grafana.
+
+> [!NOTE]
+> **Implemented Scope vs. Future Capabilities:**  
+> **Currently Implemented:** Decoupled Kafka streaming, 2D QuadTree spatial pruning, Bertsekas auction matching, atomic CAS claiming, two-tier idempotency, PostgreSQL durable state, non-authoritative Redis cache with 30s TTL Lua script, trip lifecycle transitions (`/en-route`), Prometheus scraping, Grafana dashboards, interactive React + MapLibre UI.  
+> **Future Possibilities:** Graph-based road-network routing (OSRM/Valhalla), distributed spatial sharding (Uber H3/S2 geometry), multi-broker Kafka cluster, active Kafka poll-batch tuning, and dedicated Dead-Letter Topics (DLT).
+
+---
+
+## System Architecture
+
+The following diagram illustrates the active runtime components, network boundaries, and asynchronous data flows across the system:
 
 ```mermaid
 graph TD
-    subgraph Clients["Clients & Frontend UI"]
-        UI["React 19 + Vite Frontend (:5173)"]
-        Drivers["Mobile Drivers (GPS Pings)"]
-        Riders["Riders (Ride Requests)"]
+    subgraph Clients["1. Clients & Interactive UI"]
+        UI["React 19 + MapLibre GL (:5173)<br/>Interactive Map, Fleet Simulation & Control Panel"]
+        Drivers["Mobile Driver Devices<br/>GPS Telemetry Stream"]
+        Riders["Riders & API Clients<br/>Ride Dispatch Requests"]
     end
 
-    subgraph API["REST Producer & Query Layer (Spring Boot Web :8080)"]
-        DC["DriverController (/ping, /register, /drivers/{id}/location)"]
-        RC["RideController (/request)"]
-        RSC["RequestStatusController (/api/requests/{id}, /api aliases)"]
-        TC["TripController (/api/trips/{id}/*, /trips/{id}/*)"]
-        TEL["TelemetryController (/api/telemetry/batches, /telemetry/batches)"]
-        ACT["Spring Actuator (/actuator/health, /actuator/prometheus)"]
+    subgraph Ingestion["2. REST Ingestion & Query Layer (Spring Boot :8080)"]
+        DC["DriverController<br/>POST /ping, POST /register, GET /drivers/{id}/location"]
+        RC["RideController<br/>POST /request"]
+        RSC["RequestStatusController<br/>GET /api/requests/{id}, /api route aliases"]
+        TC["TripController<br/>POST /api/trips/{id}/en-route, /start, /complete, /cancel"]
+        TEL["TelemetryController<br/>GET /api/telemetry/batches"]
+        ACT["Spring Boot Actuator<br/>GET /actuator/health, /actuator/prometheus"]
     end
 
-    subgraph Kafka["Event Streaming (Apache Kafka :9092)"]
-        TP1["Topic: driver-pings (Key: driverId)"]
-        TP2["Topic: ride-requests (Key: requestId)"]
+    subgraph KafkaBrokers["3. Event Streaming Layer (Apache Kafka :9092)"]
+        TP1["Topic: driver-pings<br/>Partition Key: driverId"]
+        TP2["Topic: ride-requests<br/>Partition Key: requestId"]
     end
 
-    subgraph Messaging["Consumer Layer"]
-        DPC["DriverPingConsumer"]
-        RRC["RideRequestConsumer (Adaptive Batching & Idempotency)"]
+    subgraph Consumers["4. Messaging Consumer Layer"]
+        DPC["DriverPingConsumer<br/>Asynchronous Telemetry Ingestion"]
+        RRC["RideRequestConsumer<br/>Adaptive Batching, Idempotency & Matching Delegation"]
     end
 
-    subgraph Domain["In-Memory Domain & Concurrency"]
-        DR["DriverRegistry (ConcurrentHashMap)"]
-        DS["DriverState (AtomicReference CAS)"]
+    subgraph DomainCore["5. In-Memory Domain & Spatial Index"]
+        DR["DriverRegistry<br/>ConcurrentHashMap (Thread-Safe Snapshot)"]
+        DS["DriverState<br/>AtomicReference Compare-And-Set (CAS)"]
+        QT["QuadTree<br/>Hierarchical 2D Spatial Pruning"]
+        CF["DispatchCostFunction<br/>Multi-Objective (ETA + Competition Density)"]
+        AM["AuctionMatcher<br/>Bertsekas Auction with ε-Scaling"]
+        GM["GreedyMatcher<br/>Progressive Radius Nearest Neighbor"]
     end
 
-    subgraph Matching["Spatial & Matching Engine"]
-        QT["QuadTree (Spatial 2D Index)"]
-        CF["DispatchCostFunction (Multi-Objective)"]
-        AM["AuctionMatcher (Bertsekas ε-Scaling)"]
-        GM["GreedyMatcher (Progressive Window)"]
+    subgraph StorageLayer["6. Persistence & Caching Layer"]
+        PG[("PostgreSQL 16 (:5434)<br/>ride_requests, assignments, trips<br/>Flyway Migrations V1–V3")]
+        RD[("Redis 7 (:6380)<br/>driver:{id}:location Hash<br/>30s TTL Lua Script (Non-Authoritative)")]
     end
 
-    subgraph Storage["Storage & Caching Layer"]
-        PG[("PostgreSQL 16 (:5434)<br/>ride_requests, assignments, trips")]
-        RD[("Redis 7 (:6380)<br/>driver:{id}:location (30s TTL Lua)")]
+    subgraph ObservabilityLayer["7. Observability Infrastructure"]
+        PROM["Prometheus (:9090)<br/>5s Actuator Pull via host.docker.internal"]
+        GRAF["Grafana (:3000)<br/>21-Panel Operations Dashboard"]
     end
 
-    subgraph Observability["Observability Infrastructure"]
-        PROM["Prometheus (:9090)<br/>5s Actuator Scrape"]
-        GRAF["Grafana (:3000)<br/>21-Panel Dispatch Dashboard"]
-    end
-
-    UI -->|HTTP /api/*| API
+    %% Client to Ingestion Flows
+    UI -->|HTTP /api/* Reverse Proxy| Ingestion
     Drivers -->|POST /ping| DC
     Riders -->|POST /request| RC
-    DC -->|Publish| TP1
-    RC -->|Publish| TP2
-    TP1 -->|Consume| DPC
-    TP2 -->|Consume| RRC
-    DPC --> DR
-    DPC -->|Lua 30s TTL| RD
-    DR --> DS
-    RRC --> DR
-    RRC --> AM
-    RRC --> GM
-    AM --> QT
-    AM --> CF
-    RRC -->|Transactional Persist| PG
-    TC -->|Lifecycle State Machine| PG
-    RSC -->|Query Status| PG
-    DC -->|Read-through Location| RD
-    ACT -->|Metrics Scrape| PROM
+
+    %% Ingestion to Kafka
+    DC -->|Publish Async| TP1
+    RC -->|Publish Async| TP2
+
+    %% Kafka to Consumers
+    TP1 -->|Consume Event| DPC
+    TP2 -->|Consume Batch| RRC
+
+    %% Telemetry Consumer Flow
+    DPC -->|Atomic Update| DR
+    DPC -->|Conditional Write (30s TTL Lua)| RD
+
+    %% Ride Consumer Matching Flow
+    RRC -->|1. Check Finalized State| PG
+    RRC -->|2. Snapshot Fresh Supply| DR
+    RRC -->|3. Delegate Matching| AM
+    AM -->|Spatial Prune| QT
+    AM -->|Compute Cost| CF
+    AM -.->|Fallback Strategy| GM
+    RRC -->|4. Atomic CAS Claim| DS
+
+    %% Persistence & Acknowledgment
+    RRC -->|5. Transactional Commit| PG
+    RRC -.->|6. Acknowledge Offset Strictly Post-Commit| TP2
+
+    %% Query & Lifecycle Flows
+    RSC -->|Read Request Status| PG
+    TC -->|Update Lifecycle State Machine| PG
+    TC -->|Release Claim on Finish| DS
+    DC -->|Read-Through Cache| RD
+    RD -.->|Fallback on Miss/Error| DR
+
+    %% Observability Scrape
+    ACT -->|Scrape Metrics| PROM
     PROM -->|Data Source| GRAF
 ```
 
 ---
 
-## 2. Prerequisites, Local Setup & Port Topology
+## Feature Showcase
 
-### 2.1 Prerequisites
-- **Java Development Kit (JDK):** Version 17 or higher (tested with Eclipse Adoptium OpenJDK 17.0.20)
+| Architectural Capability | Concrete Implementation | Verification & Testing Evidence |
+| :--- | :--- | :--- |
+| **Spatial Range Pruning** | Hierarchical 2D `QuadTree` subdivides geographic coordinates into quadrants (NW, NE, SW, SE). Bounding-box overlap tests prune spatial partitions before evaluating Haversine distance, eliminating $O(N)$ fleet scans. | `QuadTreeTest` (16 tests) and `BoundingBoxTest` (10 tests) verifying quadrant boundary splits, clamping, and query pruning. |
+| **Atomic CAS Claiming** | `DriverState` wraps state transitions in `AtomicReference<State>`. A driver is claimed atomically via `state.compareAndSet(current, claimed)`. If multiple requests target the same driver concurrently, exactly one succeeds and losers retry or fallback cleanly. | `DriverStateConcurrencyTest` (20 tests) executing concurrent multi-threaded claim races with zero double-bookings. |
+| **Claim-Preserving Telemetry** | When GPS pings arrive at `POST /ping`, `DriverRegistry` updates coordinates in-place using an atomic CAS loop on `AtomicReference<Driver>`. The authoritative `DriverState` reference is preserved, guaranteeing that telemetry updates never clear or overwrite an active claim. | `DriverPingConsumerTest` (16 tests) verifying `REGISTER`, `UPDATE`, and `AUTO` actions with claim preservation. |
+| **Dual Matching Engines** | Configurable via `dispatch.matching.strategy`: `AuctionMatcher` (Bertsekas Auction Algorithm with $\varepsilon$-scaling for global economic optimization) and `GreedyMatcher` (progressive spatial expansion across 1 km, 3 km, and 5 km). | `AuctionMatcherTest` (40 tests) verifying convergence and economic optimality; `GreedyMatcherTest` (15 tests) verifying window radius progression. |
+| **Two-Tier Idempotency** | **Tier 1 (In-Memory):** LRU cache (10,000 entries) and in-flight monitor filter redeliveries immediately. **Tier 2 (Database):** Batched pre-match query (`findFinalizedRequestIdsIn`) skips already-persisted requests before computing matches. | `RideRequestConsumerTest` (36 tests) and `AssignmentPersistenceServiceTest` (25 tests) verifying duplicate suppression. |
+| **Non-Authoritative Location Cache** | Redis 7 stores `driver:{id}:location` hashes with a 30-second TTL written via conditional Lua scripts. Queries (`GET /drivers/{id}/location`) read from Redis to offload heap traffic, with seamless fallback to in-memory `DriverRegistry`. | `RedisLocationCacheTest` (18 tests) and `RedisLocationCacheIT` (12 Testcontainers tests) verifying Lua TTL writes and fallback behavior. |
+| **Trip Lifecycle State Machine** | Deterministic state transitions (`DISPATCHED` $\to$ `EN_ROUTE` $\to$ `IN_PROGRESS` $\to$ `COMPLETED` / `CANCELLED`) exposed via `/en-route`, `/start`, `/complete`, and `/cancel`. Reaching terminal state automatically releases the driver's claim. | `TripControllerTest` (21 tests) and `TripLifecycleServiceTest` (19 tests) verifying valid transitions and invalid rejection. |
+| **End-to-End Observability** | Centralized `DispatchMetrics` facade wraps Micrometer counters, timers, and gauges. Prometheus scrapes `/actuator/prometheus` every 5 seconds. Pre-provisioned Grafana dashboard visualizes 21 live panels. | Phase 9.5 benchmark evaluation verifying $+0.06\text{ ms}$ mean dispatch overhead under 60 req/s load with 21 active panels. |
+
+---
+
+## Engineering Highlights
+
+### 1. Asynchronous Request-to-Dispatch Flow
+In synchronous dispatch architectures, client HTTP connections block while the application queries spatial indexes, computes distance matrices, and executes database writes. Under sudden traffic spikes, thread pools exhaust and clients experience connection timeouts.
+
+Rendezvous decouples this completely:
+- When a ride request hits `POST /request`, the REST producer validates payload bounds and publishes the event to Kafka topic `ride-requests` with `requestId` as the message key.
+- Upon durable broker confirmation, the client immediately receives HTTP `202 Accepted` with a tracking payload. Producer latency remains tightly bounded (mean $15.15\text{ ms}$, p99 $26\text{ ms}$ under peak load).
+- The matching consumer loop pulls batches asynchronously, snapshots fresh driver supply, executes spatial discovery, claims the winning driver, and commits the outcome to PostgreSQL. Clients poll `GET /api/requests/{requestId}` to retrieve the terminal match outcome.
+
+### 2. The Concurrency Problem Prevented by Atomic Driver Claiming
+In real-time ride-hailing, high-demand events (concerts, airport arrivals, sporting events) trigger hundreds of pickup requests in identical geographic coordinates within milliseconds.
+
+```
+Thread A (Request 1) ───► Read Driver D101 (AVAILABLE) ──────────────────────────► Overwrite D101: CLAIMED
+Thread B (Request 2) ────────► Read Driver D101 (AVAILABLE) ──► Overwrite D101: CLAIMED [DOUBLE BOOKING!]
+```
+
+Without synchronization, two concurrent requests both observe `Driver D101` as `AVAILABLE` and both write their claim. The driver receives two distinct passengers—a catastrophic lost-update anomaly.
+
+Using database-level pessimistic locking (`SELECT ... FOR UPDATE`) introduces severe disk I/O bottlenecks and transaction serialization delays that cripple dispatch throughput. Rendezvous solves this in memory using Java's `AtomicReference<State>`:
+
+```java
+// DriverState.java: Atomic Compare-And-Set (CAS) State Transition
+State current = state.get();
+if (current.status() != MatchStatus.AVAILABLE) {
+    return false; // Driver already claimed or unavailable
+}
+State claimed = new State(MatchStatus.CLAIMED, requestId);
+return state.compareAndSet(current, claimed); // Guaranteed single-winner CAS
+```
+
+Under hardware-level CAS instructions, exactly one CPU thread succeeds in swapping the pointer from `AVAILABLE` to `CLAIMED`. Competing threads fail instantly and can either evaluate the next candidate driver or report unfulfilled demand.
+
+> [!TIP]
+> **Empirical Concurrency Verification:**  
+> A dedicated race condition study comparing naive check-then-set against atomic CAS is documented in [docs/double-booking-experiment.md](docs/double-booking-experiment.md).
+
+### 3. Durability, Idempotency & Claim Compensation
+Because driver claiming occurs in memory via atomic CAS *before* the assignment is persisted to PostgreSQL, a database failure creates an architectural asymmetry: a driver is marked `CLAIMED` in memory, but no corresponding assignment exists in the database.
+
+Rendezvous resolves this through **Ownership-Safe Driver Claim Compensation**:
+- **Atomic CAS Release:** `DriverState.releaseClaim(requestId)` releases a driver back to `AVAILABLE` only if the driver's current claim matches the originating `requestId`. A delayed compensation attempt from an aborted request can never release a driver that was subsequently claimed by another request.
+- **Ambiguous Failure Reconciliation:** If an exception occurs during persistence (such as a database connection timeout), the consumer queries PostgreSQL:
+  - If the assignment committed with our driver, the event is acknowledged as an idempotent duplicate.
+  - If a competing concurrent delivery won with a different driver, our driver's claim is released and the event is acknowledged.
+  - If no assignment exists, rollback is confirmed: the driver claim is released, the in-flight reservation is cleared, and the exception propagates so Kafka's retry policy can act.
+- **Strict Post-Commit Acknowledgement:** Kafka offset acknowledgement (`ack.acknowledge()`) occurs strictly after the database transaction has committed, guaranteeing at-least-once delivery without data loss.
+
+### 4. Observability & Open-Loop Load Testing
+Traditional load testing tools often suffer from **Coordinated Omission**: when the system under test experiences a latency spike, the load generator waits for responses before sending new requests, artificially deflating measured tail latency.
+
+Rendezvous avoids this by using k6's open-loop `ramping-arrival-rate` executor:
+- New virtual users arrive on a strict schedule regardless of whether previous requests have completed, faithfully modeling real-world passenger behavior.
+- Ingestion latency (HTTP submission $\to$ `202 Accepted`) is measured independently from dispatch latency (HTTP submission $\to$ terminal status observed).
+- Actuator Micrometer metrics are scraped by Prometheus every 5 seconds without synthetic load distortion, validating a negligible $+0.06\text{ ms}$ dispatch overhead under peak load.
+
+### 5. An Honest Example of a Deferred Optimization: Kafka Poll Batching
+Under sustained 60 req/s load generation, the observed average Kafka poll batch size was **$1.13$** (with a peak of 3), remaining below the architectural design target of **$\ge 10.0$**.
+
+**Why this happens:**  
+Spring Kafka's default consumer configuration operates with `fetch.min.bytes=1`. Under arrival rates of 60 req/s (one request every $\sim 16.6\text{ ms}$), the consumer thread polls the broker every 2–4 ms and immediately drains whatever records are available rather than pausing to accumulate larger batches.
+
+**Why this matters & why it is deferred:**  
+While larger batches would reduce database transaction overhead by consolidating inserts, aggressively tuning `fetch.min.bytes` and `fetch.max.wait.ms` introduces artificial latency buffering under low-to-medium traffic. Because the current implementation easily achieved p99 dispatch latency of $66\text{ ms}$ (well below the $250\text{ ms}$ SLA) with 100% persistence, consumer batch accumulation was explicitly documented and **deferred** to a future consumer-tuning milestone rather than prematurely optimized.
+
+---
+
+# Part B — Technical Statistics & Engineering Evidence
+
+## Verified Technology Stack
+
+| Technology Domain | Component | Exact Verified Version | Architectural Role |
+| :--- | :--- | :---: | :--- |
+| **Backend Runtime** | Java Development Kit (JDK) | `17.0.20` (OpenJDK HotSpot) | Platform runtime environment; full tiered compilation (C1 + C2 JIT active) |
+| **Application Framework** | Spring Boot | `4.1.1` | Core REST APIs, dependency injection, application bootstrap, transaction management |
+| **Event Streaming** | Apache Kafka | `3.7.0` (KRaft Mode) | Asynchronous event streaming for driver telemetry and ride requests |
+| **Kafka Integration** | Spring Kafka | `3.3.0` | Container factories, manual offset acknowledgement, batch listener pipelines |
+| **Durable Persistence** | PostgreSQL | `16` | Relational storage for ride requests, assignments, and trip lifecycles (host port `5434`) |
+| **Database Migrations** | Flyway | `10.x` (Spring Boot BOM) | Automated, version-controlled schema migrations (`V1`, `V2`, `V3`) |
+| **Location Caching** | Redis | `7` | Non-authoritative driver location cache with 30s TTL Lua script writes (host port `6380`) |
+| **Frontend Framework** | React | `19.3.1` | Interactive dashboard, real-time map, fleet simulation, and dispatch panel |
+| **Frontend Language** | TypeScript | `~6.0.2` | Strict compile-time type safety across UI models, hooks, and API services |
+| **Build Tool & Bundler** | Vite | `^8.3.0` | Ultra-fast frontend development server and production bundler (host port `5173`) |
+| **Geospatial Mapping** | MapLibre GL | `^6.14.0` | WebGL-accelerated vector mapping and real-time vehicle coordinate rendering |
+| **Metrics Collector** | Prometheus | `v2.54.1` | Time-series metrics collection via 5-second Actuator scraping (host port `9090`) |
+| **Metrics Visualization** | Grafana | `11.2.0` | Pre-provisioned 21-panel operations dashboard with anonymous viewer access (host port `3000`) |
+| **Metrics Instrumentation** | Micrometer | Spring Boot BOM | Standardized application meters (counters, timers, gauges) via `DispatchMetrics` |
+| **Load Testing** | Grafana k6 | `v0.50+` | Open-loop arrival rate performance benchmarking and database integrity validation |
+| **Micro-Benchmarking** | OpenJDK JMH | `1.37` | Method-level algorithmic benchmarking for spatial and matching functions |
+
+---
+
+## Verified Engineering Statistics
+
+The following table summarizes verified statistics derived directly from automated test execution, schema definitions, and official benchmark evidence records:
+
+| Measurement Dimension | Verified Quantity | Measurement Context & Traceable Source | Evaluation Status |
+| :--- | :---: | :--- | :---: |
+| **Backend Test Suite** | **518 tests** | 33 test classes (465 unit/slice + 53 integration tests); Maven Surefire/Failsafe | **100% PASS** (0 failures, 0 errors, 0 skipped) |
+| **Frontend Test Suite** | **122 tests** | 11 test files executed via Vitest in jsdom environment | **100% PASS** (122/122 passing) |
+| **Total Automated Tests** | **640 tests** | Combined automated test coverage across full backend and frontend codebases | **100% PASS** |
+| **Benchmark Workload** | **4,424 requests** | 85-second open-loop test ramping from 10 to 60 req/s sustained (`k6/high-load.js`) | **EXECUTED** |
+| **HTTP Ingestion Availability** | **100.00%** | 4,424 / 4,424 requests accepted with HTTP `202 Accepted` receipts | **PASS** ($\ge 99.9\%$ SLA) |
+| **Ingestion Latency (p95)** | **24 ms** | Client HTTP POST submission to HTTP `202 Accepted` broker confirmation | **PASS** ($< 40\text{ ms}$ SLA) |
+| **Ingestion Latency (p99)** | **26 ms** | Client HTTP POST submission to HTTP `202 Accepted` broker confirmation | **PASS** ($< 80\text{ ms}$ SLA) |
+| **Ingestion Latency (Mean)** | **15.15 ms** | Average producer acceptance latency across 4,424 requests | **NOMINAL** |
+| **Dispatch Latency (p95)** | **63 ms** | Client HTTP POST submission to terminal `MATCHED` status observed | **PASS** ($< 150\text{ ms}$ SLA) |
+| **Dispatch Latency (p99)** | **66 ms** | Client HTTP POST submission to terminal `MATCHED` status observed | **PASS** ($< 250\text{ ms}$ SLA) |
+| **Dispatch Latency (Mean)** | **54.61 ms** | Average end-to-end matching and persistence latency across 4,424 requests | **NOMINAL** |
+| **Dispatch Failures / Timeouts** | **0** | Zero dropped iterations, zero orphaned claims, zero HTTP 5xx errors | **PASS** ($0$ SLA) |
+| **Durable Ingestion Persistence** | **100.00%** | Exactly $+4,424$ rows verified in PostgreSQL `ride_requests` and `assignments` | **PASS** ($100\%$ SLA) |
+| **Fleet Integrity** | **0 double-bookings** | Exactly 0 double-booked drivers, 0 orphaned in-memory reservations | **PASS** ($0$ SLA) |
+| **Grafana Dashboard Panels** | **21 panels** | Provisioned dashboard covering ingestion, matches, latency, batching, DB, cache | **VERIFIED** |
+| **Average Kafka Poll Batch Size** | **1.13** (Peak: 3) | Measured consumer poll batch size under sustained 60 req/s arrival rate | **DEFERRED** (Target $\ge 10.0$) |
+
+> [!NOTE]
+> **Measurement Notice:**  
+> Benchmark statistics reflect the empirical execution record documented in the [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) under full C2 JIT optimization. They serve as historical performance evidence for the specified test run and are not universal guarantees for arbitrary production topologies. The average poll-batch target of $\ge 10.0$ remains an explicitly deferred optimization.
+
+---
+
+## Performance & Benchmark Evidence
+
+To evaluate the operational impact of real-time metrics collection, the system was benchmarked under identical high-load conditions before and after enabling the Phase 9 observability infrastructure.
+
+### Comparative Benchmark Results (Phase 8 vs. Phase 9.5)
+
+| Benchmark Metric | Phase 8 Baseline (No Scrape) | Phase 9.5 Observability (Active Scrape) | Architectural SLA | Measured Delta |
+| :--- | :---: | :---: | :---: | :---: |
+| **Total Requests Submitted** | 4,424 | 4,424 | — | Identical workload |
+| **HTTP Acceptance Rate** | 100.00% (4,424 / 4,424) | 100.00% (4,424 / 4,424) | $\ge 99.9\%$ | $0.00\%$ delta |
+| **Ingestion Latency (p95)** | $24\text{ ms}$ | $24\text{ ms}$ | $< 40\text{ ms}$ | $0\text{ ms}$ |
+| **Ingestion Latency (p99)** | $28\text{ ms}$ | $26\text{ ms}$ | $< 80\text{ ms}$ | $-2\text{ ms}$ |
+| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | $15.15\text{ ms}$ | — | $+0.21\text{ ms}$ overhead |
+| **Dispatch Latency (p95)** | $64\text{ ms}$ | $63\text{ ms}$ | $< 150\text{ ms}$ | $-1\text{ ms}$ |
+| **Dispatch Latency (p99)** | $70\text{ ms}$ | $66\text{ ms}$ | $< 250\text{ ms}$ | $-4\text{ ms}$ |
+| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | $54.61\text{ ms}$ | — | $+0.06\text{ ms}$ overhead |
+| **Durable Ingestion Persistence** | 100.00% (+4,424 rows) | 100.00% (+4,424 rows) | 100% | $100\%$ durable |
+| **Dispatch Failures / Timeouts** | 0 | 0 | 0 | 0 errors |
+| **Observed Mean Batch Size** | 1.12 | 1.13 (Peak: 3) | $\ge 10.0$ | Deferred target |
+| **Active Prometheus Scraping** | Disabled | Enabled (every 5 seconds) | — | Live Actuator pull |
+| **Active Grafana Panels** | 0 | 21 provisioned panels | — | Active monitoring |
+
+### Methodology & Metric Definitions
+- **Workload Profile (`k6/high-load.js`):** Open-loop arrival rate starting with a 15-second ramp (10 $\to$ 60 req/s), followed by a 60-second steady-state window at 60 req/s, and a 10-second drain window.
+- **Ingestion Latency:** Measures the duration from client HTTP POST transmission to receipt of HTTP `202 Accepted` following Kafka broker confirmation.
+- **Dispatch Latency:** Measures the total elapsed time from client HTTP POST transmission to terminal `MATCHED` status confirmation observed via polling or database state.
+- **No Causal Speedup Claim:** Minor latency decreases at tail percentiles (e.g. p99 dispatch dropping from $70\text{ ms}$ to $66\text{ ms}$) fall within normal operating jitter and are not claimed as causal performance improvements. Rather, the empirical data confirms that real-time Micrometer instrumentation and continuous 5-second Prometheus scraping introduce negligible overhead ($+0.06\text{ ms}$ mean dispatch delta).
+
+For complete technical logs, JIT configurations, and database query baselines, see:
+- [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md)
+- [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md)
+
+---
+
+## Engineering Decisions & Trade-Offs
+
+| Technology Choice | Rationale & Alternatives Considered | Trade-Off Accepted |
+| :--- | :--- | :--- |
+| **Apache Kafka for Ingestion** | Decouples HTTP ingress from matching computation, buffering sudden demand spikes. Message keys (`driverId`, `requestId`) preserve partition affinity and ordering. *Alternatives considered:* Synchronous REST (fails under load spikes) and RabbitMQ (lacks native partition-key batch ordering). | Increased operational complexity (Zookeeper/KRaft coordination, offset commit semantics, and consumer group management). |
+| **Hierarchical 2D QuadTree** | Indexes spatial driver coordinates in memory. Spatial bounding-box pruning reduces candidate discovery from an $O(N)$ full-fleet scan to $O(\log N)$ quadrant traversals. *Alternatives considered:* PostGIS queries (adds database network hops to inner matching loop) and linear array scans (poor scalability beyond $1,000$ drivers). | Requires single-JVM in-memory indexing; does not support distributed spatial partitioning across multiple instances without external sharding. |
+| **Atomic Compare-And-Set (CAS)** | Manages driver claiming via `AtomicReference<State>` in `DriverState`. Concurrency races are resolved at the hardware CPU instruction level with zero lock contention. *Alternatives considered:* Pessimistic database row locks (`SELECT ... FOR UPDATE` introduces high latency) and synchronized Java methods (creates thread convoying). | Requires claim compensation logic to reconcile in-memory claims with database transaction rollbacks if persistence fails. |
+| **PostgreSQL & Flyway for State** | Stores requests, assignments, and trip lifecycles with strict ACID guarantees, foreign keys, and unique constraints. Flyway migrations (`V1`–`V3`) maintain deterministic schema version control. *Alternatives considered:* Pure in-memory state (risks catastrophic data loss on crash). | Database writes represent the primary latency component in the dispatch pipeline (~40–50 ms of the 54 ms mean dispatch latency). |
+| **Redis Non-Authoritative Cache** | Telemetry pings write to Redis hash key `driver:{id}:location` with a 30s TTL via conditional Lua scripts. Offloads high-frequency driver location lookups from the application heap. *Alternatives considered:* Querying PostgreSQL (saturates database with GPS pings) and authoritative Redis (risks cache inconsistency). | Redis operates strictly as a read-through cache; the in-memory `DriverRegistry` remains the authoritative source of truth for matching. |
+| **Micrometer, Prometheus & Grafana** | Standardized metric collection via Spring Boot Actuator with pre-provisioned Grafana dashboards. Validated to introduce only $+0.06\text{ ms}$ dispatch overhead under peak load. *Alternatives considered:* Third-party APM agents (proprietary, heavier memory footprint) and ad-hoc log parsing. | Requires running two additional infrastructure containers (`prom/prometheus` and `grafana/grafana`) during local development. |
+
+---
+
+## Testing, Setup & Verification
+
+### 1. Prerequisites
+- **Java Development Kit (JDK):** Version 17+ (tested with Eclipse Adoptium OpenJDK 17.0.20)
 - **Build Tool:** Apache Maven 3.9+ (or the included `./mvnw` / `mvnw.cmd` wrapper)
-- **Node.js & npm:** Node.js 18+ (tested with v22.13.1) and npm 9+ (tested with 11.6.0) for frontend development
+- **Node.js & npm:** Node.js 18+ (tested with v22.13.1) and npm 9+ (tested with 11.6.0)
 - **Container Runtime:** Docker Engine and Docker Compose v2+
-- **Load Testing Tool (Optional):** [k6](https://k6.io/) v0.50+ for executing benchmark scenarios
+- **Load Testing Tool (Optional):** [k6](https://k6.io/) v0.50+ for benchmark scenarios
 
-### 2.2 Infrastructure Services & Port Allocation
+### 2. Infrastructure Services & Port Allocation
 
 The platform components communicate across the following host and container ports:
 
 | Service | Component | Host Port | Container Port | Protocol / Endpoints | Operational Purpose |
 | :--- | :--- | :---: | :---: | :--- | :--- |
 | **Backend** | Spring Boot (`dispatch`) | `8080` | `8080` (host) | HTTP (`/api/*`, `/actuator/*`) | REST ingestion, Kafka producers/consumers, spatial matching engine |
-| **Frontend** | React + Vite (`rendezvous-frontend`) | `5173` | `5173` (host) | HTTP (`/`) | Real-time interactive UI, MapLibre GL map, fleet simulation, reverse proxy `/api` |
+| **Frontend** | React + Vite (`rendezvous-frontend`) | `5173` | `5173` (host) | HTTP (`/`) | Interactive UI, MapLibre GL map, fleet simulation, reverse proxy `/api` |
 | **PostgreSQL** | Database (`postgres:16`) | `5434` | `5432` | JDBC (`dispatch_db`) | Durable request status, assignments, and trip lifecycle tables (Flyway V1–V3) |
 | **Redis** | Cache (`redis:7`) | `6380` | `6379` | RESP | Non-authoritative location cache (`driver:{id}:location`, 30s TTL, Lua script) |
 | **Kafka** | Message Broker (`apache/kafka:3.7.0`) | `9092` | `9092` | PLAINTEXT | Asynchronous event streaming (`driver-pings`, `ride-requests`) |
@@ -114,612 +417,145 @@ The platform components communicate across the following host and container port
 
 > [!IMPORTANT]
 > **PostgreSQL Host Port Mapping:**  
-> The PostgreSQL container maps host port **`5434`** to container port `5432` to avoid conflicting with any default local PostgreSQL instance on port `5432`. The backend connection URL is configured as `jdbc:postgresql://localhost:5434/dispatch_db`.
+> The PostgreSQL container maps host port **`5434`** to container port `5432` to prevent conflicts with any local PostgreSQL instance running on default port `5432`. The backend connection URL is configured as `jdbc:postgresql://localhost:5434/dispatch_db`.
 
 ---
 
-### 2.3 Environment Configuration
+### 3. Local Setup & Execution Commands
 
-The repository provides a template environment file (`.env.example`) containing non-sensitive variable definitions and placeholders.
-
-1. **Create Local Environment File:**
-   ```bash
-   cp .env.example .env
-   ```
-2. **Configure Local Variables:**
-   Open `.env` in an editor and replace placeholder values with your desired local credentials:
-   ```env
-   GRAFANA_ADMIN_USER=admin
-   GRAFANA_ADMIN_PASSWORD=<change-me-to-a-secure-password>
-   ```
-   > [!WARNING]
-   > `.env` is ignored by Git and must **never** be committed to version control. The repository tracks `.env.example` with placeholders only.
-
-3. **Backend Configuration Reference (`application.properties`):**
-   The Spring Boot application automatically resolves default connections to local Docker Compose services, which can be overridden via environment variables:
-
-   | Environment Variable | Default Value | Description |
-   | :--- | :--- | :--- |
-   | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5434/dispatch_db?options=-c%20timezone=UTC` | PostgreSQL JDBC connection URL |
-   | `SPRING_DATASOURCE_USERNAME` | `dispatch_user` | PostgreSQL database username |
-   | `SPRING_DATASOURCE_PASSWORD` | `dispatch_password` | PostgreSQL database password |
-   | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap broker list |
-   | `SPRING_REDIS_HOST` | `localhost` | Redis server hostname |
-   | `SPRING_REDIS_PORT` | `6380` | Redis server port |
-   | `SPRING_REDIS_PASSWORD` | *(empty)* | Optional Redis password |
-   | `GRAFANA_ADMIN_USER` | `admin` | Grafana admin username |
-   | `GRAFANA_ADMIN_PASSWORD` | *(required in .env)* | Grafana admin password |
-
----
-
-### 2.4 Local Infrastructure Startup (Docker Compose)
-
-Start all five infrastructure services (PostgreSQL, Redis, Kafka, Prometheus, and Grafana):
-
+#### Step 1: Environment Configuration
+Create a local `.env` file from the provided `.env.example` template:
 ```bash
-# Start all infrastructure containers in detached mode
+# Copy template environment file
+cp .env.example .env
+```
+Open `.env` in an editor and set your desired local Grafana administrator password:
+```env
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=<change-me-to-a-secure-password>
+```
+*(Note: `.env` is ignored by Git and must never be committed).*
+
+#### Step 2: Start Infrastructure Containers
+```bash
+# Start PostgreSQL, Redis, Kafka, Prometheus, and Grafana in detached mode
 docker compose up -d
 
-# Verify container status and port mappings
+# Verify container health and port mappings
 docker compose ps
 ```
 
-To stop infrastructure containers without deleting volume data:
+#### Step 3: Build & Run the Spring Boot Backend
 ```bash
-docker compose stop
-```
-
-To tear down containers and delete attached volumes:
-```bash
-docker compose down -v
-```
-
----
-
-### 2.5 Backend Build & Run
-
-Ensure the infrastructure containers are running before starting the Spring Boot backend:
-
-```bash
-# Package the application (skipping tests for quick startup)
+# Package the backend (skipping tests for quick startup)
 ./mvnw clean package -DskipTests
 
-# Run the Spring Boot application locally (starts on http://localhost:8080)
+# Run the Spring Boot application (starts on http://localhost:8080)
 ./mvnw spring-boot:run
 ```
+Upon startup, the application runs Flyway schema migrations (`V1`, `V2`, `V3`), connects to Redis, binds Kafka topics, and exposes Actuator probes.
 
-The application will:
-1. Connect to PostgreSQL on port `5434` and run Flyway schema migrations (`V1`, `V2`, `V3`).
-2. Connect to Redis on port `6380` to initialize the location cache.
-3. Connect to Kafka on port `9092` and verify topic bindings.
-4. Expose Actuator health probes at `http://localhost:8080/actuator/health` and Prometheus metrics at `http://localhost:8080/actuator/prometheus`.
-
----
-
-### 2.6 Frontend Setup & Run
-
-The interactive frontend is built with React 19, TypeScript, Vite, and MapLibre GL.
-
+#### Step 4: Run the Interactive Frontend
 ```bash
 # Navigate to the frontend directory
 cd frontend
 
-# Install dependencies
+# Install Node dependencies
 npm install
 
 # Start the Vite development server (starts on http://localhost:5173)
 npm run dev
 ```
+Navigate to **`http://localhost:5173`** to access the interactive map, request dispatch journeys, and monitor simulated fleets. The Vite dev server automatically proxies all `/api/*` calls to the Spring Boot backend at `http://localhost:8080`.
 
-The Vite dev server runs at **`http://localhost:5173`** and includes a built-in reverse proxy forwarding all `/api/*` requests to the Spring Boot backend at `http://localhost:8080`.
+#### Step 5: Access Prometheus & Grafana Dashboards
+- **Prometheus UI:** Navigate to **`http://localhost:9090`** to query live metrics (e.g. `dispatch_requests_total`, `dispatch_matches_total`).
+- **Grafana Dashboard:** Navigate to **`http://localhost:3000`**. Anonymous viewer access is enabled by default. To edit panels, log in using username `admin` and your configured `GRAFANA_ADMIN_PASSWORD`. Open the pre-provisioned dashboard: **"Dispatch Matching Engine Overview"** (21 active panels).
 
-Additional frontend scripts:
-```bash
-# Run the complete Vitest test suite in single-run mode
-npm test
-
-# Run tests in interactive watch mode
-npm run test:watch
-
-# Perform strict TypeScript type checking without emitting files
-npm run typecheck
-
-# Build the production bundle
-npm run build
-
-# Preview the production build locally
-npm run preview
-```
-
----
-
-### 2.7 Observability (Prometheus & Grafana)
-
-The platform includes pre-configured monitoring services:
-
-1. **Prometheus UI:** Navigate to **`http://localhost:9090`**.
-   - Scrapes the backend application via `host.docker.internal:8080/actuator/prometheus` every 5 seconds.
-   - You can query raw metrics such as `dispatch_requests_total`, `dispatch_matches_total`, and `dispatch_batch_duration_seconds`.
-
-2. **Grafana Operations Dashboard:** Navigate to **`http://localhost:3000`**.
-   - **Anonymous Viewer:** Grafana is configured with anonymous access (`GF_AUTH_ANONYMOUS_ENABLED=true`), enabling direct access to the dashboard without entering credentials.
-   - **Admin Access:** To edit panels or change settings, log in using username `admin` and the password configured in your `.env` file (`GRAFANA_ADMIN_PASSWORD`).
-   - **Provisioned Dashboard:** The pre-loaded dashboard (**"Dispatch Matching Engine Overview"**) provides 21 panels visualizing:
-     - End-to-end ingestion and match rates.
-     - Atomic driver claim success and contention rates.
-     - End-to-end dispatch and ingestion latency distributions (p50, p95, p99).
-     - Adaptive Kafka consumer batch sizes and processing durations.
-     - Database persistence throughput and error counts.
-     - Non-authoritative Redis cache hit, miss, and error ratios.
-
----
-
-### 2.8 Load Testing & Benchmarking (k6)
-
-The project includes an open-loop load testing harness built with [k6](https://k6.io/) to evaluate latency, throughput, and database integrity under load.
-
-#### Step 1: Seed the Driver Pool
-Before executing benchmarks, populate the in-memory registry and Redis cache with simulated drivers centered around Hyderabad coordinates:
+#### Step 6: Quick Ingestion & Dispatch Verification (curl)
+Verify end-to-end functionality across ingestion, matching, polling, and lifecycle transitions:
 
 ```bash
-# Seed 200 fresh drivers (idempotent, calls POST /ping with action: AUTO)
-node scripts/seed-drivers.js --count 200
-
-# Optional: Run a continuous background heartbeat to refresh driver timestamps every 30s
-node scripts/seed-drivers.js --count 200 --loop --interval 30
-```
-
-#### Step 2: Execute Scenarios
-```bash
-# Low-Load Benchmark: constant arrival rate at 3 req/s for 60 seconds
-k6 run k6/low-load.js
-
-# High-Load Benchmark: ramping arrival rate from 10 to 60 req/s sustained for 60 seconds
-k6 run k6/high-load.js
-
-# Run with a custom base URL:
-k6 run -e DISPATCH_BASE_URL=http://localhost:8080 k6/high-load.js
-```
-
-For detailed methodology, JIT configuration, and empirical findings, see the [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) and the [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md).
-
----
-
-## 3. Package & Module Structure
-
-The project is structured under `com.aagosh.dispatch` and `frontend/`:
-
-```
-c:\Aagosh\CODE\JAVA\dispatch\
-├── src/main/java/com/aagosh/dispatch/
-│   ├── DispatchApplication.java            # Spring Boot application bootstrap
-│   ├── api/                                # REST controllers, DTOs, and exception handlers
-│   │   ├── DriverController.java          # REST producer for /ping, /register, GET /drivers/{id}/location
-│   │   ├── RideController.java            # REST producer for /request (202 Accepted)
-│   │   ├── RequestStatusController.java   # REST query for GET /api/requests/{id} & route aliases
-│   │   ├── TripController.java            # REST controller for /api/trips/{id} & /trips/{id} lifecycle
-│   │   ├── TelemetryController.java       # REST controller for /api/telemetry/batches & /telemetry/batches
-│   │   ├── DriverPingRequest.java         # Driver telemetry payload DTO
-│   │   ├── DriverPingAcceptedResponse.java# Async 202 response for telemetry
-│   │   ├── DriverLocationResponse.java    # Driver location response DTO
-│   │   ├── RideRequestDto.java            # Ride match request payload DTO
-│   │   ├── RideAcceptedResponse.java      # Async 202 response for ride submission
-│   │   ├── RequestStatusResponse.java     # Request polling outcome DTO
-│   │   ├── TripLifecycleRequest.java      # Trip transition request DTO
-│   │   ├── TripLifecycleResponse.java     # Trip transition response DTO
-│   │   ├── BatchTelemetryResponse.java    # Batch processing metrics DTO
-│   │   ├── ApiErrorResponse.java          # RFC 7807-style error payload DTO
-│   │   └── GlobalExceptionHandler.java    # @RestControllerAdvice for validation & runtime errors
-│   ├── cache/                             # Distributed caching layer
-│   │   └── RedisLocationCache.java        # Redis template wrapper (30s TTL, Lua conditional write)
-│   ├── config/                             # Spring bean configuration
-│   │   ├── DispatchConfig.java            # Matching strategy & cost configuration beans
-│   │   ├── DriverFreshnessConfig.java     # Driver staleness threshold configuration (60s default)
-│   │   ├── KafkaConfig.java               # KafkaAdmin, ProducerFactory, ConsumerFactory, Topics
-│   │   ├── KafkaTopics.java               # Topic name constants
-│   │   └── RedisConfig.java               # RedisConnectionFactory & StringRedisTemplate setup
-│   ├── domain/                             # Core domain entities and concurrency primitives
-│   │   ├── Driver.java                    # Driver record with ID, GeoPoint, and DriverState
-│   │   ├── DriverRegistry.java            # Thread-safe in-memory registry (ConcurrentHashMap)
-│   │   ├── DriverState.java               # AtomicReference-backed CAS claiming state machine
-│   │   ├── GeoPoint.java                  # Validated coordinate record (lat/lon)
-│   │   ├── MatchStatus.java               # Enum: AVAILABLE, CLAIMED, UNAVAILABLE
-│   │   ├── RideRequest.java               # Ride request domain record
-│   │   └── TripStatus.java                # Enum: DISPATCHED, EN_ROUTE, IN_PROGRESS, COMPLETED, CANCELLED
-│   ├── matching/                           # Spatial indexing and matching algorithms
-│   │   ├── Assignment.java                # Immutable match pair (Driver, RideRequest, cost)
-│   │   ├── AuctionMatcher.java            # Bertsekas' Auction Algorithm with ε-scaling
-│   │   ├── DispatchCostConfig.java        # Cost function weights and normalizers
-│   │   ├── DispatchCostFunction.java      # Multi-objective normalized cost calculator
-│   │   ├── GreedyMatcher.java             # Progressive-radius nearest-neighbor matcher
-│   │   ├── Matcher.java                   # Core matching strategy interface
-│   │   └── RequestDensityIndex.java       # Spatial density index for competition cost
-│   ├── messaging/                          # Kafka consumers & batch controllers
-│   │   ├── AdaptiveWindowController.java  # Adaptive batching controller (10ms-200ms window)
-│   │   ├── DriverPingConsumer.java        # Consumes driver-pings, updates registry & Redis
-│   │   └── RideRequestConsumer.java       # Consumes ride-requests, matches & persists atomically
-│   ├── metrics/                            # Observability & Micrometer instrumentation
-│   │   └── DispatchMetrics.java           # Centralized metrics facade (meters, counters, gauges)
-│   ├── persistence/                        # Durable state & transactional persistence
-│   │   ├── AssignmentEntity.java          # JPA entity for assignments table
-│   │   ├── AssignmentPersistenceService.java # Transactional boundary & claim reconciliation
-│   │   ├── AssignmentRepository.java      # Spring Data JPA repository for assignments
-│   │   ├── PersistOutcome.java            # Outcome enum (PERSISTED, DUPLICATE, FAILURE)
-│   │   ├── RideRequestEntity.java         # JPA entity for ride_requests table
-│   │   ├── RideRequestRepository.java     # Spring Data JPA repository for ride requests
-│   │   ├── TripEntity.java                # JPA entity for trips table
-│   │   ├── TripLifecycleService.java      # Trip transition service & driver release
-│   │   └── TripRepository.java            # Spring Data JPA repository for trips
-│   └── spatial/                            # Spatial indexing primitives
-│       ├── BoundingBox.java               # Coordinate bounding box with intersection logic
-│       └── QuadTree.java                  # Hierarchical 2D spatial index for proximity pruning
-│
-├── src/main/resources/
-│   ├── application.properties             # Spring Boot properties, datasource, kafka, redis, metrics
-│   └── db/migration/                      # Flyway schema migrations
-│       ├── V1__create_ride_requests.sql   # ride_requests table with UNIQUE(request_id)
-│       ├── V2__create_assignments.sql     # assignments table with UNIQUE(request_id) & FK
-│       └── V3__create_trips.sql           # trips table with status tracking and foreign keys
-│
-├── frontend/                              # Interactive web application (React 19 + TypeScript + Vite)
-│   ├── package.json                       # Scripts: dev, build, test, typecheck
-│   ├── vite.config.ts                     # Port 5173, reverse proxy /api -> http://localhost:8080
-│   └── src/                               # UI components, hooks, services, MapLibre GL map
-│
-├── infra/                                 # Infrastructure provisioning
-│   ├── prometheus/prometheus.yml          # Prometheus scrape configuration (5s interval)
-│   └── grafana/provisioning/              # Datasource & 21-panel dashboard provisioning
-│
-├── k6/                                    # Load testing scenarios
-│   ├── common.js                          # Shared k6 utilities, payloads, telemetry polling
-│   ├── low-load.js                        # Constant arrival rate (3 req/s)
-│   └── high-load.js                       # Ramping arrival rate (10 -> 60 req/s)
-│
-└── scripts/
-    └── seed-drivers.js                    # Pre-test driver seeding and freshness refresh utility
-```
-
----
-
-## 4. End-to-End Request Flows
-
-### Flow 1: Driver Ingestion & Telemetry (`POST /ping`)
-1. Client submits driver ID and GPS coordinates.
-2. `DriverController` synchronously validates coordinates (`[-90, 90]`, `[-180, 180]`).
-3. Payload is published to Kafka topic `driver-pings` using `driverId` as message key (preserving partition affinity).
-4. On durable broker confirmation, HTTP `202 Accepted` is returned. If Kafka fails, HTTP `503 Service Unavailable` is returned.
-5. `DriverPingConsumer` processes the event asynchronously:
-   - Updates coordinates via atomic CAS loop on `AtomicReference<Driver>`.
-   - Strictly preserves the authoritative `DriverState` instance, ensuring that telemetry never resets an active ride claim.
-   - Updates the non-authoritative Redis location cache (`driver:{id}:location`) with a 30-second TTL using a conditional Lua script.
-
-### Flow 2: Ride Dispatch Matching (`POST /request`)
-1. Client submits pickup location and request ID.
-2. `RideController` synchronously validates input and publishes to `ride-requests` with `requestId` as message key.
-3. On broker confirmation, HTTP `202 Accepted` is returned.
-4. `RideRequestConsumer` receives the batch:
-   - Fast-path checks in-memory LRU cache (`processedRequests`) to skip redelivered duplicates.
-   - Queries PostgreSQL (`findFinalizedRequestIdsIn`) to eliminate previously persisted requests.
-   - Snapshots fresh drivers ($\le 60\text{s}$ staleness) from `DriverRegistry`.
-   - Invokes the configured `Matcher` (`AuctionMatcher` by default).
-   - If an assignment is computed, claims the driver atomically via `DriverState.tryClaim(requestId)`.
-   - Persists the assignment and updates the request status to `MATCHED` within a single database transaction.
-   - If no driver is found, records `NO_DRIVERS` in PostgreSQL.
-   - Acknowledges Kafka offsets strictly after the database commit completes.
-
-### Flow 3: Request Status Polling (`GET /api/requests/{requestId}`)
-1. Client polls request outcome using the returned `requestId`.
-2. `RequestStatusController` checks PostgreSQL `ride_requests` and `assignments` tables.
-3. Returns `PENDING` (still in matching pipeline), `MATCHED` (with assigned `driverId` and pickup distance), or `NO_DRIVERS` (terminal exhausted outcome).
-
-### Flow 4: Driver Location Lookup (`GET /drivers/{driverId}/location` & `GET /api/drivers/{driverId}/location`)
-1. Client queries the latest location of a specific driver. The canonical route is `GET /drivers/{driverId}/location` (on `DriverController`), and a compatible route alias is registered at `GET /api/drivers/{driverId}/location` (on `RequestStatusController`), enabling direct access through the frontend Vite `/api/*` reverse proxy.
-2. `DriverController` first attempts a read-through query against the non-authoritative Redis cache (`driver:{id}:location`).
-3. If Redis experiences a cache miss or connection failure, the controller falls back seamlessly to the in-memory `DriverRegistry`.
-4. If a fresh location ($\le 60\text{s}$) is available, HTTP `200 OK` is returned with `fresh: true`. If the driver is registered but stale or absent, HTTP `409 Conflict` is returned with `fresh: false`. If unregistered, HTTP `404 Not Found` is returned.
-
-### Flow 5: Trip Lifecycle Transitions (`POST /api/trips/{requestId}/*` & `POST /trips/{requestId}/*`)
-1. Client transitions trip states: `/en-route` $\to$ `/start` (in progress) $\to$ `/complete` (completed) or `/cancel` (cancelled). Both `/api/trips/{requestId}/*` and root-relative `/trips/{requestId}/*` are supported.
-2. `TripLifecycleService` validates state transition legality and persists audit timestamps in PostgreSQL.
-3. Upon reaching a terminal state (`COMPLETED` or `CANCELLED`), the service automatically releases the driver's claim in `DriverState`, returning the driver to `AVAILABLE` for future matching.
-
----
-
-## 5. Core Algorithms & Cost Model
-
-### 5.1 Spatial Indexing (`QuadTree` & Geographic Distance)
-- **Indexing:** A hierarchical 2D `QuadTree` indexes driver coordinates into quadrants (NW, NE, SW, SE).
-- **Pruning:** Spatial range queries test bounding-box overlap before descending, avoiding full-fleet linear scans.
-- **Distance Metric:** Great-circle geographic distance is computed using the spherical Haversine formula over WGS84 coordinates ($R = 6371.0088\text{ km}$).
-
-### 5.2 Matching Strategies (`AuctionMatcher` vs. `GreedyMatcher`)
-- **`AuctionMatcher` (Bertsekas Algorithm):**
-  - Formulates driver-request matching as an asymmetric assignment problem.
-  - Drivers act as objects with economic "prices"; ride requests act as bidders computing net benefit $\text{value} - \text{price}$.
-  - Uses $\varepsilon$-scaling to guarantee convergence to an almost-optimal global assignment while avoiding cycling in degenerate cost landscapes.
-- **`GreedyMatcher`:**
-  - Evaluates candidate drivers within expanding progressive spatial windows ($1\text{ km} \to 3\text{ km} \to 5\text{ km}$).
-  - Assigns the single lowest-cost driver available.
-
-### 5.3 Multi-Objective Cost Model (`DispatchCostFunction`)
-The composite dispatch cost balances customer pickup time and supply preservation:
-
-$$\text{Total Cost} = w_{\text{eta}} \cdot \text{Normalized ETA} + w_{\text{density}} \cdot \text{Normalized Density} + w_{\text{opportunity}} \cdot \text{Normalized Opportunity}$$
-
-- **Normalized ETA:** Straight-line travel time ($\text{Haversine Distance} \div 60\text{ km/h}$), normalized over reference maximum ($30\text{ minutes}$) and clamped to $[0, 1]$.
-- **Normalized Competition Density:** Count of unmatched ride pickup points within $1\text{ km}$ of the candidate driver, normalized by maximum density reference ($10\text{ requests}$) and clamped to $[0, 1]$.
-- **Deferred Opportunity Cost:** Evaluates to neutral **`0.0`**. The current domain model deliberately omits trip destinations and pricing tiers. Setting $w_{\text{opportunity}} = 0.0$ is supported and recommended; $w_{\text{opportunity}} > 0$ is preserved for forward compatibility.
-
----
-
-## 6. Concurrency Architecture & Delivery Semantics
-
-### 6.1 Atomic Driver Claiming (CAS)
-In high-demand scenarios, multiple ride requests simultaneously compete for the nearest available driver. The system enforces zero double-booking via `AtomicReference<State>` in `DriverState`:
-
-```java
-State current = state.get();
-if (current.status() != MatchStatus.AVAILABLE) {
-    return false;
-}
-State claimed = new State(MatchStatus.CLAIMED, requestId);
-return state.compareAndSet(current, claimed);
-```
-Atomic compare-and-set (CAS) guarantees that only one request wins the claim. Losing requests fail cleanly without partial writes.
-
-### 6.2 Location Updates Preserving Driver State
-When a driver's GPS device pings `/ping`, their location updates in memory:
-- `DriverRegistry` updates the driver's location record using a CAS loop on `AtomicReference<Driver>`.
-- The new `Driver` record reuses the existing `DriverState` reference.
-- **Invariant:** A telemetry ping arriving while a driver is in the `CLAIMED` status **never** resets them back to `AVAILABLE`.
-
-### 6.3 Durable Persistence & Schema Migrations
-The dispatch service pairs in-memory speed with durable PostgreSQL persistence via Spring Data JPA and Flyway:
-- **`ride_requests` Table:** Persists `request_id` (`UNIQUE`), pickup coordinates, durable status (`PENDING`, `MATCHED`, `NO_DRIVERS`), and audit timestamps.
-- **`assignments` Table:** Persists generated primary key, `request_id` (`UNIQUE`, FK to `ride_requests`), `driver_id`, assignment `cost`, and `assigned_at`.
-- **`trips` Table:** Persists `trip_id`, `request_id` (`UNIQUE`), `driver_id`, lifecycle status (`DISPATCHED`, `EN_ROUTE`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`), and stage timestamps.
-- **Flyway Authority:** Production schema migrations (`V1__create_ride_requests.sql`, `V2__create_assignments.sql`, `V3__create_trips.sql`) own table definitions. Hibernate DDL auto-generation is disabled (`spring.jpa.hibernate.ddl-auto=validate`).
-
-### 6.4 Non-Authoritative Redis Location Cache
-Redis operates strictly as a non-authoritative read cache:
-- Telemetry pings update Redis hash key `driver:{id}:location` with a 30-second TTL using conditional Lua scripts.
-- Location queries (`GET /api/drivers/{id}/location`) read from Redis to offload traffic from the application heap.
-- If Redis is unavailable, the service automatically falls back to `DriverRegistry` without failing the request.
-- The in-memory `DriverRegistry` remains the authoritative source of truth for all matching computations.
-
-### 6.5 Kafka Redelivery & Two-Tier Idempotency Lifecycle
-1. **Tier 1 (In-Memory Fast Path):** `RideRequestConsumer` reserves incoming `requestId` in an `inFlightRequests` monitor set. If already in-flight or in the LRU `processedRequests` cache (10,000 entries), redeliveries immediately acknowledge and exit.
-2. **Tier 2 (Durable Database State):** Before matching, the consumer inspects PostgreSQL (`findFinalizedRequestIdsIn`):
-   - If status is `MATCHED`, the persisted assignment is confirmed and the redelivery is acknowledged as an idempotent duplicate.
-   - If status is `NO_DRIVERS`, the terminal outcome is respected and acknowledged without rematching.
-3. **Atomic Finalization:** When matching finds a driver, `persistMatchedAssignment` writes the assignment row and sets the request status to `MATCHED` within a single database transaction. When no driver is found, `persistNoDrivers` writes `NO_DRIVERS` transactionally.
-4. **Acknowledgement Guarantee:** Kafka offset acknowledgement (`ack.acknowledge()`) occurs **strictly after** the database transaction has committed.
-
-### 6.6 The In-Memory / Database Boundary & Claim Compensation
-Because driver claiming occurs via atomic CAS in memory *before* the matching result is persisted to PostgreSQL, a database failure creates an asymmetry where a driver is claimed in memory but unpersisted in the database.
-
-The engine resolves this gap through **Ownership-Safe Driver Claim Compensation**:
-- **Atomic CAS Release:** `DriverState.releaseClaim(requestId)` releases a driver from `CLAIMED` back to `AVAILABLE` only if the driver's current claim is owned by the exact same `requestId`.
-- **Ownership Invariant:** A late compensation attempt from an old or aborted request can **never** release a driver that was subsequently claimed by a different request.
-- **Ambiguous Failure Reconciliation:** If an exception occurs during persistence (such as a network socket timeout on commit), the consumer queries PostgreSQL (`findAssignment(requestId)`):
-  - If the assignment committed with our driver, the driver remains claimed and the event is acknowledged as an idempotent duplicate.
-  - If a competing concurrent delivery won with a different driver, our driver's claim is released and the event is acknowledged.
-  - If no assignment exists, rollback is confirmed: the driver claim is released, the in-flight reservation is cleared, and the exception propagates so Kafka's retry policy can act.
-
----
-
-## 7. API Quick Start
-
-### 7.1 Register Driver (`POST /register` or `POST /api/register`)
-
-```bash
-curl -X POST http://localhost:8080/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "driverId": "D101",
-    "latitude": 17.385044,
-    "longitude": 78.486671
-  }'
-```
-
-**Response (`202 Accepted`):**
-```json
-{
-  "driverId": "D101",
-  "message": "Driver registration accepted and queued for processing"
-}
-```
-
-### 7.2 Ingest Telemetry (`POST /ping`)
-
-```bash
+# 1. Ingest fresh driver location (returns HTTP 202 Accepted)
 curl -X POST http://localhost:8080/ping \
   -H "Content-Type: application/json" \
-  -d '{
-    "driverId": "D101",
-    "latitude": 17.389200,
-    "longitude": 78.489100,
-    "action": "AUTO"
-  }'
-```
+  -d '{"driverId": "D101", "latitude": 17.385044, "longitude": 78.486671, "action": "AUTO"}'
 
-**Response (`202 Accepted`):**
-```json
-{
-  "driverId": "D101",
-  "message": "Driver ping accepted and queued for processing"
-}
-```
-
-### 7.3 Request Ride Match (`POST /request` or `POST /api/request`)
-
-```bash
+# 2. Submit ride dispatch request (returns HTTP 202 Accepted)
 curl -X POST http://localhost:8080/request \
   -H "Content-Type: application/json" \
-  -d '{
-    "requestId": "REQ-789",
-    "latitude": 17.387000,
-    "longitude": 78.488000
-  }'
-```
+  -d '{"requestId": "REQ-789", "latitude": 17.387000, "longitude": 78.488000}'
 
-**Response (`202 Accepted`):**
-```json
-{
-  "requestId": "REQ-789",
-  "message": "Ride request accepted and queued for matching"
-}
-```
-
-### 7.4 Poll Request Status (`GET /api/requests/{requestId}`)
-
-```bash
+# 3. Poll terminal dispatch outcome (returns HTTP 200 OK with MATCHED status)
 curl -X GET http://localhost:8080/api/requests/REQ-789
-```
 
-**Response (`200 OK` — when matched):**
-```json
-{
-  "requestId": "REQ-789",
-  "status": "MATCHED",
-  "driverId": "D101",
-  "assignedAt": "2026-10-18T08:00:00.123456Z",
-  "cost": 0.142
-}
-```
+# 4. Advance trip lifecycle: transition to EN_ROUTE
+curl -X POST http://localhost:8080/api/trips/REQ-789/en-route \
+  -H "Content-Type: application/json" \
+  -d '{"driverId": "D101"}'
 
-### 7.5 Query Driver Location (`GET /drivers/{driverId}/location` & `GET /api/drivers/{driverId}/location`)
-
-```bash
-# Query via canonical backend endpoint
+# 5. Query cached driver location (reads from Redis with in-memory fallback)
 curl -X GET http://localhost:8080/drivers/D101/location
-
-# Or query via the /api proxy alias
-curl -X GET http://localhost:8080/api/drivers/D101/location
 ```
-
-**Response (`200 OK` — fresh verified location):**
-```json
-{
-  "driverId": "D101",
-  "latitude": 17.389200,
-  "longitude": 78.489100,
-  "updatedAt": "2026-10-18T08:00:00Z",
-  "fresh": true
-}
-```
+*(For complete endpoint schemas, headers, error structures, and route aliases, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md)).*
 
 ---
 
-## 8. Testing & Verification
-
-The project enforces comprehensive test coverage across backend Java components (unit, spatial, concurrency, persistence, and integration slices) and the frontend React application.
-
-### 8.1 Execution Commands
+### 4. Automated Testing Commands
 
 ```bash
-# Execute the complete backend test suite (unit + integration tests)
+# Execute the complete backend test suite (518 tests across 33 test classes)
 ./mvnw clean test
 
-# Execute PostgreSQL and Redis integration tests using Testcontainers (requires Docker)
+# Execute PostgreSQL and Redis integration tests using Testcontainers
 ./mvnw test -Dtest=*IT
 
-# Execute the complete frontend Vitest suite
+# Execute the complete frontend Vitest test suite (122 tests across 11 test files)
 cd frontend && npm test
+
+# Perform strict TypeScript type checking without emitting files
+cd frontend && npm run typecheck
 ```
 
 > [!NOTE]
 > **Docker Auto-Detection in Integration Tests:**  
-> If Docker is unavailable in the environment, integration tests annotated with Testcontainers detect its absence (`disabledWithoutDocker = true`) and skip cleanly without failing the build.
+> Backend integration tests annotated with Testcontainers include environment auto-detection (`disabledWithoutDocker = true`). If Docker is absent, integration tests skip cleanly without failing the build.
 
 ---
 
-### 8.2 Verified Test Suite Breakdown
+### 5. Running Load Tests & Benchmarks (k6)
 
-#### Backend Test Suite (518 Tests across 33 Test Classes — 100% Passing)
+> [!WARNING]
+> **Prerequisites for Benchmarking:**  
+> Ensure Docker infrastructure and the Spring Boot backend are running under full C2 JIT compilation (`-XX:TieredStopAtLevel=1` must be absent). Do not run benchmarks against production databases.
 
-| Test Class | Category | Test Count | Scope Verified |
-| :--- | :--- | :---: | :--- |
-| `QuadTreeTest` | Spatial | 16 | Quadrant subdivision, boundary conditions, range query pruning |
-| `BoundingBoxTest` | Spatial | 10 | Bounding-box intersection, coordinate clamping, containment |
-| `DispatchCostFunctionTest` | Mathematical | 61 | Normalization clamping, weights, edge cases, Haversine formula |
-| `AuctionMatcherTest` | Algorithm | 40 | Bertsekas auction matching, $\varepsilon$-scaling, optimality comparisons |
-| `GreedyMatcherTest` | Algorithm | 15 | Progressive radius windows, nearest-neighbor driver selection |
-| `DispatchIntegrationTest` | Integration | 9 | End-to-end matching integration across cost model and spatial index |
-| `DriverStateTest` | Concurrency | 15 | Single-thread state machine transitions, claim lifecycle |
-| `DriverStateConcurrencyTest` | Concurrency | 20 | Multi-threaded CAS claims, state preservation during updates |
-| `DriverRegistryTest` | Concurrency | 33 | Concurrent registrations, CAS location updates, snapshot isolation |
-| `DriverRegistryFreshnessTest` | Domain / Freshness | 12 | Driver staleness filtering ($\le 60\text{s}$), snapshot freshness evaluation |
-| `GeoPointTest` | Validation | 8 | Latitude/longitude bounds, NaN/infinite rejection, error messages |
-| `DriverControllerTest` | Kafka Producer | 15 | Endpoints `/ping`, `/register`, topic routing, 202 Accepted, 503 error |
-| `RideControllerTest` | Kafka Producer | 5 | Endpoint `/request`, `requestId` key partitioning, 202 Accepted, 503 error |
-| `RequestStatusControllerTest` | Controller / REST | 14 | GET `/api/requests/{id}` status polling, aliases `/api/request` & `/api/register` |
-| `TripControllerTest` | Controller / REST | 21 | Trip lifecycle transitions (`en-route`, `start`, `complete`, `cancel`), audit trails |
-| `TelemetryControllerTest` | Controller / REST | 4 | GET `/api/telemetry/batches` adaptive batch telemetry monitoring |
-| `AdditionalControllerTest` | Controller / Concurrency | 3 | HTTP 500 error handling, 16-thread Greedy claims, concurrent `/ping` auto-fallback |
-| `DriverPingConsumerTest` | Kafka Consumer | 16 | REGISTER/UPDATE/AUTO handling, claim state preservation, duplicate idempotency |
-| `KafkaDeserializationErrorHandlingTest` | Kafka Consumer | 4 | Deserialization error handling, malformed payload recovery, header validation |
-| `RideRequestConsumerTest` | Kafka Consumer | 36 | Matching delegation, atomic claim verification, compensation, durable duplicates |
-| `AdaptiveWindowControllerTest` | Messaging / Adaptive | 15 | Adaptive batch window sizing, traffic arrival rate tracking, timeout triggers |
-| `DispatchMetricsTest` | Metrics / Micrometer | 16 | Centralized DispatchMetrics registration, counter/timer behavior, gauge freshness |
-| `ActuatorSecurityTest` | Security / Actuator | 3 | Endpoint exposure restrictions (`health`, `prometheus`), sensitive endpoints disabled |
-| `RedisLocationCacheTest` | Cache / Redis | 10 | Mocked Redis template operations, TTL configuration, serialization |
-| `RedisLocationCacheGetLocationTest` | Cache / Redis | 8 | Read-through cached location lookup, TTL expiration handling, stale fallbacks |
-| `RedisLocationCacheIT` | Integration / Redis | 12 | Testcontainers Redis integration, Lua atomic conditional writes (30s TTL) |
-| `AssignmentPersistenceServiceTest` | Persistence / JPA | 25 | Transactional boundaries, status persistence, CAS claim compensation, rollback |
-| `AssignmentPersistenceServiceIT` | Integration / DB | 14 | Testcontainers PostgreSQL integration, duplicate inserts, transaction rollbacks |
-| `TripLifecycleServiceTest` | Persistence / Trips | 19 | Trip lifecycle state machine, validation, terminal state transitions |
-| `TripLifecycleServiceIT` | Integration / DB | 15 | Testcontainers PostgreSQL trip persistence, foreign keys, status updates |
-| `DispatchEndToEndIT` | Integration / E2E | 12 | Full end-to-end Kafka + PostgreSQL + Redis + Matching pipeline |
-| `DispatchConfigTest` | Spring Boot | 3 | Bean fallback resolution and custom Matcher bean override |
-| `DispatchApplicationTests` | Smoke / Context | 9 | ApplicationContext initialization and bean discovery |
-| **Total Backend Tests** | | **518 Tests (465 Unit + 53 IT)** | **100% Passing (518/518 passing, 0 failures, 0 errors, 0 skipped)** |
+```bash
+# 1. Seed 200 fresh drivers into the in-memory registry and Redis
+node scripts/seed-drivers.js --count 200
 
-#### Frontend Test Suite (122 Tests across 11 Test Files — 100% Passing)
+# 2. Execute low-load scenario (constant 3 req/s for 60 seconds)
+k6 run k6/low-load.js
 
-| Test File | Category | Test Count | Scope Verified |
-| :--- | :--- | :---: | :--- |
-| `src/utils/seededRandom.test.ts` | Utilities | 6 | Deterministic PRNG distribution, reproducibility, bounds |
-| `src/services/geocoding.test.ts` | Services | 11 | Nominatim reverse/forward geocoding, error fallbacks, caching |
-| `src/utils/driverUtils.test.ts` | Utilities | 21 | Haversine distance, driver generation, coordinate calculations |
-| `src/services/dispatch.test.ts` | Services | 11 | API client for `/api/request`, status polling, trip transitions |
-| `src/hooks/useSimulatedDrivers.test.ts` | Hooks | 6 | Simulated fleet generation, movement intervals, location pings |
-| `src/hooks/usePlaceSearch.test.ts` | Hooks | 12 | Location autocomplete search, debouncing, selection state |
-| `src/components/GlobeMap.test.tsx` | Components | 8 | MapLibre GL map initialization, marker layers, viewport sync |
-| `src/hooks/useDispatch.test.ts` | Hooks | 28 | Dispatch state machine, polling lifecycle, driver assignment flow |
-| `src/components/SimulatedFleetBadge.test.tsx` | Components | 4 | Fleet simulation badge rendering, driver count, toggle controls |
-| `src/components/DispatchPanel.test.tsx` | Components | 11 | Ride request form, input validation, status badge rendering |
-| `src/App.test.tsx` | Integration | 4 | End-to-end integrated UI dispatch journey and MapLibre interaction |
-| **Total Frontend Tests** | | **122 Tests (11 test files)** | **100% Passing (122/122 passing, 0 failures, 0 errors, 0 skipped)** |
+# 3. Execute high-load benchmark (ramping 10 -> 60 req/s sustained for 60 seconds)
+k6 run k6/high-load.js
+```
 
 ---
 
-## 9. Controlled Double-Booking Experiment
+## Architectural Status & Honest Limitations
 
-To demonstrate the concrete failure mode of non-atomic state updates, a reproducible concurrency experiment is maintained on the isolated branch `experiment/double-booking`.
-
-- **Check-then-Set Vulnerability:** Demonstrates how non-atomic reads followed by writes cause two concurrent threads to both claim the same driver.
-- **Atomic CAS Resolution:** Contrasts the vulnerability against production `DriverState.tryClaim` using Java's `AtomicReference`, proving 100% single-winner determinism under high concurrency.
-- **Full Experiment Report:** See [docs/double-booking-experiment.md](docs/double-booking-experiment.md).
-
----
-
-## 10. Architectural Status & Current Limitations
-
-1. **Active Infrastructure Topology:** `docker-compose.yml` configures five production-grade services: PostgreSQL 16 (host port `5434`), Redis 7 (host port `6380`), Apache Kafka 3.7.0 (host port `9092`), Prometheus v2.54.1 (host port `9090`), and Grafana 11.2.0 (host port `3000`).
-2. **Active Non-Authoritative Redis Location Cache:** Redis is active and stores `driver:{id}:location` hashes with a 30-second TTL and conditional Lua writes. It provides low-latency cached location reads via `GET /drivers/{id}/location` (and the `GET /api/drivers/{id}/location` alias). The in-memory `DriverRegistry` remains the authoritative source of truth for all matching computations.
-3. **Kafka Poll Batch Size Limitation (Deferred):** Under sustained load testing, the observed average Kafka poll batch size is approximately **1.12–1.13**, remaining below the architectural design target of $\ge 10.0$. Spring Kafka's default consumer configuration drains records immediately upon availability (`fetch.min.bytes=1`) rather than accumulating larger batches. Tuning `fetch.min.bytes` and `fetch.max.wait.ms` to optimize poll batching under high load is explicitly deferred to future consumer tuning milestones.
-4. **Single-Broker Kafka Cluster:** The local Docker Compose setup deploys a single KRaft broker (`KAFKA_NODE_ID: 1`, partition replication factor 1). Production deployments require a multi-broker quorum across availability zones.
-5. **In-Memory Spatial Index & Single JVM Footprint:** `QuadTree` and `DriverRegistry` reside in JVM heap memory. Scaling across multiple application instances requires distributed spatial partitioning (e.g., Uber H3 or Redis GEO) and distributed consensus.
-6. **Absence of Dedicated Dead-Letter Topic (DLT):** Exhausted Kafka consumer retries are logged and skipped via Spring Kafka's `DefaultErrorHandler`. Production deployments should configure a dedicated Dead-Letter Topic (DLT) queue for failed message inspection and manual replay.
-7. **Straight-Line Distance Routing:** Travel times and ETAs use spherical Haversine straight-line distance at a nominal $60\text{ km/h}$. Turn penalties, one-way restrictions, and real-time road congestion are not modeled.
-8. **Deferred Opportunity Cost:** Multi-objective opportunity cost in `DispatchCostFunction` evaluates to neutral `0.0` until trip pricing and destination tiers are modeled.
+1. **Deferred Kafka Poll Batch Size ($\sim 1.13$ vs. $\ge 10.0$ Target):** Under sustained load testing, the observed average Kafka poll batch size was approximately **$1.13$** (with a peak of 3), remaining below the architectural design target of $\ge 10.0$. Because Spring Kafka defaults to `fetch.min.bytes=1`, it drains records immediately every 2–4 ms rather than buffering larger batches. Tuning `fetch.min.bytes` and `fetch.max.wait.ms` is explicitly documented as a **deferred optimization** to be addressed in future consumer-tuning milestones.
+2. **Absence of Dedicated Dead-Letter Topic (DLT):** Exhausted Kafka consumer retries are logged and skipped via Spring Kafka's `DefaultErrorHandler`. Production deployments should configure a dedicated Dead-Letter Topic (DLT) with automated alerting and manual replay capabilities.
+3. **Single-Broker Local Kafka Deployment:** The local Docker Compose setup deploys a single KRaft broker (`KAFKA_NODE_ID: 1`, partition replication factor 1). Production deployments require a multi-broker quorum across availability zones.
+4. **Single-JVM In-Memory Spatial State:** `QuadTree` and `DriverRegistry` reside in JVM heap memory. Scaling across multiple application instances requires distributed spatial partitioning (e.g., Uber H3 or Redis GEO) and distributed consensus.
+5. **Spherical Haversine Routing:** Travel times and ETAs use spherical Haversine straight-line distance at a nominal $60\text{ km/h}$. Turn penalties, one-way restrictions, and real-time road congestion are not modeled.
+6. **Neutral Opportunity Cost:** The multi-objective opportunity cost term in `DispatchCostFunction` evaluates to neutral `0.0` until trip pricing and destination tiers are introduced into the domain model.
 
 ---
 
-## 11. Reference Documentation
+## Reference Documentation
 
-- [REST API Specification](API_DOCUMENTATION.md) — Complete endpoint schemas, parameter matrices, error response examples, and Kafka event ingestion details.
+- [REST API Specification](API_DOCUMENTATION.md) — Comprehensive endpoint schemas, headers, request/response payloads, error structures, trip lifecycle endpoints (`/en-route`), and route aliases.
 - [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) — High-load k6 evaluation, Alternative A batched lookup analysis, latency percentiles, and batching metrics.
 - [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) — Empirical assessment of Prometheus/Grafana observability overhead under 60 req/s load, latency comparison, and live dashboard validation.
-- [Double-Booking Experiment Documentation](docs/double-booking-experiment.md) — In-depth concurrency race condition analysis and atomic CAS verification using Java's `AtomicReference`.
+- [Controlled Double-Booking Concurrency Experiment](docs/double-booking-experiment.md) — In-depth concurrency race condition analysis and atomic CAS verification using Java's `AtomicReference`.
