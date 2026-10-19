@@ -22,4 +22,10 @@ public interface QuadTreeObserver {
      * @param boundary the bounding box of the pruned subtree
      */
     void onNodePruned(BoundingBox boundary);
+
+    /**
+     * Called when an actual point-to-point distance calculation is performed
+     * between the query point and an indexed point.
+     */
+    default void onDistanceEvaluated() {}
 }

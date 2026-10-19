@@ -278,6 +278,13 @@ public final class QuadTree {
 
         if (northWest == null) {
             for (GeoPoint point : this.points) {
+                if (observer != null) {
+                    try {
+                        observer.onDistanceEvaluated();
+                    } catch (Exception ignored) {
+                        // Suppress observer failures to protect spatial search
+                    }
+                }
                 double dist = query.distanceToKm(point); // computed exactly once
 
                 if (nearest.size() < k) {
@@ -292,16 +299,61 @@ public final class QuadTree {
                     nearest.offer(new Candidate(point, dist));
                     // Peek reflects the new worst after re-heapify.
                     worstKm[0] = nearest.peek().distKm();
+                } else if (dist == worstKm[0]) {
+                    Candidate candidate = new Candidate(point, dist);
+                    if (candidate.compareTo(nearest.peek()) < 0) {
+                        nearest.poll();
+                        nearest.offer(candidate);
+                        worstKm[0] = nearest.peek().distKm();
+                    }
                 }
             }
 
             return;
         }
 
-        northWest.collectNearest(query, k, nearest, worstKm, observer);
-        northEast.collectNearest(query, k, nearest, worstKm, observer);
-        southWest.collectNearest(query, k, nearest, worstKm, observer);
-        southEast.collectNearest(query, k, nearest, worstKm, observer);
+        // Distance-ordered traversal: visit the closest child quadrant first so
+        // the heap fills with true nearest neighbours quickly, tightening worstKm[0]
+        // and allowing later siblings to be pruned at this level.
+        //
+        // Sorting network (5 compare-and-swap, 0 allocations) on (distance, child)
+        // pairs stored in stack-local doubles and QuadTree references.
+        double d0 = northWest.minimumPossibleDistanceKm(query);
+        double d1 = northEast.minimumPossibleDistanceKm(query);
+        double d2 = southWest.minimumPossibleDistanceKm(query);
+        double d3 = southEast.minimumPossibleDistanceKm(query);
+
+        QuadTree c0 = northWest;
+        QuadTree c1 = northEast;
+        QuadTree c2 = southWest;
+        QuadTree c3 = southEast;
+
+        // Sorting network for 4 elements: (0,1),(2,3),(0,2),(1,3),(1,2)
+        double td; QuadTree tc;
+        if (d0 > d1) { td = d0; d0 = d1; d1 = td; tc = c0; c0 = c1; c1 = tc; }
+        if (d2 > d3) { td = d2; d2 = d3; d3 = td; tc = c2; c2 = c3; c3 = tc; }
+        if (d0 > d2) { td = d0; d0 = d2; d2 = td; tc = c0; c0 = c2; c2 = tc; }
+        if (d1 > d3) { td = d1; d1 = d3; d3 = td; tc = c1; c1 = c3; c3 = tc; }
+        if (d1 > d2) { td = d1; d1 = d2; d2 = td; tc = c1; c1 = c2; c2 = tc; }
+
+        // Visit children in nearest-first order; prune at this level after each
+        // descent so siblings benefit from the tightened worstKm[0].
+        c0.collectNearest(query, k, nearest, worstKm, observer);
+        if (nearest.size() < k || d1 <= worstKm[0] + PRUNING_TOLERANCE_KM) {
+            c1.collectNearest(query, k, nearest, worstKm, observer);
+        } else if (observer != null) {
+            try { observer.onNodePruned(c1.boundary); } catch (Exception ignored) {}
+        }
+        if (nearest.size() < k || d2 <= worstKm[0] + PRUNING_TOLERANCE_KM) {
+            c2.collectNearest(query, k, nearest, worstKm, observer);
+        } else if (observer != null) {
+            try { observer.onNodePruned(c2.boundary); } catch (Exception ignored) {}
+        }
+        if (nearest.size() < k || d3 <= worstKm[0] + PRUNING_TOLERANCE_KM) {
+            c3.collectNearest(query, k, nearest, worstKm, observer);
+        } else if (observer != null) {
+            try { observer.onNodePruned(c3.boundary); } catch (Exception ignored) {}
+        }
     }
 
     /**

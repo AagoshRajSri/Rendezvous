@@ -20,7 +20,9 @@ class QuadTreeTest {
             int k
     ) {
         List<GeoPoint> expected = points.stream()
-                .sorted(Comparator.comparingDouble(query::distanceToKm))
+                .sorted(Comparator.comparingDouble((GeoPoint p) -> query.distanceToKm(p))
+                        .thenComparingDouble(GeoPoint::latitude)
+                        .thenComparingDouble(GeoPoint::longitude))
                 .limit(k)
                 .toList();
 
@@ -34,6 +36,12 @@ class QuadTreeTest {
                     query.distanceToKm(actual.get(i)),
                     1e-8,
                     "Nearest distance differs at index " + i
+                            + " for query " + query
+            );
+            assertEquals(
+                    expected.get(i),
+                    actual.get(i),
+                    "Nearest point identity differs at index " + i
                             + " for query " + query
             );
         }
@@ -374,6 +382,222 @@ class QuadTreeTest {
 
         for (GeoPoint query : queries) {
             assertNearestMatchesBruteForce(tree, points, query, 3);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase C: distance-ordered traversal correctness tests
+    // -----------------------------------------------------------------------
+
+    @Test
+    void equidistantPointsReturnCorrectCountAndMatchBruteForce() {
+        // Four points placed symmetrically around the origin at the same geodesic
+        // distance. The ordered traversal must not drop or duplicate any of them.
+        QuadTree tree = new QuadTree(createBoundary());
+
+        List<GeoPoint> points = List.of(
+                new GeoPoint(0,  1),
+                new GeoPoint(0, -1),
+                new GeoPoint( 1, 0),
+                new GeoPoint(-1, 0)
+        );
+        points.forEach(p -> assertTrue(tree.insert(p)));
+
+        GeoPoint query = new GeoPoint(0, 0);
+
+        // Request k=4 (all points) and k=2 (subset)
+        assertNearestMatchesBruteForce(tree, points, query, 4);
+        assertNearestMatchesBruteForce(tree, points, query, 2);
+    }
+
+    @Test
+    void equidistantPointsResultIsStableAcrossQuadrantBoundaries() {
+        // Eight points evenly spread across all quadrant boundaries at identical
+        // distance. Ordered traversal must produce a result that equals brute-force.
+        QuadTree tree = new QuadTree(createBoundary());
+
+        List<GeoPoint> points = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            double angle = i * Math.PI / 4.0;
+            points.add(new GeoPoint(
+                    Math.sin(angle) * 5.0,
+                    Math.cos(angle) * 5.0
+            ));
+        }
+        points.forEach(p -> assertTrue(tree.insert(p)));
+
+        GeoPoint query = new GeoPoint(0, 0);
+        assertNearestMatchesBruteForce(tree, points, query, 8);
+        assertNearestMatchesBruteForce(tree, points, query, 4);
+        assertNearestMatchesBruteForce(tree, points, query, 1);
+    }
+
+    @Test
+    void duplicateCoordinatesAreRetainedAndRankedCorrectly() {
+        // Inserting the same GeoPoint many times must not cause the ordered
+        // traversal to lose duplicates or mis-rank them.
+        QuadTree tree = new QuadTree(createBoundary());
+        GeoPoint dup = new GeoPoint(17.3850, 78.4867);
+
+        for (int i = 0; i < 20; i++) {
+            assertTrue(tree.insert(dup));
+        }
+
+        List<GeoPoint> points = new ArrayList<>();
+        for (int i = 0; i < 20; i++) points.add(dup);
+
+        GeoPoint query = new GeoPoint(17.38, 78.48);
+        assertNearestMatchesBruteForce(tree, points, query, 10);
+        assertNearestMatchesBruteForce(tree, points, query, 20);
+    }
+
+    @Test
+    void nearSouthPoleQueryMatchesBruteForce() {
+        // The baseline identified the South Pole query as the worst-pruned case
+        // under static traversal. Ordered traversal must still produce correct results.
+        QuadTree tree = new QuadTree(new BoundingBox(-90, -180, 90, 180));
+        List<GeoPoint> points = new ArrayList<>();
+        Random rng = new Random(42);
+
+        for (int i = 0; i < 500; i++) {
+            GeoPoint p = new GeoPoint(
+                    -89.9 + rng.nextDouble() * 179.8,
+                    -180.0 + rng.nextDouble() * 360.0
+            );
+            assertTrue(tree.insert(p));
+            points.add(p);
+        }
+
+        // Query from near the South Pole — the main asymmetric case
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(-89.0, -45.0), 10);
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(-89.9, 135.0), 10);
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(-90.0, 0.0), 10);
+    }
+
+    @Test
+    void nearNorthPoleQueryMatchesBruteForce() {
+        QuadTree tree = new QuadTree(new BoundingBox(-90, -180, 90, 180));
+        List<GeoPoint> points = new ArrayList<>();
+        Random rng = new Random(99);
+
+        for (int i = 0; i < 500; i++) {
+            GeoPoint p = new GeoPoint(
+                    -89.9 + rng.nextDouble() * 179.8,
+                    -180.0 + rng.nextDouble() * 360.0
+            );
+            assertTrue(tree.insert(p));
+            points.add(p);
+        }
+
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(89.0, 45.0), 10);
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(89.9, -179.0), 10);
+        assertNearestMatchesBruteForce(tree, points, new GeoPoint(90.0, 0.0), 10);
+    }
+
+    @Test
+    void antimeridianQueriesMatchBruteForceUnderOrderedTraversal() {
+        QuadTree tree = new QuadTree(new BoundingBox(-90, -180, 90, 180));
+        List<GeoPoint> points = new ArrayList<>();
+        Random rng = new Random(7);
+
+        for (int i = 0; i < 300; i++) {
+            GeoPoint p = new GeoPoint(
+                    -10.0 + rng.nextDouble() * 20.0,
+                    150.0 + rng.nextDouble() * 30.0
+            );
+            if (p.longitude() <= 180.0) {
+                assertTrue(tree.insert(p));
+                points.add(p);
+            }
+        }
+        for (int i = 0; i < 300; i++) {
+            GeoPoint p = new GeoPoint(
+                    -10.0 + rng.nextDouble() * 20.0,
+                    -180.0 + rng.nextDouble() * 30.0
+            );
+            assertTrue(tree.insert(p));
+            points.add(p);
+        }
+
+        List<GeoPoint> queries = List.of(
+                new GeoPoint(0, 179.95),
+                new GeoPoint(0, -179.95),
+                new GeoPoint(5, 180.0),
+                new GeoPoint(-5, -180.0)
+        );
+        for (GeoPoint query : queries) {
+            assertNearestMatchesBruteForce(tree, points, query, 10);
+        }
+    }
+
+    @Test
+    void queriesOnQuadrantMidpointBoundariesMatchBruteForce() {
+        // Points placed across all four quadrant boundaries (midLat, midLon lines)
+        // of a subdivided tree to exercise every path of childFor() and the
+        // ordering of equal-lower-bound children.
+        QuadTree tree = new QuadTree(new BoundingBox(-20, -20, 20, 20));
+        List<GeoPoint> points = new ArrayList<>();
+
+        // Seed enough points to force subdivision
+        for (int i = -9; i <= 9; i++) {
+            for (int j = -9; j <= 9; j++) {
+                GeoPoint p = new GeoPoint(i * 2.0, j * 2.0);
+                if (tree.insert(p)) points.add(p);
+            }
+        }
+
+        // Query directly on midpoint boundaries
+        List<GeoPoint> queries = List.of(
+                new GeoPoint(0,  0),    // exact centre
+                new GeoPoint(0,  5),    // on midLat, east of midLon
+                new GeoPoint(5,  0),    // on midLon, north of midLat
+                new GeoPoint(0, -5),    // on midLat, west
+                new GeoPoint(-5, 0)     // on midLon, south
+        );
+        for (GeoPoint query : queries) {
+            assertNearestMatchesBruteForce(tree, points, query, 5);
+            assertNearestMatchesBruteForce(tree, points, query, 1);
+        }
+    }
+
+    @Test
+    void randomizedSweepWithMultipleDistributionsMatchesBruteForce() {
+        // Broader coverage: run randomised trials under clustered and uniform data
+        // to catch any remaining traversal-order regressions.
+        long[] seeds = {1L, 17L, 31L, 42L, 100L};
+
+        for (long seed : seeds) {
+            Random rng = new Random(seed);
+            BoundingBox bounds = new BoundingBox(-90, -180, 90, 180);
+            QuadTree tree = new QuadTree(bounds);
+            List<GeoPoint> points = new ArrayList<>();
+
+            int count = 100 + rng.nextInt(400);
+            for (int i = 0; i < count; i++) {
+                // Mix uniform and clustered
+                GeoPoint p;
+                if (rng.nextBoolean()) {
+                    p = new GeoPoint(-89.9 + rng.nextDouble() * 179.8,
+                            -180.0 + rng.nextDouble() * 360.0);
+                } else {
+                    double clat = (rng.nextInt(3) - 1) * 30.0;
+                    double clon = (rng.nextInt(3) - 1) * 60.0;
+                    p = new GeoPoint(
+                            Math.max(-89.9, Math.min(89.9, clat + rng.nextGaussian() * 5)),
+                            clon + rng.nextGaussian() * 5
+                    );
+                }
+                if (tree.insert(p)) points.add(p);
+            }
+
+            for (int q = 0; q < 15; q++) {
+                GeoPoint query = new GeoPoint(
+                        -90 + rng.nextDouble() * 180,
+                        -180 + rng.nextDouble() * 360
+                );
+                int k = 1 + rng.nextInt(Math.min(20, points.size()));
+                assertNearestMatchesBruteForce(tree, points, query, k);
+            }
         }
     }
 }
