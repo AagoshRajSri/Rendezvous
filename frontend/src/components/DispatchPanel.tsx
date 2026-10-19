@@ -2,7 +2,7 @@ import type { DispatchState } from '../types/dispatch';
 import type { PlaceSuggestion } from '../types/place';
 import type { RouteSummary } from '../types/routing';
 import { formatDistance as formatDistanceUtil, formatDuration as formatDurationUtil } from '../utils/fare';
-import { useDispatchTrace } from '../hooks/useDispatchTrace';
+import { useDispatchTrace, type DispatchTraceState } from '../hooks/useDispatchTrace';
 import { DispatchTraceCard } from './DispatchTraceCard';
 import './DispatchPanel.css';
 
@@ -42,6 +42,14 @@ interface DispatchPanelProps {
   route?: RouteSummary | null;
   /** Chosen vehicle fare tier. */
   selectedTier?: 'standard' | 'premier' | 'xl';
+  /** Phase 11.4F: Optional lifted dispatch trace state from App. */
+  traceState?: DispatchTraceState;
+  /** Phase 11.4F: Optional lifted refresh callback. */
+  onRefreshTrace?: () => void;
+  /** Phase 11.4F: Whether the trace accordion is currently expanded. */
+  isTraceExpanded?: boolean;
+  /** Phase 11.4F: Callback when trace accordion is expanded or collapsed. */
+  onToggleTraceExpand?: (expanded: boolean) => void;
   /** Phase 11.4E: Whether dispatch trace accordion defaults to expanded (e.g. for testing). */
   defaultTraceExpanded?: boolean;
 }
@@ -92,6 +100,10 @@ export function DispatchPanel({
   destinationPlace = null,
   route = null,
   selectedTier = 'standard',
+  traceState: propTraceState,
+  onRefreshTrace,
+  isTraceExpanded,
+  onToggleTraceExpand,
   defaultTraceExpanded = false,
 }: DispatchPanelProps) {
   const {
@@ -106,8 +118,10 @@ export function DispatchPanel({
   const formattedFixTime = formatValidTime(matchedDriverLocationAt);
   const formattedUpdateTime = formatValidTime(updatedAt);
 
-  // Phase 11.4E — Reactive dispatch trace fetching
-  const { state: traceState, refresh: refreshTrace } = useDispatchTrace(requestId);
+  // Phase 11.4F — Single-fetch dispatch trace lifted to App, with fallback for backward compatibility
+  const internalTrace = useDispatchTrace(propTraceState ? null : requestId);
+  const traceState = propTraceState ?? internalTrace.state;
+  const refreshTrace = onRefreshTrace ?? internalTrace.refresh;
 
   // Selected fare tier details for summary card
   const chosenFare = route?.fares?.find((f) => f.tierId === selectedTier) ?? route?.fares?.[0];
@@ -516,12 +530,14 @@ export function DispatchPanel({
           </>
         )}
 
-        {/* ── Phase 11.4E: Dispatch Execution Trace Accordion ────────── */}
+        {/* ── Phase 11.4E & 11.4F: Dispatch Execution Trace Accordion ────────── */}
         {requestId && (
           <DispatchTraceCard
             state={traceState}
             onRefresh={refreshTrace}
             defaultExpanded={defaultTraceExpanded}
+            isExpanded={isTraceExpanded}
+            onToggleExpand={onToggleTraceExpand}
           />
         )}
       </div>

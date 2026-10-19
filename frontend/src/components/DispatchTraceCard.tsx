@@ -18,6 +18,10 @@ export interface DispatchTraceCardProps {
   state: DispatchTraceState;
   onRefresh: () => void;
   defaultExpanded?: boolean;
+  /** Phase 11.4F: Optional controlled expanded state. */
+  isExpanded?: boolean;
+  /** Phase 11.4F: Callback invoked when accordion toggle is clicked. */
+  onToggleExpand?: (expanded: boolean) => void;
 }
 
 /** Formats nanoseconds into a human-readable duration (µs or ms). */
@@ -46,8 +50,19 @@ export function DispatchTraceCard({
   state,
   onRefresh,
   defaultExpanded = false,
+  isExpanded: controlledExpanded,
+  onToggleExpand,
 }: DispatchTraceCardProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(defaultExpanded);
+  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : uncontrolledExpanded;
+
+  const handleToggle = () => {
+    const next = !isExpanded;
+    if (controlledExpanded === undefined) {
+      setUncontrolledExpanded(next);
+    }
+    onToggleExpand?.(next);
+  };
 
   if (state.status === 'idle') {
     return null;
@@ -60,7 +75,7 @@ export function DispatchTraceCard({
       <button
         type="button"
         className="dispatch-trace-card__header-btn"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        onClick={handleToggle}
         aria-expanded={isExpanded}
         aria-controls="dispatch-trace-panel-body"
         id="dispatch-trace-accordion-toggle"

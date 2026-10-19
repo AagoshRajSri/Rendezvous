@@ -8,6 +8,7 @@ import { useMapReady } from './hooks/useMapReady';
 import { usePlaceSearch } from './hooks/usePlaceSearch';
 import { useSimulatedDrivers } from './hooks/useSimulatedDrivers';
 import { useDispatch } from './hooks/useDispatch';
+import { useDispatchTrace } from './hooks/useDispatchTrace';
 import { useRoute } from './hooks/useRoute';
 import { useDriverApproach } from './hooks/useDriverApproach';
 import { useVehicleAnimation } from './hooks/useVehicleAnimation';
@@ -28,6 +29,8 @@ import type { PlaceSuggestion } from './types/place';
  *   - driverApproach   : road route from assigned driver origin to pickup (Phase 11.2)
  *   - approachAnimation: vehicle animation along approach route to pickup (Phase 11.2)
  *   - tripAnimation    : vehicle animation along road route to destination (Phase 11.3)
+ *   - traceState       : read-only dispatch execution trace (Phase 11.4F lifted to App)
+ *   - isTraceExpanded  : whether dispatch trace accordion is expanded (controls map overlays)
  */
 export default function App() {
   const { state: mapState, onLoad, onError } = useMapReady();
@@ -35,6 +38,7 @@ export default function App() {
   const [activeTarget, setActiveTarget] = useState<SearchTarget>('pickup');
   const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
   const [destinationPlace, setDestinationPlace] = useState<PlaceSuggestion | null>(null);
+  const [isTraceExpanded, setIsTraceExpanded] = useState(false);
 
   const drivers = useSimulatedDrivers(selectedPlace);
   const {
@@ -49,6 +53,10 @@ export default function App() {
     markArrived,
     reset: resetDispatch,
   } = useDispatch(selectedPlace, drivers);
+
+  // Phase 11.4F: Single-fetch dispatch trace lifted to App
+  const { state: traceState, refresh: refreshTrace } = useDispatchTrace(dispatchState.requestId);
+
   const { state: routeState, setSelectedTier, clearRoute } = useRoute(selectedPlace, destinationPlace);
 
   // Phase 11.2: Assigned driver road approach route
@@ -142,6 +150,7 @@ export default function App() {
       setDestinationPlace(null);
       clearRoute();
       resetDispatch();
+      setIsTraceExpanded(false);
     } else {
       handleClearDestination();
     }
@@ -152,6 +161,7 @@ export default function App() {
     setDestinationPlace(null);
     clearRoute();
     setActiveTarget('pickup');
+    setIsTraceExpanded(false);
   }
 
   // Active vehicle marker position across lifecycle stages
@@ -225,6 +235,8 @@ export default function App() {
         animatedVehiclePosition={animatedVehiclePosition}
         animatedVehicleBearing={animatedVehicleBearing}
         activePhase={dispatchState.phase}
+        trace={traceState.trace}
+        showTraceOverlay={isTraceExpanded && traceState.status === 'ready'}
       />
 
       {/* ── Phase 11.1: Road route preview & fare card (only while idle) ──────── */}
@@ -263,6 +275,10 @@ export default function App() {
           remainingDistanceMeters={remainingDistanceMeters}
           remainingDurationSeconds={remainingDurationSeconds}
           isVehicleArrived={dispatchState.phase === 'arrived'}
+          traceState={traceState}
+          onRefreshTrace={refreshTrace}
+          isTraceExpanded={isTraceExpanded}
+          onToggleTraceExpand={setIsTraceExpanded}
         />
       )}
     </>

@@ -14,6 +14,7 @@ import { render } from '@testing-library/react';
 import { GlobeMap } from './GlobeMap';
 import type { PlaceSuggestion } from '../types/place';
 import type { SimulatedDriver } from '../types/driver';
+import type { DispatchTrace } from '../types/dispatch';
 
 // ── Mock MapLibre GL JS ───────────────────────────────────────────────────────
 
@@ -439,6 +440,266 @@ describe('GlobeMap component', () => {
 
     // fitBounds was called to frame the entire route
     expect(mockMapInstance.fitBounds).toHaveBeenCalled();
+  });
+
+  // ── Phase 11.4F: Spatial Trace Overlay Tests ───────────────────────────────
+
+  const sampleTrace: DispatchTrace = {
+    requestId: 'REQ-MAP-1',
+    algorithm: 'AuctionMatcher',
+    pickupLatitude: 48.8566,
+    pickupLongitude: 2.3522,
+    startedAt: '2026-10-19T02:00:00Z',
+    durationNanos: 2_500_000,
+    stages: [
+      {
+        stageIndex: 0,
+        stageType: 'QUAD_TREE_SEARCH',
+        windowSize: 16,
+        minLatitude: 48.8500,
+        minLongitude: 2.3400,
+        maxLatitude: 48.8650,
+        maxLongitude: 2.3650,
+        visitedNodeCount: 10,
+        prunedNodeCount: 3,
+        candidatesDiscovered: 2,
+      },
+      {
+        stageIndex: 1,
+        stageType: 'UNBOUNDED_STAGE',
+        windowSize: 32,
+        minLatitude: null,
+        minLongitude: null,
+        maxLatitude: null,
+        maxLongitude: null,
+        visitedNodeCount: 4,
+        prunedNodeCount: 1,
+        candidatesDiscovered: 0,
+      },
+    ],
+    candidates: [
+      {
+        driverId: 'D-WIN',
+        latitude: 48.8580,
+        longitude: 2.3550,
+        distanceKm: 0.35,
+        etaCost: 1.1,
+        densityCost: 0.2,
+        opportunityCost: 0.1,
+        totalCost: 1.4,
+        rank: 0,
+        outcome: 'MATCHED',
+        rejectionReason: null,
+      },
+      {
+        driverId: 'D-OUT',
+        latitude: 48.8620,
+        longitude: 2.3600,
+        distanceKm: 1.1,
+        etaCost: null,
+        densityCost: null,
+        opportunityCost: null,
+        totalCost: null,
+        rank: 1,
+        outcome: 'OUTCOMPETED',
+        rejectionReason: 'Higher total cost',
+      },
+    ],
+    winnerDriverId: 'D-WIN',
+    matched: true,
+    totalFleetSize: 100,
+    decisionSummary: 'Matched driver D-WIN',
+  };
+
+  it('registers spatial trace stages and candidates sources and layers on initialization (Phase 11.4F)', () => {
+    render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={null}
+      />
+    );
+
+    // Verify trace sources registered
+    expect(mockMapInstance.addSource).toHaveBeenCalledWith('rendezvous-trace-stages', expect.anything());
+    expect(mockMapInstance.addSource).toHaveBeenCalledWith('rendezvous-trace-candidates', expect.anything());
+
+    // Verify trace layers registered
+    expect(mockMapInstance.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rendezvous-trace-stages-fill' }),
+      expect.anything()
+    );
+    expect(mockMapInstance.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rendezvous-trace-stages-outline' }),
+      expect.anything()
+    );
+    expect(mockMapInstance.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rendezvous-trace-candidates-halo' }),
+      expect.anything()
+    );
+    expect(mockMapInstance.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rendezvous-trace-candidates-core' }),
+      expect.anything()
+    );
+  });
+
+  it('updates spatial stage and candidate sources with GeoJSON when showTraceOverlay is true (Phase 11.4F)', () => {
+    mockMapInstance.fitBounds.mockClear();
+
+    render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        trace={sampleTrace}
+        showTraceOverlay={true}
+      />
+    );
+
+    const stagesSource = mockSources.get('rendezvous-trace-stages');
+    const candidatesSource = mockSources.get('rendezvous-trace-candidates');
+
+    expect(stagesSource).toBeDefined();
+    expect(candidatesSource).toBeDefined();
+
+    // Verify stages: only 1 feature emitted (stage 1 with null bbox was safely skipped)
+    expect(stagesSource?.setData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [
+          expect.objectContaining({
+            id: 'stage-0',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [2.3400, 48.8500],
+                  [2.3650, 48.8500],
+                  [2.3650, 48.8650],
+                  [2.3400, 48.8650],
+                  [2.3400, 48.8500], // closed ring
+                ],
+              ],
+            },
+            properties: expect.objectContaining({
+              stageIndex: 0,
+              stageType: 'QUAD_TREE_SEARCH',
+            }),
+          }),
+        ],
+      })
+    );
+
+    // Verify candidates: 2 features with Point [lon, lat], winner tag and outcome
+    expect(candidatesSource?.setData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [
+          expect.objectContaining({
+            id: 'D-WIN',
+            geometry: {
+              type: 'Point',
+              coordinates: [2.3550, 48.8580], // [lon, lat]
+            },
+            properties: expect.objectContaining({
+              driverId: 'D-WIN',
+              isWinner: true,
+              outcome: 'MATCHED',
+            }),
+          }),
+          expect.objectContaining({
+            id: 'D-OUT',
+            geometry: {
+              type: 'Point',
+              coordinates: [2.3600, 48.8620], // [lon, lat]
+            },
+            properties: expect.objectContaining({
+              driverId: 'D-OUT',
+              isWinner: false,
+              outcome: 'OUTCOMPETED',
+            }),
+          }),
+        ],
+      })
+    );
+
+    // Bounding boxes and candidates do NOT trigger automatic camera framing
+    expect(mockMapInstance.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it('clears trace overlay sources when showTraceOverlay is false or trace is null (Phase 11.4F)', () => {
+    const { rerender } = render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        trace={sampleTrace}
+        showTraceOverlay={false}
+      />
+    );
+
+    const stagesSource = mockSources.get('rendezvous-trace-stages');
+    const candidatesSource = mockSources.get('rendezvous-trace-candidates');
+
+    expect(stagesSource?.setData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [],
+      })
+    );
+    expect(candidatesSource?.setData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [],
+      })
+    );
+
+    // Now expand: showTraceOverlay becomes true
+    rerender(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        trace={sampleTrace}
+        showTraceOverlay={true}
+      />
+    );
+
+    expect(stagesSource?.setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: expect.arrayContaining([expect.objectContaining({ id: 'stage-0' })]),
+      })
+    );
+
+    // Now collapse: showTraceOverlay becomes false -> cleared again
+    rerender(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        trace={sampleTrace}
+        showTraceOverlay={false}
+      />
+    );
+
+    expect(stagesSource?.setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [],
+      })
+    );
+    expect(candidatesSource?.setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [],
+      })
+    );
   });
 });
 

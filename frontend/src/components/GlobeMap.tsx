@@ -6,7 +6,12 @@ import type { FeatureCollection } from 'geojson';
 import type { MapReadyState } from '../hooks/useMapReady';
 import type { PlaceSuggestion } from '../types/place';
 import type { SimulatedDriver } from '../types/driver';
-import type { DispatchPhase } from '../types/dispatch';
+import type { DispatchPhase, DispatchTrace } from '../types/dispatch';
+import {
+  stagesToFeatureCollection,
+  candidatesToFeatureCollection,
+  EMPTY_TRACE_FEATURE_COLLECTION,
+} from '../utils/traceGeoJson';
 import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
@@ -326,6 +331,157 @@ function ensureDriverApproachLayers(map: MapLibreMap) {
   }
 }
 
+// ── Spatial trace overlay layer constants (Phase 11.4F) ──────────────────────
+export const TRACE_STAGES_SOURCE_ID = 'rendezvous-trace-stages';
+export const TRACE_STAGES_FILL_LAYER_ID = 'rendezvous-trace-stages-fill';
+export const TRACE_STAGES_OUTLINE_LAYER_ID = 'rendezvous-trace-stages-outline';
+
+export const TRACE_CANDIDATES_SOURCE_ID = 'rendezvous-trace-candidates';
+export const TRACE_CANDIDATES_HALO_LAYER_ID = 'rendezvous-trace-candidates-halo';
+export const TRACE_CANDIDATES_CORE_LAYER_ID = 'rendezvous-trace-candidates-core';
+
+/**
+ * Idempotently registers the spatial trace stage and candidate GeoJSON sources and layers.
+ * Safe to call on initial style load and after style reloads.
+ */
+function ensureTraceLayers(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  // Stages GeoJSON source
+  if (!map.getSource(TRACE_STAGES_SOURCE_ID)) {
+    map.addSource(TRACE_STAGES_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  // Insert stage bounding boxes below road routes so routes remain visible
+  const beforeRouteOrDriverLayer =
+    map.getLayer(ROUTE_CASING_LAYER_ID)
+      ? ROUTE_CASING_LAYER_ID
+      : (map.getLayer(DRIVER_HALO_LAYER_ID) ? DRIVER_HALO_LAYER_ID : undefined);
+
+  if (!map.getLayer(TRACE_STAGES_FILL_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: TRACE_STAGES_FILL_LAYER_ID,
+        type: 'fill',
+        source: TRACE_STAGES_SOURCE_ID,
+        paint: {
+          'fill-color': '#0284c7',
+          'fill-opacity': 0.08,
+        },
+      },
+      beforeRouteOrDriverLayer,
+    );
+  }
+
+  if (!map.getLayer(TRACE_STAGES_OUTLINE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: TRACE_STAGES_OUTLINE_LAYER_ID,
+        type: 'line',
+        source: TRACE_STAGES_SOURCE_ID,
+        paint: {
+          'line-color': '#38bdf8',
+          'line-width': 1.5,
+          'line-opacity': 0.85,
+          'line-dasharray': [3, 2],
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeRouteOrDriverLayer,
+    );
+  }
+
+  // Candidates GeoJSON source
+  if (!map.getSource(TRACE_CANDIDATES_SOURCE_ID)) {
+    map.addSource(TRACE_CANDIDATES_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  const beforeMatchedDriverLayer = map.getLayer(MATCHED_DRIVER_HALO_LAYER_ID)
+    ? MATCHED_DRIVER_HALO_LAYER_ID
+    : undefined;
+
+  if (!map.getLayer(TRACE_CANDIDATES_HALO_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: TRACE_CANDIDATES_HALO_LAYER_ID,
+        type: 'circle',
+        source: TRACE_CANDIDATES_SOURCE_ID,
+        paint: {
+          'circle-radius': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            14,
+            8,
+          ],
+          'circle-color': [
+            'match',
+            ['get', 'outcome'],
+            'MATCHED', '#34d399',
+            'OUTCOMPETED', '#94a3b8',
+            'UNAVAILABLE', '#fbbf24',
+            'CLAIM_LOST', '#f87171',
+            '#64748b',
+          ],
+          'circle-opacity': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            0.35,
+            0.2,
+          ],
+          'circle-pitch-alignment': 'map',
+        },
+      },
+      beforeMatchedDriverLayer,
+    );
+  }
+
+  if (!map.getLayer(TRACE_CANDIDATES_CORE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: TRACE_CANDIDATES_CORE_LAYER_ID,
+        type: 'circle',
+        source: TRACE_CANDIDATES_SOURCE_ID,
+        paint: {
+          'circle-radius': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            6,
+            3.5,
+          ],
+          'circle-color': [
+            'match',
+            ['get', 'outcome'],
+            'MATCHED', '#34d399',
+            'OUTCOMPETED', '#94a3b8',
+            'UNAVAILABLE', '#fbbf24',
+            'CLAIM_LOST', '#f87171',
+            '#64748b',
+          ],
+          'circle-stroke-width': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            2,
+            1.2,
+          ],
+          'circle-stroke-color': '#080b12',
+          'circle-opacity': 1.0,
+          'circle-pitch-alignment': 'map',
+        },
+      },
+      beforeMatchedDriverLayer,
+    );
+  }
+}
+
 // ── OpenFreeMap "liberty" style ──────────────────────────────────────────────
 // Free, no API key, OSM data. Attribution is rendered automatically by the
 // MapLibre AttributionControl when the style JSON includes attribution metadata.
@@ -389,6 +545,16 @@ interface GlobeMapProps {
    * Phase 11.3 — Active lifecycle phase to trigger destination camera framing.
    */
   activePhase?: DispatchPhase;
+  /**
+   * Phase 11.4F — Read-only dispatch execution trace containing spatial exploration
+   * stages and evaluated candidates.
+   */
+  trace?: DispatchTrace | null;
+  /**
+   * Phase 11.4F — Whether to render spatial trace overlays (bounding boxes and candidates).
+   * Typically active when the Dispatch Trace accordion is expanded.
+   */
+  showTraceOverlay?: boolean;
 }
 
 /**
@@ -417,6 +583,8 @@ export function GlobeMap({
   animatedVehiclePosition = null,
   animatedVehicleBearing = 0,
   activePhase = 'idle',
+  trace = null,
+  showTraceOverlay = false,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -426,6 +594,10 @@ export function GlobeMap({
   const vehicleElRef = useRef<HTMLElement | null>(null);
   const driversRef = useRef<SimulatedDriver[]>(drivers);
   driversRef.current = drivers;
+  const traceRef = useRef<DispatchTrace | null | undefined>(trace);
+  traceRef.current = trace;
+  const showTraceOverlayRef = useRef<boolean>(showTraceOverlay);
+  showTraceOverlayRef.current = showTraceOverlay;
 
   /**
    * Phase 7E.2 camera guard: tracks the last driver location that triggered a
@@ -486,6 +658,16 @@ export function GlobeMap({
       ensureConnectorLayer(map);
       ensureRouteLayers(map);
       ensureDriverApproachLayers(map);
+      ensureTraceLayers(map);
+
+      if (showTraceOverlayRef.current && traceRef.current) {
+        const stagesSource = map.getSource(TRACE_STAGES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        const candidatesSource = map.getSource(TRACE_CANDIDATES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        stagesSource?.setData(stagesToFeatureCollection(traceRef.current.stages));
+        candidatesSource?.setData(
+          candidatesToFeatureCollection(traceRef.current.candidates, traceRef.current.winnerDriverId),
+        );
+      }
 
       onLoad();
     });
@@ -908,6 +1090,27 @@ export function GlobeMap({
       }
     }
   }, [animatedVehiclePosition, animatedVehicleBearing]);
+
+  // ── Sync spatial trace overlays (Phase 11.4F) ──────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    ensureTraceLayers(map);
+
+    const stagesSource = map.getSource(TRACE_STAGES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const candidatesSource = map.getSource(TRACE_CANDIDATES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+
+    if (!stagesSource || !candidatesSource) return;
+
+    if (showTraceOverlay && trace) {
+      stagesSource.setData(stagesToFeatureCollection(trace.stages));
+      candidatesSource.setData(candidatesToFeatureCollection(trace.candidates, trace.winnerDriverId));
+    } else {
+      stagesSource.setData(EMPTY_TRACE_FEATURE_COLLECTION);
+      candidatesSource.setData(EMPTY_TRACE_FEATURE_COLLECTION);
+    }
+  }, [trace, showTraceOverlay]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.

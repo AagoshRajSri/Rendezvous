@@ -15,6 +15,7 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App';
 import * as dispatchService from './services/dispatch';
 import { geocodingService } from './services/geocoding';
+import type { DispatchTrace } from './types/dispatch';
 
 // ── Mock MapLibre GL JS ───────────────────────────────────────────────────────
 
@@ -660,5 +661,106 @@ describe('App integrated dispatch & map flows (Phase 7E.3)', () => {
       expect(screen.queryByText('D-FULL-11-3')).toBeNull();
     });
   });
+
+  it('synchronizes dispatch trace with GlobeMap overlays when accordion is toggled (Phase 11.4F)', async () => {
+    const mockTrace: DispatchTrace = {
+      requestId: 'req-trace-4f',
+      algorithm: 'AuctionMatcher',
+      pickupLatitude: 48.8566,
+      pickupLongitude: 2.3522,
+      startedAt: '2026-10-18T10:00:00Z',
+      durationNanos: 2_500_000,
+      stages: [
+        {
+          stageIndex: 0,
+          stageType: 'QUAD_TREE_SEARCH',
+          windowSize: 16,
+          minLatitude: 48.8500,
+          minLongitude: 2.3400,
+          maxLatitude: 48.8650,
+          maxLongitude: 2.3650,
+          visitedNodeCount: 8,
+          prunedNodeCount: 2,
+          candidatesDiscovered: 2,
+        },
+      ],
+      candidates: [
+        {
+          driverId: 'D-TRACE-WIN',
+          latitude: 48.8580,
+          longitude: 2.3550,
+          distanceKm: 0.4,
+          etaCost: 1.0,
+          densityCost: 0.2,
+          opportunityCost: 0.1,
+          totalCost: 1.3,
+          rank: 0,
+          outcome: 'MATCHED',
+          rejectionReason: null,
+        },
+      ],
+      winnerDriverId: 'D-TRACE-WIN',
+      matched: true,
+      totalFleetSize: 50,
+      decisionSummary: 'Matched driver D-TRACE-WIN',
+    };
+
+    vi.mocked(dispatchService.getDispatchTrace).mockResolvedValue(mockTrace);
+    vi.mocked(dispatchService.registerDriver).mockResolvedValue({
+      driverId: 'D-TRACE-WIN',
+      message: 'Driver registration accepted',
+    });
+    vi.mocked(dispatchService.submitRideRequest).mockResolvedValue({
+      requestId: 'req-trace-4f',
+      message: 'Ride request accepted',
+    });
+    vi.mocked(dispatchService.getRequestStatus).mockResolvedValue({
+      requestId: 'req-trace-4f',
+      status: 'MATCHED',
+      driverId: 'D-TRACE-WIN',
+      receivedAt: '2026-10-18T10:00:00Z',
+      updatedAt: '2026-10-18T10:00:01Z',
+      driverLatitude: 48.8580,
+      driverLongitude: 2.3550,
+      driverLocationAt: '2026-10-18T10:00:01Z',
+    });
+
+    render(<App />);
+
+    // 1. Search and select pickup
+    await selectParis();
+
+    // 2. Request dispatch
+    const requestBtn = await screen.findByRole('button', { name: /Request Real Dispatch/i });
+    fireEvent.click(requestBtn);
+
+    // 3. Drain polling
+    await drainPolling();
+
+    // 4. Wait for MATCHED
+    expect(await screen.findByText('Match confirmed')).not.toBeNull();
+    expect(screen.getByText('D-TRACE-WIN')).not.toBeNull();
+
+    // 5. Trace was fetched once (single-fetch architecture)
+    await waitFor(() => {
+      expect(dispatchService.getDispatchTrace).toHaveBeenCalledWith(expect.stringMatching(/^req-/), expect.any(Object));
+      expect(dispatchService.getDispatchTrace).toHaveBeenCalledTimes(1);
+    });
+
+    // 5. Accordion is collapsed by default
+    const traceToggle = await screen.findByRole('button', { name: /Dispatch Trace/i });
+    expect(traceToggle.getAttribute('aria-expanded')).toBe('false');
+
+    // 6. Expand accordion -> toggles expanded state
+    fireEvent.click(traceToggle);
+    expect(traceToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('Execution Summary')).not.toBeNull();
+    expect(screen.getByText('Matched driver D-TRACE-WIN')).not.toBeNull();
+
+    // 7. Collapse accordion again
+    fireEvent.click(traceToggle);
+    expect(traceToggle.getAttribute('aria-expanded')).toBe('false');
+  });
 });
+
 
