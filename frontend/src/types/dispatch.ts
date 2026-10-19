@@ -159,3 +159,83 @@ export interface DispatchState {
   /** ISO-8601 timestamp of the last status update */
   updatedAt: string | null;
 }
+
+// ── Phase 11.4D — Dispatch Trace API types ────────────────────────────────────
+
+/**
+ * Lifecycle and evaluation outcome of a driver candidate.
+ * Mirrors the backend CandidateOutcome enum exactly.
+ */
+export type CandidateOutcome =
+  | 'MATCHED'
+  | 'OUTCOMPETED'
+  | 'UNAVAILABLE'
+  | 'CLAIM_LOST'
+  | 'UNMATCHED';
+
+/**
+ * One spatial exploration or refinement stage recorded during dispatch search.
+ * Matches backend SpatialStage record.
+ *
+ * Bounding-box fields (minLatitude … maxLongitude) are null when the stage
+ * did not expand to an explicit bounding box.
+ */
+export interface SpatialStage {
+  stageIndex: number;
+  stageType: string;
+  windowSize: number;
+  minLatitude: number | null;
+  minLongitude: number | null;
+  maxLatitude: number | null;
+  maxLongitude: number | null;
+  visitedNodeCount: number;
+  prunedNodeCount: number;
+  candidatesDiscovered: number;
+}
+
+/**
+ * A single driver candidate evaluated during the dispatch matching process.
+ * Matches backend TraceCandidate record.
+ *
+ * Cost components (etaCost … totalCost) are null when the matcher did not
+ * compute a full breakdown (e.g. the candidate was filtered before scoring).
+ * rejectionReason is null for the matched winner.
+ */
+export interface TraceCandidate {
+  driverId: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  etaCost: number | null;
+  densityCost: number | null;
+  opportunityCost: number | null;
+  totalCost: number | null;
+  rank: number;
+  outcome: CandidateOutcome;
+  rejectionReason: string | null;
+}
+
+/**
+ * Complete, read-only dispatch execution trace for a single ride request.
+ * HTTP 200 response from GET /api/requests/{requestId}/trace.
+ * Matches backend DispatchTrace record.
+ *
+ * winnerDriverId is null when no driver was matched (matched === false).
+ * startedAt is an ISO-8601 instant serialized as a string by Jackson.
+ */
+export interface DispatchTrace {
+  requestId: string;
+  algorithm: string;
+  pickupLatitude: number;
+  pickupLongitude: number;
+  /** ISO-8601 instant — Jackson serializes java.time.Instant as a string. */
+  startedAt: string;
+  durationNanos: number;
+  stages: SpatialStage[];
+  candidates: TraceCandidate[];
+  /** null when matched === false. */
+  winnerDriverId: string | null;
+  matched: boolean;
+  totalFleetSize: number;
+  decisionSummary: string;
+}

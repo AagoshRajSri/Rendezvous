@@ -382,3 +382,142 @@ describe('getTripStatus', () => {
   });
 });
 
+
+// -- getDispatchTrace ---------------------------------------------------------
+
+import { getDispatchTrace } from './dispatch';
+import type { DispatchTrace } from '../types/dispatch';
+
+describe('getDispatchTrace', () => {
+  const minimalTrace: DispatchTrace = {
+    requestId: 'REQ-100',
+    algorithm: 'AuctionMatcher',
+    pickupLatitude: 12.9716,
+    pickupLongitude: 77.5946,
+    startedAt: '2026-10-19T02:00:00Z',
+    durationNanos: 2_500_000,
+    stages: [
+      {
+        stageIndex: 0,
+        stageType: 'QUAD_TREE_SEARCH',
+        windowSize: 16,
+        minLatitude: 12.90,
+        minLongitude: 77.50,
+        maxLatitude: 13.00,
+        maxLongitude: 77.60,
+        visitedNodeCount: 12,
+        prunedNodeCount: 4,
+        candidatesDiscovered: 3,
+      },
+    ],
+    candidates: [
+      {
+        driverId: 'DRV-1',
+        latitude: 12.9720,
+        longitude: 77.5950,
+        distanceKm: 0.5,
+        etaCost: 1.2,
+        densityCost: 0.4,
+        opportunityCost: 0.1,
+        totalCost: 1.7,
+        rank: 0,
+        outcome: 'MATCHED',
+        rejectionReason: null,
+      },
+    ],
+    winnerDriverId: 'DRV-1',
+    matched: true,
+    totalFleetSize: 150,
+    decisionSummary: 'Matched with driver DRV-1 (total cost: 1.70)',
+  };
+
+  it('returns DispatchTrace on HTTP 200', async () => {
+    mockFetch(200, minimalTrace);
+
+    const result = await getDispatchTrace('REQ-100', abortSignal());
+
+    expect(result).toEqual(minimalTrace);
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/requests/REQ-100/trace');
+    expect((init as RequestInit).method).toBe('GET');
+  });
+
+  it('URL-encodes + as %2B in the requestId path segment', async () => {
+    mockFetch(200, { ...minimalTrace, requestId: 'REQ+100' });
+
+    await getDispatchTrace('REQ+100', abortSignal());
+
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/requests/REQ%2B100/trace');
+  });
+
+  it('URL-encodes % as %25 in the requestId path segment', async () => {
+    mockFetch(200, { ...minimalTrace, requestId: 'REQ%99' });
+
+    await getDispatchTrace('REQ%99', abortSignal());
+
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/requests/REQ%2599/trace');
+  });
+
+  it('returns null (not throws) on HTTP 404', async () => {
+    mockFetch(404, {
+      status: 404,
+      error: 'Not Found',
+      message: 'No dispatch trace found for requestId: REQ-100',
+    });
+
+    const result = await getDispatchTrace('REQ-100', abortSignal());
+    expect(result).toBeNull();
+  });
+
+  it('throws with backend message on HTTP 400', async () => {
+    mockFetch(400, {
+      status: 400,
+      error: 'Bad Request',
+      message: 'requestId must not be null or blank',
+    });
+
+    await expect(getDispatchTrace('  ', abortSignal())).rejects.toThrow(
+      'requestId must not be null or blank',
+    );
+  });
+
+  it('throws with backend message on HTTP 500', async () => {
+    mockFetch(500, {
+      status: 500,
+      error: 'Internal Server Error',
+      message: 'Unexpected internal error',
+    });
+
+    await expect(getDispatchTrace('REQ-ERR', abortSignal())).rejects.toThrow(
+      'Unexpected internal error',
+    );
+  });
+
+  it('passes the AbortSignal to fetch', async () => {
+    mockFetch(200, minimalTrace);
+
+    const signal = abortSignal();
+    await getDispatchTrace('REQ-100', signal);
+
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((init as RequestInit).signal).toBe(signal);
+  });
+
+  it('returns null winnerDriverId and matched=false for unmatched traces', async () => {
+    const unmatchedTrace: DispatchTrace = {
+      ...minimalTrace,
+      requestId: 'REQ-UNMATCHED',
+      winnerDriverId: null,
+      matched: false,
+      decisionSummary: 'No eligible driver claimed',
+    };
+    mockFetch(200, unmatchedTrace);
+
+    const result = await getDispatchTrace('REQ-UNMATCHED', abortSignal());
+    expect(result).not.toBeNull();
+    expect(result!.winnerDriverId).toBeNull();
+    expect(result!.matched).toBe(false);
+  });
+});

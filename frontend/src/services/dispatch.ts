@@ -18,6 +18,7 @@
 import type {
   DispatchAccepted,
   DispatchRequest,
+  DispatchTrace,
   DriverRegisterAccepted,
   DriverRegisterRequest,
   EligibleDriver,
@@ -245,3 +246,36 @@ export async function getTripStatus(
   return res.json() as Promise<TripResponse>;
 }
 
+/**
+ * Phase 11.4D — Retrieves the read-only dispatch execution trace for a ride request.
+ * GET /api/requests/{requestId}/trace → HTTP 200 with DispatchTrace.
+ *
+ * Returns null (not throws) on HTTP 404, which means the trace has not been
+ * generated yet, has been evicted by LRU capacity limits, or has expired via TTL.
+ * Callers should interpret null as "trace not available" rather than a hard failure.
+ *
+ * The requestId is encoded with encodeURIComponent so that characters such as
+ * '+' and '%' are preserved as '%2B' and '%25' on the wire.
+ *
+ * @throws Error on network failure or server error (4xx except 404, 5xx).
+ */
+export async function getDispatchTrace(
+  requestId: string,
+  signal?: AbortSignal,
+): Promise<DispatchTrace | null> {
+  const res = await fetch(`${BASE}/requests/${encodeURIComponent(requestId)}/trace`, {
+    method: 'GET',
+    signal,
+  });
+
+  if (res.status === 404) {
+    return null; // trace not yet generated, expired, or evicted
+  }
+
+  if (!res.ok) {
+    const message = await parseErrorBody(res);
+    throw new Error(message);
+  }
+
+  return res.json() as Promise<DispatchTrace>;
+}
