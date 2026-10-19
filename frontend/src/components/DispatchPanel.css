@@ -527,3 +527,10 @@
   color: #38bdf8;
 }
 
+/* ── Phase 11.4E: Responsive expansion when trace card is open ─────────────── */
+
+.dispatch-panel:has(.dispatch-trace-card--expanded) {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+}
+

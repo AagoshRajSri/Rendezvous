@@ -1,7 +1,14 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DispatchPanel } from './DispatchPanel';
-import type { DispatchState } from '../types/dispatch';
+import type { DispatchState, DispatchTrace } from '../types/dispatch';
+import { useDispatchTrace } from '../hooks/useDispatchTrace';
+
+vi.mock('../hooks/useDispatchTrace', () => ({
+  useDispatchTrace: vi.fn(),
+}));
+
+const mockUseDispatchTrace = vi.mocked(useDispatchTrace);
 
 const IDLE_STATE: DispatchState = {
   phase: 'idle',
@@ -14,6 +21,12 @@ const IDLE_STATE: DispatchState = {
 };
 
 describe('DispatchPanel', () => {
+  beforeEach(() => {
+    mockUseDispatchTrace.mockReturnValue({
+      state: { status: 'idle', trace: null, errorMessage: null },
+      refresh: vi.fn(),
+    });
+  });
   it('renders place name, disclaimer, and Request Real Dispatch button in idle phase', () => {
     const onRequestDispatch = vi.fn();
     const onReset = vi.fn();
@@ -667,6 +680,118 @@ describe('DispatchPanel', () => {
     expect(bookAnotherBtn).not.toBeNull();
     fireEvent.click(bookAnotherBtn);
     expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Phase 11.4E: Dispatch trace accordion integration ──────────────────────
+
+  const mockTrace: DispatchTrace = {
+    requestId: 'REQ-456',
+    algorithm: 'AuctionMatcher',
+    pickupLatitude: 12.9716,
+    pickupLongitude: 77.5946,
+    startedAt: '2026-10-19T02:00:00Z',
+    durationNanos: 2_500_000,
+    stages: [],
+    candidates: [
+      {
+        driverId: 'D-WIN',
+        latitude: 12.972,
+        longitude: 77.595,
+        distanceKm: 0.3,
+        etaCost: 1.0,
+        densityCost: 0.2,
+        opportunityCost: 0.0,
+        totalCost: 1.2,
+        rank: 0,
+        outcome: 'MATCHED',
+        rejectionReason: null,
+      },
+    ],
+    winnerDriverId: 'D-WIN',
+    matched: true,
+    totalFleetSize: 80,
+    decisionSummary: 'Matched with driver D-WIN',
+  };
+
+  it('does not render dispatch trace card when requestId is null', () => {
+    render(
+      <DispatchPanel
+        placeName="London"
+        dispatchState={IDLE_STATE}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: /Dispatch Trace/i })).toBeNull();
+  });
+
+  it('renders collapsed dispatch trace card when requestId is present', () => {
+    mockUseDispatchTrace.mockReturnValue({
+      state: { status: 'ready', trace: mockTrace, errorMessage: null },
+      refresh: vi.fn(),
+    });
+
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      requestId: 'REQ-456',
+      matchedDriverId: 'D-WIN',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="London"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    const toggle = screen.getByRole('button', { name: /Dispatch Trace/i });
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText(/AuctionMatcher \(2.50 ms\)/i)).not.toBeNull();
+
+    // Detail content is hidden when collapsed
+    expect(screen.queryByText('Execution Summary')).toBeNull();
+
+    // Expand
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Execution Summary')).not.toBeNull();
+    expect(screen.getByText('Matched with driver D-WIN')).not.toBeNull();
+    expect(screen.getAllByText('D-WIN').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('triggers refreshTrace when retry is clicked in not_found state', () => {
+    const mockRefresh = vi.fn();
+    mockUseDispatchTrace.mockReturnValue({
+      state: { status: 'not_found', trace: null, errorMessage: null },
+      refresh: mockRefresh,
+    });
+
+    const state: DispatchState = {
+      ...IDLE_STATE,
+      phase: 'matched',
+      requestId: 'REQ-456',
+      matchedDriverId: 'D-WIN',
+    };
+
+    render(
+      <DispatchPanel
+        placeName="London"
+        dispatchState={state}
+        onRequestDispatch={vi.fn()}
+        onReset={vi.fn()}
+        defaultTraceExpanded={true}
+      />
+    );
+
+    expect(screen.getByText('Trace Not Available')).not.toBeNull();
+    const retryBtn = screen.getByRole('button', { name: /Check Again/i });
+    fireEvent.click(retryBtn);
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
   });
 });
 

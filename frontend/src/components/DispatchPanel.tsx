@@ -2,6 +2,8 @@ import type { DispatchState } from '../types/dispatch';
 import type { PlaceSuggestion } from '../types/place';
 import type { RouteSummary } from '../types/routing';
 import { formatDistance as formatDistanceUtil, formatDuration as formatDurationUtil } from '../utils/fare';
+import { useDispatchTrace } from '../hooks/useDispatchTrace';
+import { DispatchTraceCard } from './DispatchTraceCard';
 import './DispatchPanel.css';
 
 interface DispatchPanelProps {
@@ -40,6 +42,8 @@ interface DispatchPanelProps {
   route?: RouteSummary | null;
   /** Chosen vehicle fare tier. */
   selectedTier?: 'standard' | 'premier' | 'xl';
+  /** Phase 11.4E: Whether dispatch trace accordion defaults to expanded (e.g. for testing). */
+  defaultTraceExpanded?: boolean;
 }
 
 /**
@@ -88,9 +92,11 @@ export function DispatchPanel({
   destinationPlace = null,
   route = null,
   selectedTier = 'standard',
+  defaultTraceExpanded = false,
 }: DispatchPanelProps) {
   const {
     phase,
+    requestId,
     matchedDriverId,
     matchedDriverLocation,
     matchedDriverLocationAt,
@@ -99,6 +105,9 @@ export function DispatchPanel({
   } = dispatchState;
   const formattedFixTime = formatValidTime(matchedDriverLocationAt);
   const formattedUpdateTime = formatValidTime(updatedAt);
+
+  // Phase 11.4E — Reactive dispatch trace fetching
+  const { state: traceState, refresh: refreshTrace } = useDispatchTrace(requestId);
 
   // Selected fare tier details for summary card
   const chosenFare = route?.fares?.find((f) => f.tierId === selectedTier) ?? route?.fares?.[0];
@@ -505,6 +514,15 @@ export function DispatchPanel({
               <p className="dispatch-panel__error-msg" role="alert">{errorMessage}</p>
             )}
           </>
+        )}
+
+        {/* ── Phase 11.4E: Dispatch Execution Trace Accordion ────────── */}
+        {requestId && (
+          <DispatchTraceCard
+            state={traceState}
+            onRefresh={refreshTrace}
+            defaultExpanded={defaultTraceExpanded}
+          />
         )}
       </div>
     </div>

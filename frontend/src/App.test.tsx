@@ -73,6 +73,7 @@ vi.mock('./services/dispatch', () => ({
   startTrip: vi.fn(),
   completeTrip: vi.fn(),
   getTripStatus: vi.fn(),
+  getDispatchTrace: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('./services/geocoding', () => ({
