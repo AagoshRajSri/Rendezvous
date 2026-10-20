@@ -7,6 +7,7 @@ import {
   isValidBoundingBox,
   stagesToFeatureCollection,
   candidatesToFeatureCollection,
+  candidatesToRaysFeatureCollection,
   EMPTY_TRACE_FEATURE_COLLECTION,
 } from './traceGeoJson';
 import type { SpatialStage, TraceCandidate } from '../types/dispatch';
@@ -261,3 +262,40 @@ describe('candidatesToFeatureCollection', () => {
     expect(fc.features[0].id).toBe('D-VALID');
   });
 });
+
+describe('candidatesToRaysFeatureCollection', () => {
+  it('returns empty collection when candidates or pickup is null or empty', () => {
+    expect(candidatesToRaysFeatureCollection(null, [77.594, 12.971])).toBe(EMPTY_TRACE_FEATURE_COLLECTION);
+    expect(candidatesToRaysFeatureCollection([], [77.594, 12.971])).toBe(EMPTY_TRACE_FEATURE_COLLECTION);
+    expect(candidatesToRaysFeatureCollection([{ driverId: 'D-1', latitude: 12.9, longitude: 77.5, distanceKm: 1, etaCost: null, densityCost: null, opportunityCost: null, totalCost: null, rank: 0, outcome: 'MATCHED', rejectionReason: null }], null)).toBe(EMPTY_TRACE_FEATURE_COLLECTION);
+  });
+
+  it('creates LineString features from pickup to candidates with isWinner set correctly', () => {
+    const candidates: TraceCandidate[] = [
+      {
+        driverId: 'D-1',
+        latitude: 12.972,
+        longitude: 77.595,
+        distanceKm: 0.8,
+        etaCost: 0.5,
+        densityCost: 0.2,
+        opportunityCost: 0.1,
+        totalCost: 0.8,
+        rank: 0,
+        outcome: 'MATCHED',
+        rejectionReason: null,
+      },
+    ];
+
+    const fc = candidatesToRaysFeatureCollection(candidates, { lon: 77.59, lat: 12.97 }, 'D-1');
+    expect(fc.features).toHaveLength(1);
+    const ray = fc.features[0];
+    expect(ray.geometry.type).toBe('LineString');
+    expect(ray.geometry.coordinates).toEqual([
+      [77.59, 12.97],
+      [77.595, 12.972],
+    ]);
+    expect(ray.properties?.isWinner).toBe(true);
+  });
+});
+

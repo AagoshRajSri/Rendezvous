@@ -5,7 +5,7 @@
  * coordinates to GeoJSON Points, ensuring strict [longitude, latitude] WGS-84 coordinate ordering.
  */
 
-import type { FeatureCollection, Feature, Polygon, Point, GeoJsonProperties } from 'geojson';
+import type { FeatureCollection, Feature, Polygon, Point, LineString, GeoJsonProperties } from 'geojson';
 import type { SpatialStage, TraceCandidate } from '../types/dispatch';
 
 export const EMPTY_TRACE_FEATURE_COLLECTION: FeatureCollection = {
@@ -151,3 +151,66 @@ export function candidatesToFeatureCollection(
     features,
   };
 }
+
+/**
+ * Converts candidate drivers into a GeoJSON FeatureCollection of LineString rays
+ * connecting the pickup coordinate to each evaluated driver candidate.
+ */
+export function candidatesToRaysFeatureCollection(
+  candidates: TraceCandidate[] | null | undefined,
+  pickup: { lat: number; lon: number } | [number, number] | null | undefined,
+  winnerDriverId?: string | null,
+): FeatureCollection<LineString, GeoJsonProperties> {
+  if (!candidates || candidates.length === 0 || !pickup) {
+    return EMPTY_TRACE_FEATURE_COLLECTION as FeatureCollection<LineString, GeoJsonProperties>;
+  }
+
+  const pickupLon = Array.isArray(pickup) ? pickup[0] : pickup.lon;
+  const pickupLat = Array.isArray(pickup) ? pickup[1] : pickup.lat;
+
+  if (!Number.isFinite(pickupLon) || !Number.isFinite(pickupLat)) {
+    return EMPTY_TRACE_FEATURE_COLLECTION as FeatureCollection<LineString, GeoJsonProperties>;
+  }
+
+  const features: Feature<LineString, GeoJsonProperties>[] = [];
+
+  for (const candidate of candidates) {
+    if (
+      candidate.latitude == null ||
+      candidate.longitude == null ||
+      !Number.isFinite(candidate.latitude) ||
+      !Number.isFinite(candidate.longitude)
+    ) {
+      continue;
+    }
+
+    const isWinner =
+      candidate.outcome === 'MATCHED' ||
+      (winnerDriverId != null && candidate.driverId === winnerDriverId);
+
+    features.push({
+      type: 'Feature',
+      id: `ray-${candidate.driverId}`,
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [pickupLon, pickupLat],
+          [candidate.longitude, candidate.latitude],
+        ],
+      },
+      properties: {
+        driverId: candidate.driverId,
+        isWinner,
+        outcome: candidate.outcome,
+        totalCost: candidate.totalCost,
+        distanceKm: candidate.distanceKm,
+      },
+    });
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features,
+  };
+}
+

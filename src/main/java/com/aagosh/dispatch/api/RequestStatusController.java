@@ -122,8 +122,8 @@ public class RequestStatusController {
                         Driver d  = driverOpt.get();
                         long   ts = d.updatedAt();
                         if (ts > 0L && driverRegistry.isFresh(driverId, freshnessConfig)) {
-                            driverLat       = d.location().latitude();
-                            driverLon       = d.location().longitude();
+                            driverLat        = d.location().latitude();
+                            driverLon        = d.location().longitude();
                             driverLocationAt = Instant.ofEpochMilli(ts);
                         }
                     }

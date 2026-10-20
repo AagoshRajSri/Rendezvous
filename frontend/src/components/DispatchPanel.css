@@ -1,37 +1,43 @@
-/*
- * Phase 7D — DispatchPanel component styles
- *
- * The panel renders in the bottom-left corner of the globe, above the
- * MapLibre navigation controls. It uses the existing CSS custom properties
- * defined in index.css / GlobeMap.css.
- */
+/* ============================================================
+   Phase 7D / 11.2 / 11.3 — DispatchPanel component styles
+   Luxury Obsidian Glass aesthetic — consistent with RoutePreviewCard
+   and AlgorithmHUD. Positioned at bottom-left above navigation controls
+   with zero overlapping.
+   ============================================================ */
 
 /* ── Panel container ─────────────────────────────────────────────────────────── */
 
 .dispatch-panel {
   position: absolute;
-  bottom: 120px; /* above MapLibre navigation controls */
-  left: 16px;
-  z-index: 20;
-  width: 280px;
-  border-radius: 14px;
-  overflow: hidden;
-  background: rgba(8, 11, 18, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-  animation: dispatch-panel-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  bottom: 84px; /* cleanly above MapLibre navigation controls */
+  left: 20px;
+  z-index: 25;
+  width: 320px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  border-radius: 16px;
+  background: rgba(10, 14, 23, 0.90);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    0 24px 50px -12px rgba(0, 0, 0, 0.85),
+    0 4px 16px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: dispatch-panel-in 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  color: #f8fafc;
 }
 
 @keyframes dispatch-panel-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(8px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -41,50 +47,52 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .dispatch-panel__icon {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
+  color: #10b981;
 }
 
 .dispatch-panel__title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.7);
   flex: 1;
 }
 
 /* ── Body ────────────────────────────────────────────────────────────────────── */
 
 .dispatch-panel__body {
-  padding: 12px 14px 14px;
+  padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 /* Place name */
 .dispatch-panel__place {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: #e8edf5;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -0.01em;
 }
 
 /* Disclaimer badge */
 .dispatch-panel__disclaimer {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.45);
   line-height: 1.4;
-  border-left: 2px solid rgba(255, 197, 66, 0.4);
-  padding-left: 7px;
+  border-left: 2px solid rgba(16, 185, 129, 0.5);
+  padding-left: 8px;
 }
 
 /* ── CTA button ─────────────────────────────────────────────────────────────── */
@@ -95,22 +103,24 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 9px 14px;
-  border-radius: 9px;
+  padding: 11px 16px;
+  border-radius: 12px;
   border: none;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dispatch-panel__btn--primary {
-  background: linear-gradient(135deg, #4f8ef7 0%, #7b5cf6 100%);
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
   color: #fff;
+  box-shadow: 0 4px 16px -2px rgba(16, 185, 129, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .dispatch-panel__btn--primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #6aa0ff 0%, #8e74f7 100%);
+  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+  box-shadow: 0 6px 22px -2px rgba(16, 185, 129, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   transform: translateY(-1px);
 }
 
@@ -121,6 +131,7 @@
 .dispatch-panel__btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  transform: none;
 }
 
 .dispatch-panel__action-group {
@@ -134,24 +145,31 @@
 }
 
 .dispatch-panel__btn--secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: #c0c8d8;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .dispatch-panel__btn--secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .dispatch-panel__btn--danger {
-  background: rgba(255, 80, 80, 0.12);
-  color: #ff7070;
-  border: 1px solid rgba(255, 80, 80, 0.25);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.25);
 }
 
 .dispatch-panel__btn--danger:hover:not(:disabled) {
-  background: rgba(255, 80, 80, 0.2);
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.4);
+  transform: translateY(-1px);
+}
+
+.dispatch-panel__btn--danger:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 /* ── Status display ─────────────────────────────────────────────────────────── */
@@ -159,11 +177,11 @@
 .dispatch-panel__status {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .dispatch-panel__status-dot {
@@ -175,38 +193,38 @@
 }
 
 .dispatch-panel__status-dot--active {
-  background: #4f8ef7;
-  box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.3);
-  animation: pulse-dot 1.4s ease-in-out infinite;
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3);
+  animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-dot {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.3); }
-  50%       { box-shadow: 0 0 0 6px rgba(79, 142, 247, 0.1); }
+  0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3); }
+  50%       { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.1); }
 }
 
 .dispatch-panel__status-dot--success {
-  background: #3dd68c;
+  background: #10b981;
 }
 
 .dispatch-panel__status-dot--warning {
-  background: #ffc542;
+  background: #f59e0b;
 }
 
 .dispatch-panel__status-dot--error {
-  background: #ff7070;
+  background: #f43f5e;
 }
 
 .dispatch-panel__status-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.75);
   line-height: 1.45;
 }
 
 .dispatch-panel__status-text strong {
   display: block;
   font-weight: 600;
-  color: #e8edf5;
+  color: #ffffff;
   margin-bottom: 2px;
 }
 
@@ -215,23 +233,24 @@
 .dispatch-panel__match-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(61, 214, 140, 0.07);
-  border: 1px solid rgba(61, 214, 140, 0.25);
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
 .dispatch-panel__match-avatar {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3dd68c 0%, #4f8ef7 100%);
+  background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 16px;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .dispatch-panel__match-info {
@@ -242,24 +261,25 @@
 .dispatch-panel__match-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #3dd68c;
+  color: #10b981;
   margin-bottom: 2px;
 }
 
 .dispatch-panel__match-driver-id {
   font-size: 12px;
-  font-weight: 500;
-  color: #e8edf5;
+  font-weight: 600;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: monospace;
 }
 
 .dispatch-panel__match-time {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.45);
   margin-top: 2px;
 }
 
@@ -267,25 +287,25 @@
 
 .dispatch-panel__error-msg {
   font-size: 11px;
-  color: #ff9090;
+  color: #fb7185;
   line-height: 1.45;
 }
 
-/* ── Driver location verified badge (Phase 7E.2) ────────────────────────────── */
+/* ── Driver location verified badge ─────────────────────────────────────────── */
 
 .dispatch-panel__location-badge {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: rgba(255, 197, 66, 0.07);
-  border: 1px solid rgba(255, 197, 66, 0.28);
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.22);
 }
 
 .dispatch-panel__location-badge--unavailable {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.025);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .dispatch-panel__location-badge-icon {
@@ -303,7 +323,7 @@
 .dispatch-panel__location-badge-text strong {
   display: block;
   font-weight: 600;
-  color: #ffc542;
+  color: #f59e0b;
   margin-bottom: 2px;
   font-size: 11px;
 }
@@ -314,40 +334,21 @@
   color: rgba(255, 255, 255, 0.45);
 }
 
-
 .dispatch-panel__location-badge--unavailable .dispatch-panel__location-badge-text span {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.55);
 }
 
-/* ── Danger / Cancel button (Phase 11.2) ────────────────────────────────────── */
-
-.dispatch-panel__btn--danger {
-  background: rgba(244, 63, 94, 0.15);
-  color: #fb7185;
-  border: 1px solid rgba(244, 63, 94, 0.35);
-}
-
-.dispatch-panel__btn--danger:hover:not(:disabled) {
-  background: rgba(244, 63, 94, 0.25);
-  border-color: rgba(244, 63, 94, 0.5);
-  transform: translateY(-1px);
-}
-
-.dispatch-panel__btn--danger:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-/* ── Live ETA & Remaining Distance Card (Phase 11.2) ───────────────────────── */
+/* ── Live ETA & Remaining Distance Card ────────────────────────────────────── */
 
 .dispatch-panel__eta-card {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  padding: 10px 12px;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  border-radius: 10px;
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.07);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 12px;
   margin-top: 2px;
 }
 
@@ -362,7 +363,7 @@
   font-size: 10px;
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   color: rgba(255, 255, 255, 0.5);
 }
 
@@ -375,27 +376,25 @@
 
 .dispatch-panel__eta-divider {
   width: 1px;
-  height: 24px;
+  height: 22px;
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* ── Phase 11.3: In-Progress Destination ETA Variant ────────────────────────── */
-
+/* In-Progress Destination ETA Variant */
 .dispatch-panel__eta-card--destination {
-  background: rgba(56, 189, 248, 0.08);
-  border-color: rgba(56, 189, 248, 0.25);
+  background: rgba(16, 185, 129, 0.07);
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
 .dispatch-panel__eta-card--destination .dispatch-panel__eta-value {
-  color: #38bdf8;
+  color: #34d399;
 }
 
-/* ── Phase 11.3: Start & Complete buttons ───────────────────────────────────── */
-
+/* Start & Complete buttons */
 .dispatch-panel__btn--success {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+  box-shadow: 0 4px 16px -2px rgba(16, 185, 129, 0.45);
 }
 
 .dispatch-panel__btn--success:hover:not(:disabled) {
@@ -407,13 +406,12 @@
   transform: translateY(0);
 }
 
-/* ── Phase 11.3: Destination Missing Guidance ───────────────────────────────── */
-
+/* Destination Missing Guidance */
 .dispatch-panel__guidance-box {
   padding: 10px 12px;
-  background: rgba(234, 179, 8, 0.08);
-  border: 1px solid rgba(234, 179, 8, 0.25);
-  border-radius: 9px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -431,16 +429,15 @@
   line-height: 1.4;
 }
 
-/* ── Phase 11.3: Trip Completed Summary Card ────────────────────────────────── */
-
+/* Trip Completed Summary Card */
 .dispatch-panel__summary-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
-  background: rgba(16, 185, 129, 0.07);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  border-radius: 10px;
+  padding: 14px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 12px;
 }
 
 .dispatch-panel__summary-header {
@@ -463,9 +460,9 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(16, 185, 129, 0.2);
+  padding: 2px 7px;
+  border-radius: 100px;
+  background: rgba(16, 185, 129, 0.18);
   color: #6ee7b7;
 }
 
@@ -473,7 +470,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 4px;
+  padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -502,16 +499,16 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.04);
-  border-radius: 6px;
+  border-radius: 8px;
   margin-top: 4px;
 }
 
 .dispatch-panel__summary-fare-label {
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .dispatch-panel__summary-fare-note {
@@ -522,15 +519,26 @@
 }
 
 .dispatch-panel__summary-fare-value {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  color: #38bdf8;
+  color: #34d399;
 }
 
-/* ── Phase 11.4E: Responsive expansion when trace card is open ─────────────── */
-
+/* Responsive expansion when trace card is open */
 .dispatch-panel:has(.dispatch-trace-card--expanded) {
   width: 360px;
   max-width: calc(100vw - 32px);
 }
 
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .dispatch-panel {
+    bottom: max(16px, env(safe-area-inset-bottom, 16px));
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    max-height: min(520px, calc(100dvh - 120px));
+    z-index: 30;
+  }
+}

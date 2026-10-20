@@ -17,9 +17,9 @@
 }
 
 .dispatch-trace-card--expanded {
-  background: rgba(15, 23, 42, 0.85);
-  border-color: rgba(56, 189, 248, 0.3);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  background: rgba(10, 14, 23, 0.95);
+  border-color: rgba(16, 185, 129, 0.35);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Accordion Header Button ─────────────────────────────────────────────────── */
@@ -45,7 +45,7 @@
 }
 
 .dispatch-trace-card__header-btn:focus-visible {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid #10b981;
   outline-offset: -2px;
 }
 
@@ -59,7 +59,7 @@
 
 .dispatch-trace-card__icon {
   font-size: 13px;
-  color: #38bdf8;
+  color: #a855f7;
 }
 
 .dispatch-trace-card__title {
@@ -94,9 +94,9 @@
 }
 
 .dispatch-trace-status-pill--loading {
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .dispatch-trace-status-pill--neutral {
@@ -185,8 +185,8 @@
 .dispatch-trace-card__spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(56, 189, 248, 0.2);
-  border-top-color: #38bdf8;
+  border: 2px solid rgba(16, 185, 129, 0.2);
+  border-top-color: #10b981;
   border-radius: 50%;
   animation: dispatch-trace-spin 0.7s linear infinite;
 }
@@ -203,15 +203,15 @@
   font-size: 10.5px;
   font-weight: 600;
   border-radius: 6px;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  color: #38bdf8;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .dispatch-trace-card__action-btn:hover {
-  background: rgba(56, 189, 248, 0.22);
+  background: rgba(16, 185, 129, 0.22);
 }
 
 /* ── Content Sections ───────────────────────────────────────────────────────── */
@@ -317,7 +317,7 @@
 
 .dispatch-trace-card__decision-box {
   background: rgba(255, 255, 255, 0.02);
-  border-left: 2px solid #38bdf8;
+  border-left: 2px solid #10b981;
   padding: 6px 8px;
   border-radius: 0 6px 6px 0;
   font-size: 10.5px;
@@ -333,7 +333,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #38bdf8;
+  color: #34d399;
 }
 
 .dispatch-trace-card__decision-text {
@@ -381,7 +381,7 @@
 
 .dispatch-trace-card__cell-driver code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #38bdf8;
+  color: #34d399;
 }
 
 .dispatch-trace-card__cell-cost {
@@ -472,7 +472,7 @@
 }
 
 .dispatch-trace-card__stage-window {
-  color: #38bdf8;
+  color: #34d399;
   font-size: 9.5px;
 }
 

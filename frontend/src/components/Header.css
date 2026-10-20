@@ -1,5 +1,6 @@
 /* ============================================================
-   Header — Rendezvous
+   Header — Uber-Inspired Minimalist Navigation Bar
+   Apple-grade optical frosted glass, bold typography, razor-sharp alignment.
    ============================================================ */
 
 .header {
@@ -7,113 +8,188 @@
   top: 0;
   left: 0;
   right: 0;
-  height: var(--header-h);
+  height: var(--header-h, 64px);
   z-index: 100;
+
+  /* Apple-grade frosted glass */
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  gap: 12px;
-
-  /* Glassmorphism surface */
-  background: rgba(8, 11, 18, 0.72);
-  border-bottom: 1px solid var(--color-border);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
-/* ---- Logo mark ---- */
+.header__inner {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Brand Group (Logo + Wordmark + Nav) ─────────────────────────────────── */
+.header__brand-group {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+/* ── Minimalist Geometric Logo ───────────────────────────────────────────── */
 .header__logo {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--color-accent) 0%, #7b5ef8 100%);
-  box-shadow: 0 0 16px var(--color-accent-glow);
   flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.2s ease;
 }
 
-.header__logo svg {
-  width: 20px;
-  height: 20px;
-  fill: #fff;
+.header__logo:hover {
+  transform: scale(1.05);
 }
 
-/* ---- Brand text ---- */
-.header__brand {
+.header__logo-svg {
+  width: 28px;
+  height: 28px;
+}
+
+/* ── Wordmark ────────────────────────────────────────────────────────────── */
+.header__wordmark {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
 }
 
 .header__title {
-  font-size: 16px;
+  font-size: 21px;
   font-weight: 700;
-  letter-spacing: -0.3px;
-  color: var(--color-text);
+  letter-spacing: -0.025em;
+  color: #ffffff;
   line-height: 1;
 }
 
-.header__subtitle {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--color-text-muted);
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  line-height: 1;
+/* ── Uber Navigation Tabs ────────────────────────────────────────────────── */
+.header__nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
 }
 
-/* ---- Right spacer (future actions go here in 7B/7C/7D) ---- */
+.header__nav-item {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 7px 16px;
+  border-radius: 24px;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.header__nav-item:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.header__nav-item--active {
+  color: #ffffff;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.header__nav-item--active:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ── Spacer ───────────────────────────────────────────────────────────────── */
 .header__spacer {
   flex: 1;
 }
 
-/* ---- Status chip (shows map state) ---- */
-.header__status {
+/* ── Right Status Pill (Apple / Uber minimal pill) ────────────────────────── */
+.header__right {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
+  gap: 12px;
+}
+
+.header__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.3px;
-  border: 1px solid transparent;
-  transition: all 0.3s var(--ease-out);
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+  user-select: none;
 }
 
-.header__status--loading {
-  background: rgba(79, 142, 247, 0.1);
-  border-color: rgba(79, 142, 247, 0.25);
-  color: var(--color-accent);
-}
-
-.header__status--ready {
-  background: rgba(61, 214, 140, 0.1);
-  border-color: rgba(61, 214, 140, 0.25);
-  color: var(--color-success);
-}
-
-.header__status--error {
-  background: var(--color-error-bg);
-  border-color: rgba(247, 92, 92, 0.3);
-  color: var(--color-error);
+.header__status:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .header__status-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: currentColor;
+  flex-shrink: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.header__status--ready .header__status-dot {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
 }
 
 .header__status--loading .header__status-dot {
-  animation: pulse-dot 1.4s ease-in-out infinite;
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+  animation: header-pulse 1.5s infinite ease-in-out;
 }
 
-@keyframes pulse-dot {
+.header__status--error .header__status-dot {
+  background: #f43f5e;
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+}
+
+.header__status-text {
+  letter-spacing: -0.01em;
+}
+
+@keyframes header-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50%       { opacity: 0.4; transform: scale(0.7); }
+  50%      { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* ── Mobile Responsive ────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .header__inner {
+    padding: 0 16px;
+  }
+
+  .header__brand-group {
+    gap: 16px;
+  }
+
+  .header__nav {
+    display: none;
+  }
+
+  .header__title {
+    font-size: 18px;
+  }
 }

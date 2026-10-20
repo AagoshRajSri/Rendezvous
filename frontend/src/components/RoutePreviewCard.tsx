@@ -36,7 +36,12 @@ export function RoutePreviewCard({
       {/* ── Route Header ─────────────────────────────────────────────────── */}
       <div className="route-preview-card__header">
         <div className="route-preview-card__title-row">
-          <span className="route-preview-card__badge-icon" aria-hidden="true">🗺</span>
+          <span className="route-preview-card__badge-icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </span>
           <span className="route-preview-card__title">Trip Route Preview</span>
           {route.isFallback && (
             <span
@@ -53,7 +58,10 @@ export function RoutePreviewCard({
           onClick={onClearDestination}
           aria-label="Close route preview"
         >
-          ×
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
         </button>
       </div>
 
@@ -131,7 +139,11 @@ export function RoutePreviewCard({
                 <div className="route-preview-card__tier-row">
                   <span className="route-preview-card__tier-name">{tier.name}</span>
                   <span className="route-preview-card__tier-capacity" title={`Capacity: ${tier.capacity} passengers`}>
-                    👤 {tier.capacity}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline', marginRight: 3, verticalAlign: -1 }} aria-hidden="true">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    {tier.capacity}
                   </span>
                 </div>
                 <div className="route-preview-card__tier-sub">

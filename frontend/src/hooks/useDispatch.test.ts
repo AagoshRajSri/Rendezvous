@@ -23,12 +23,14 @@ vi.mock('../services/dispatch', () => ({
   startTrip: vi.fn(),
   completeTrip: vi.fn(),
   getTripStatus: vi.fn(),
+  fetchEligibleDrivers: vi.fn(),
 }));
 
 import {
   beginEnRoute,
   cancelTrip,
   completeTrip,
+  fetchEligibleDrivers,
   getRequestStatus,
   getTripStatus,
   registerDriver,
@@ -68,6 +70,15 @@ beforeEach(() => {
     outcome: 'TRANSITIONED',
     message: 'OK',
   });
+  vi.mocked(fetchEligibleDrivers).mockResolvedValue([
+    {
+      driverId: 'd-mock',
+      latitude: 51.5,
+      longitude: -0.1,
+      status: 'AVAILABLE',
+      updatedAt: new Date().toISOString(),
+    },
+  ]);
 });
 
 afterEach(() => {
@@ -611,11 +622,11 @@ describe('useDispatch — fleet synchronization (Phase 11.2)', () => {
     // Only available drivers (sim-1 and sim-2) registered, not busy (sim-3)
     expect(registerDriver).toHaveBeenCalledTimes(2);
     expect(registerDriver).toHaveBeenCalledWith(
-      expect.objectContaining({ driverId: 'place-sim-1', latitude: 51.51, longitude: -0.12 }),
+      expect.objectContaining({ driverId: expect.stringMatching(/^place-sim-1/), latitude: 51.51, longitude: -0.12 }),
       expect.any(Object),
     );
     expect(registerDriver).toHaveBeenCalledWith(
-      expect.objectContaining({ driverId: 'place-sim-2', latitude: 51.52, longitude: -0.13 }),
+      expect.objectContaining({ driverId: expect.stringMatching(/^place-sim-2/), latitude: 51.52, longitude: -0.13 }),
       expect.any(Object),
     );
   });

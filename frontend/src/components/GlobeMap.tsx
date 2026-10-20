@@ -10,6 +10,7 @@ import type { DispatchPhase, DispatchTrace } from '../types/dispatch';
 import {
   stagesToFeatureCollection,
   candidatesToFeatureCollection,
+  candidatesToRaysFeatureCollection,
   EMPTY_TRACE_FEATURE_COLLECTION,
 } from '../utils/traceGeoJson';
 import { SimulatedFleetBadge } from './SimulatedFleetBadge';
@@ -237,9 +238,9 @@ function ensureRouteLayers(map: MapLibreMap) {
         type: 'line',
         source: ROUTE_SOURCE_ID,
         paint: {
-          'line-color': '#0369a1',
+          'line-color': '#047857', // Deep Jade Casing
           'line-width': 7,
-          'line-opacity': 0.7,
+          'line-opacity': 0.75,
           'line-blur': 1,
         },
         layout: {
@@ -258,7 +259,7 @@ function ensureRouteLayers(map: MapLibreMap) {
         type: 'line',
         source: ROUTE_SOURCE_ID,
         paint: {
-          'line-color': '#38bdf8',
+          'line-color': '#10b981', // Luminescent Aurora Mint Core
           'line-width': 4,
           'line-opacity': 0.95,
         },
@@ -331,7 +332,112 @@ function ensureDriverApproachLayers(map: MapLibreMap) {
   }
 }
 
-// ── Spatial trace overlay layer constants (Phase 11.4F) ──────────────────────
+// ── Electric wave route layers (Phase 11.5 — enhanced) ───────────────────────
+// Three layers stacked on the same GeoJSON source:
+//   1. Corona glow   — wide blurred halo for neon bloom
+//   2. Core wire     — bright narrow centre line
+//   3. Spark dashes  — animated flowing electricity (rAF-driven dash offset)
+export const PATH_PULSE_SOURCE_ID = 'rendezvous-path-pulse';
+export const PATH_PULSE_LAYER_ID = 'rendezvous-path-pulse-layer'; // kept for compat
+const PATH_ELECTRIC_CORONA_LAYER_ID = 'rendezvous-path-electric-corona';
+const PATH_ELECTRIC_CORE_LAYER_ID   = 'rendezvous-path-electric-core';
+const PATH_ELECTRIC_SPARK_LAYER_ID  = 'rendezvous-path-electric-spark';
+
+function ensurePathPulseLayer(map: MapLibreMap) {
+  if (!map.isStyleLoaded()) return;
+
+  if (!map.getSource(PATH_PULSE_SOURCE_ID)) {
+    map.addSource(PATH_PULSE_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  // Insert below driver dots so route is always behind interactive markers
+  const beforeLayer = map.getLayer(DRIVER_HALO_LAYER_ID) ? DRIVER_HALO_LAYER_ID : undefined;
+
+  // ── 1. Corona bloom glow ──────────────────────────────────────────────────
+  if (!map.getLayer(PATH_ELECTRIC_CORONA_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: PATH_ELECTRIC_CORONA_LAYER_ID,
+        type: 'line',
+        source: PATH_PULSE_SOURCE_ID,
+        paint: {
+          'line-color': '#059669', // Auroral Emerald
+          'line-width': 16,
+          'line-opacity': 0.32,
+          'line-blur': 9,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      },
+      beforeLayer,
+    );
+  }
+
+  // ── 2. Core wire ──────────────────────────────────────────────────────────
+  if (!map.getLayer(PATH_ELECTRIC_CORE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: PATH_ELECTRIC_CORE_LAYER_ID,
+        type: 'line',
+        source: PATH_PULSE_SOURCE_ID,
+        paint: {
+          'line-color': '#ecfdf5', // Seafoam White Plasma
+          'line-width': 2.5,
+          'line-opacity': 0.98,
+          'line-blur': 0.3,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      },
+      beforeLayer,
+    );
+  }
+
+  // ── 3. Travelling spark dashes ─────────────────────────────────────────────
+  // Initial dasharray — offset animation driven externally via setPaintProperty.
+  if (!map.getLayer(PATH_ELECTRIC_SPARK_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: PATH_ELECTRIC_SPARK_LAYER_ID,
+        type: 'line',
+        source: PATH_PULSE_SOURCE_ID,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 3.5,
+          'line-opacity': 0.9,
+          'line-dasharray': [2, 6],
+        },
+        layout: { 'line-cap': 'butt', 'line-join': 'round' },
+      },
+      beforeLayer,
+    );
+  }
+
+  // Legacy alias layer — keep exported ID pointing at something real
+  // (external code only reads PATH_PULSE_LAYER_ID; we alias to spark)
+  // No-op if already registered above.
+  if (!map.getLayer(PATH_PULSE_LAYER_ID)) {
+    // Thin mid-tone layer between corona and core for extra depth
+    map.addLayer(
+      {
+        id: PATH_PULSE_LAYER_ID,
+        type: 'line',
+        source: PATH_PULSE_SOURCE_ID,
+        paint: {
+          'line-color': '#a855f7', // Neon Purple depth
+          'line-width': 8,
+          'line-opacity': 0.45,
+          'line-blur': 2.5,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      },
+      beforeLayer,
+    );
+  }
+}
+
+// ── Spatial trace overlay layer constants (Phase 11.4F & 11.5) ────────────────
 export const TRACE_STAGES_SOURCE_ID = 'rendezvous-trace-stages';
 export const TRACE_STAGES_FILL_LAYER_ID = 'rendezvous-trace-stages-fill';
 export const TRACE_STAGES_OUTLINE_LAYER_ID = 'rendezvous-trace-stages-outline';
@@ -340,8 +446,11 @@ export const TRACE_CANDIDATES_SOURCE_ID = 'rendezvous-trace-candidates';
 export const TRACE_CANDIDATES_HALO_LAYER_ID = 'rendezvous-trace-candidates-halo';
 export const TRACE_CANDIDATES_CORE_LAYER_ID = 'rendezvous-trace-candidates-core';
 
+export const TRACE_RAYS_SOURCE_ID = 'rendezvous-trace-rays';
+export const TRACE_RAYS_LAYER_ID = 'rendezvous-trace-rays-core';
+
 /**
- * Idempotently registers the spatial trace stage and candidate GeoJSON sources and layers.
+ * Idempotently registers the spatial trace stage, candidate, and laser ray GeoJSON sources and layers.
  * Safe to call on initial style load and after style reloads.
  */
 function ensureTraceLayers(map: MapLibreMap) {
@@ -368,8 +477,8 @@ function ensureTraceLayers(map: MapLibreMap) {
         type: 'fill',
         source: TRACE_STAGES_SOURCE_ID,
         paint: {
-          'fill-color': '#0284c7',
-          'fill-opacity': 0.08,
+          'fill-color': '#065f46',
+          'fill-opacity': 0.12,
         },
       },
       beforeRouteOrDriverLayer,
@@ -383,10 +492,59 @@ function ensureTraceLayers(map: MapLibreMap) {
         type: 'line',
         source: TRACE_STAGES_SOURCE_ID,
         paint: {
-          'line-color': '#38bdf8',
+          'line-color': '#10b981',
           'line-width': 1.5,
           'line-opacity': 0.85,
           'line-dasharray': [3, 2],
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeRouteOrDriverLayer,
+    );
+  }
+
+  // Candidate laser rays source and layer (spider rays connecting pickup to candidates)
+  if (!map.getSource(TRACE_RAYS_SOURCE_ID)) {
+    map.addSource(TRACE_RAYS_SOURCE_ID, {
+      type: 'geojson',
+      data: EMPTY_FEATURE_COLLECTION,
+    });
+  }
+
+  if (!map.getLayer(TRACE_RAYS_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: TRACE_RAYS_LAYER_ID,
+        type: 'line',
+        source: TRACE_RAYS_SOURCE_ID,
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            '#10b981', // glowing emerald for winner
+            '#64748b', // subtle slate for outcompeted
+          ],
+          'line-width': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            2.5,
+            1.2,
+          ],
+          'line-opacity': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            0.9,
+            0.4,
+          ],
+          'line-dasharray': [
+            'case',
+            ['boolean', ['get', 'isWinner'], false],
+            ['literal', [1, 0]],
+            ['literal', [3, 3]],
+          ],
         },
         layout: {
           'line-cap': 'round',
@@ -511,6 +669,38 @@ const FLY_DURATION_MS = 2500;
 const FIT_BOUNDS_PADDING = 80;
 const FIT_BOUNDS_MAX_ZOOM = 14;
 
+/**
+ * Safe adaptive padding calculator for route camera framing.
+ * Guarantees horizontal and vertical padding never exceed canvas dimensions,
+ * eliminating MapLibre's "Map cannot fit within canvas with the given bounds, padding, and/or offset."
+ */
+function getAdaptiveRoutePadding(map: MapLibreMap) {
+  const canvas = map.getCanvas?.();
+  const width = canvas?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1024);
+  const height = canvas?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 768);
+  const isMobile = width < 768;
+
+  if (isMobile) {
+    const topPad = Math.max(16, Math.min(120, Math.floor(height * 0.18)));
+    const botPad = Math.max(32, Math.min(240, Math.floor(height * 0.36)));
+    const sidePad = Math.max(12, Math.min(24, Math.floor(width * 0.06)));
+    return {
+      top: topPad,
+      bottom: botPad,
+      left: sidePad,
+      right: sidePad,
+    };
+  }
+
+  const rightPad = Math.min(380, Math.floor(width * 0.35));
+  return {
+    top: 90,
+    bottom: 90,
+    left: 90,
+    right: rightPad,
+  };
+}
+
 interface GlobeMapProps {
   onLoad: () => void;
   onError: (message: string) => void;
@@ -552,9 +742,17 @@ interface GlobeMapProps {
   trace?: DispatchTrace | null;
   /**
    * Phase 11.4F — Whether to render spatial trace overlays (bounding boxes and candidates).
-   * Typically active when the Dispatch Trace accordion is expanded.
+   * Typically active when the Dispatch Trace accordion is expanded or Algorithm Mode is ON.
    */
   showTraceOverlay?: boolean;
+  /**
+   * Active matched driver ID to filter out from stationary simulated fleet.
+   */
+  matchedDriverId?: string | null;
+  /**
+   * Numeric token bumped to re-trigger the shortest-path wavefront discovery animation.
+   */
+  replayPulseToken?: number;
 }
 
 /**
@@ -579,12 +777,14 @@ export function GlobeMap({
   routeCoordinates = null,
   drivers = [],
   matchedDriverLocation = null,
+  matchedDriverId = null,
   driverApproachRoute = null,
   animatedVehiclePosition = null,
   animatedVehicleBearing = 0,
   activePhase = 'idle',
   trace = null,
   showTraceOverlay = false,
+  replayPulseToken = 0,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -615,6 +815,20 @@ export function GlobeMap({
   useEffect(() => {
     if (!containerRef.current) return;
     if (mapRef.current) return; // already initialised (StrictMode double-invoke guard)
+
+    // Filter benign vector tile style expression warnings from remote OpenFreeMap Liberty style
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const msg = args.map((a) => (typeof a === 'string' ? a : (a ? String(a) : ''))).join(' ');
+      if (
+        msg.includes('highway-shield') ||
+        msg.includes('road_shield') ||
+        msg.includes('Expected value to be of type number, but found null instead')
+      ) {
+        return;
+      }
+      origWarn.apply(console, args);
+    };
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -681,6 +895,7 @@ export function GlobeMap({
     mapRef.current = map;
 
     return () => {
+      console.warn = origWarn;
       vehicleMarkerRef.current?.remove();
       vehicleMarkerRef.current = null;
       map.remove();
@@ -747,12 +962,16 @@ export function GlobeMap({
       ensureDriverLayers(map);
       const source = map.getSource(DRIVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       if (source) {
+        // Exclude the matched driver from the simulated fleet so they don't remain stationary in an off-road park
+        const activeDrivers = matchedDriverId
+          ? drivers.filter((d) => d.id !== matchedDriverId && !matchedDriverId.startsWith(d.id))
+          : drivers;
         source.setData(
-          drivers.length > 0 ? driversToFeatureCollection(drivers) : EMPTY_FEATURE_COLLECTION,
+          activeDrivers.length > 0 ? driversToFeatureCollection(activeDrivers) : EMPTY_FEATURE_COLLECTION,
         );
       }
     }
-  }, [drivers]);
+  }, [drivers, matchedDriverId]);
 
   // -- Sync real matched-driver marker and connector (Phase 7E.2) --
   useEffect(() => {
@@ -778,21 +997,26 @@ export function GlobeMap({
         }],
       });
 
-      // Render the dashed amber connector from the pickup pin to the driver dot.
-      connectorSource.setData({
-        type: 'FeatureCollection',
-        features: [{
-          type: 'Feature',
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              [selectedPlace.lon, selectedPlace.lat],
-              [matchedDriverLocation.lon, matchedDriverLocation.lat],
-            ],
-          },
-          properties: {},
-        }],
-      });
+      // Render the dashed connector ONLY if no real road approach route is available yet.
+      // Once the road route is active, hide the straight line to avoid cutting across terrain.
+      if (!driverApproachRoute || driverApproachRoute.length < 2) {
+        connectorSource.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [
+                [selectedPlace.lon, selectedPlace.lat],
+                [matchedDriverLocation.lon, matchedDriverLocation.lat],
+              ],
+            },
+            properties: {},
+          }],
+        });
+      } else {
+        connectorSource.setData(EMPTY_FEATURE_COLLECTION);
+      }
 
       // Camera: fit both points, but only animate once per unique driver fix
       // to prevent repeated camera jumps on unrelated React re-renders.
@@ -838,7 +1062,7 @@ export function GlobeMap({
       lastFittedDriverLocationRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchedDriverLocation, selectedPlace]);
+  }, [matchedDriverLocation, selectedPlace, driverApproachRoute]);
 
   // ── Destination pin marker synchronization (Phase 11.1) ─────────────────────
   useEffect(() => {
@@ -912,7 +1136,7 @@ export function GlobeMap({
             [maxLon, maxLat],
           ],
           {
-            padding: { top: 90, bottom: 90, left: 90, right: 380 },
+            padding: getAdaptiveRoutePadding(map),
             maxZoom: 15,
             duration: FLY_DURATION_MS,
             essential: true,
@@ -969,7 +1193,7 @@ export function GlobeMap({
             [maxLon, maxLat],
           ],
           {
-            padding: { top: 90, bottom: 90, left: 90, right: 380 },
+            padding: getAdaptiveRoutePadding(map),
             maxZoom: 15,
             duration: FLY_DURATION_MS,
             essential: true,
@@ -982,13 +1206,17 @@ export function GlobeMap({
   // ── Sync driver approach road route and camera framing (Phase 11.2) ────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
 
-    ensureDriverApproachLayers(map);
+    if (map.isStyleLoaded()) {
+      ensureDriverApproachLayers(map);
+    }
     const source = map.getSource(DRIVER_APPROACH_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
 
-    if (driverApproachRoute && driverApproachRoute.length >= 2) {
+    const isApproachActive = activePhase === 'matched' || activePhase === 'en_route';
+
+    if (driverApproachRoute && driverApproachRoute.length >= 2 && isApproachActive) {
       source.setData({
         type: 'FeatureCollection',
         features: [
@@ -1035,7 +1263,7 @@ export function GlobeMap({
               [maxLon, maxLat],
             ],
             {
-              padding: { top: 90, bottom: 90, left: 90, right: 380 },
+              padding: getAdaptiveRoutePadding(map),
               maxZoom: 16,
               duration: FLY_DURATION_MS,
               essential: true,
@@ -1047,7 +1275,7 @@ export function GlobeMap({
       source.setData(EMPTY_FEATURE_COLLECTION);
       lastFittedApproachRouteRef.current = null;
     }
-  }, [driverApproachRoute]);
+  }, [driverApproachRoute, activePhase]);
 
   // ── Animated vehicle marker along driver approach route (Phase 11.2) ───────
   useEffect(() => {
@@ -1070,7 +1298,7 @@ export function GlobeMap({
       el.className = 'globe-map__vehicle-marker';
       el.setAttribute('aria-label', 'Assigned dispatch vehicle approaching pickup');
       el.innerHTML = `
-        <div class="globe-map__vehicle-icon">
+        <div class="globe-map__vehicle-icon" style="transform: rotate(${Math.round(animatedVehicleBearing)}deg)">
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="14" cy="14" r="12" fill="#080b12" fill-opacity="0.85" stroke="#f59e0b" stroke-width="2"/>
             <path d="M14 6L20 21L14 18L8 21L14 6Z" fill="#f59e0b"/>
@@ -1084,14 +1312,162 @@ export function GlobeMap({
       vehicleElRef.current = el;
     } else {
       vehicleMarkerRef.current.setLngLat([lon, lat]);
-      const el = vehicleElRef.current ?? (vehicleMarkerRef.current.getElement ? vehicleMarkerRef.current.getElement() : null);
-      if (el) {
-        el.style.transform = `rotate(${Math.round(animatedVehicleBearing)}deg)`;
+      const iconEl = vehicleElRef.current?.querySelector<HTMLElement>('.globe-map__vehicle-icon');
+      if (iconEl) {
+        iconEl.style.transform = `rotate(${Math.round(animatedVehicleBearing)}deg)`;
       }
     }
   }, [animatedVehiclePosition, animatedVehicleBearing]);
 
-  // ── Sync spatial trace overlays (Phase 11.4F) ──────────────────────────────
+  // ── Electric-wave animated route (Phase 11.5 — enhanced) ────────────────────
+  // Phase A: wavefront sweep — progressively reveals route geometry (1.4 s)
+  // Phase B: continuous spark loop — travelling dashes simulate live electricity
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    ensurePathPulseLayer(map);
+    const pulseSource = map.getSource(PATH_PULSE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!pulseSource) return;
+
+    const isApproachActive = (activePhase === 'matched' || activePhase === 'en_route') && Boolean(driverApproachRoute && driverApproachRoute.length >= 2);
+    const activeCoords = isApproachActive ? driverApproachRoute : routeCoordinates;
+
+    if (!activeCoords || activeCoords.length < 2) {
+      pulseSource.setData(EMPTY_FEATURE_COLLECTION);
+      return;
+    }
+
+    // Colour-theme the electric wire:
+    // Trip route: Cyber Emerald & Seafoam Plasma
+    // Approach route: Solar Amber & Warm Gold
+    const coronaColour = isApproachActive ? '#f59e0b' : '#059669';
+    const depthColour  = isApproachActive ? '#fbbf24' : '#10b981';
+    const coreColour   = isApproachActive ? '#fffbeb' : '#ecfdf5';
+    const sparkColour  = isApproachActive ? '#ffffff' : '#d1fae5';
+
+    ([
+      [PATH_ELECTRIC_CORONA_LAYER_ID, 'line-color', coronaColour],
+      [PATH_PULSE_LAYER_ID,           'line-color', depthColour],
+      [PATH_ELECTRIC_CORE_LAYER_ID,   'line-color', coreColour],
+      [PATH_ELECTRIC_SPARK_LAYER_ID,  'line-color', sparkColour],
+    ] as [string, string, string][]).forEach(([id, prop, val]) => {
+      if (map.getLayer(id)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (map as any).setPaintProperty(id, prop, val);
+      }
+    });
+
+    let animId: number | null = null;
+    const sweepStart = performance.now();
+    const sweepDuration = 1500; // ms — smooth wavefront sweep
+
+    // Fine-grained dash patterns that cycle to create the fluid "electricity flowing" illusion
+    const SPARK_PATTERNS: [number, number][] = [
+      [1, 7],
+      [2, 6],
+      [3, 5],
+      [4, 4],
+      [5, 3],
+      [6, 2],
+      [7, 1],
+      [8, 0],
+      [7, 1],
+      [6, 2],
+      [5, 3],
+      [4, 4],
+      [3, 5],
+      [2, 6],
+    ];
+    let sparkFrame = 0;
+    const SPARK_FRAME_MS = 32; // ~30 fps spark shifts
+    let lastSparkTime = 0;
+
+    const animateRoute = (now: number) => {
+      const elapsed = now - sweepStart;
+      const progress = Math.min(1.0, elapsed / sweepDuration);
+
+      if (progress < 1.0) {
+        // Phase A: Sub-segment smooth wavefront interpolation (no coordinate stutter)
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const floatIndex = eased * (activeCoords.length - 1);
+        const baseIndex = Math.floor(floatIndex);
+        const subFraction = floatIndex - baseIndex;
+
+        const partial: [number, number][] = activeCoords.slice(0, baseIndex + 1);
+        if (baseIndex < activeCoords.length - 1 && subFraction > 0.001) {
+          const p1 = activeCoords[baseIndex];
+          const p2 = activeCoords[baseIndex + 1];
+          partial.push([
+            p1[0] + (p2[0] - p1[0]) * subFraction,
+            p1[1] + (p2[1] - p1[1]) * subFraction,
+          ]);
+        }
+
+        pulseSource.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: partial },
+            properties: {},
+          }],
+        });
+      } else {
+        // Phase B: Full route geometry locked with continuous current
+        pulseSource.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: activeCoords },
+            properties: {},
+          }],
+        });
+      }
+
+      // Smooth optical breathing (continuous 60fps wave)
+      const pulseSine = (Math.sin(now * 0.003) + 1) / 2; // [0, 1] smooth sine
+      if (map.getLayer(PATH_ELECTRIC_CORONA_LAYER_ID)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (map as any).setPaintProperty(
+          PATH_ELECTRIC_CORONA_LAYER_ID,
+          'line-opacity',
+          0.22 + 0.16 * pulseSine,
+        );
+      }
+      if (map.getLayer(PATH_PULSE_LAYER_ID)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (map as any).setPaintProperty(
+          PATH_PULSE_LAYER_ID,
+          'line-opacity',
+          0.35 + 0.15 * pulseSine,
+        );
+      }
+
+      // Smooth spark dash translation
+      if (now - lastSparkTime > SPARK_FRAME_MS) {
+        lastSparkTime = now;
+        sparkFrame = (sparkFrame + 1) % SPARK_PATTERNS.length;
+        if (map.getLayer(PATH_ELECTRIC_SPARK_LAYER_ID)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (map as any).setPaintProperty(
+            PATH_ELECTRIC_SPARK_LAYER_ID,
+            'line-dasharray',
+            SPARK_PATTERNS[sparkFrame],
+          );
+        }
+      }
+
+      animId = requestAnimationFrame(animateRoute);
+    };
+
+    animId = requestAnimationFrame(animateRoute);
+
+    return () => {
+      if (animId !== null) cancelAnimationFrame(animId);
+    };
+  }, [routeCoordinates, driverApproachRoute, activePhase, replayPulseToken]);
+
+  // ── Sync spatial trace overlays & candidate rays (Phase 11.4F & 11.5) ──────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -1100,17 +1476,24 @@ export function GlobeMap({
 
     const stagesSource = map.getSource(TRACE_STAGES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     const candidatesSource = map.getSource(TRACE_CANDIDATES_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const raysSource = map.getSource(TRACE_RAYS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
 
     if (!stagesSource || !candidatesSource) return;
 
     if (showTraceOverlay && trace) {
       stagesSource.setData(stagesToFeatureCollection(trace.stages));
       candidatesSource.setData(candidatesToFeatureCollection(trace.candidates, trace.winnerDriverId));
+      if (raysSource && selectedPlace) {
+        raysSource.setData(candidatesToRaysFeatureCollection(trace.candidates, selectedPlace, trace.winnerDriverId));
+      }
     } else {
       stagesSource.setData(EMPTY_TRACE_FEATURE_COLLECTION);
       candidatesSource.setData(EMPTY_TRACE_FEATURE_COLLECTION);
+      if (raysSource) {
+        raysSource.setData(EMPTY_TRACE_FEATURE_COLLECTION);
+      }
     }
-  }, [trace, showTraceOverlay]);
+  }, [trace, showTraceOverlay, selectedPlace]);
 
   // Once the map reports ready, keep the overlay mounted briefly so the
   // fade-out animation can complete, then unmount it entirely.
@@ -1130,7 +1513,7 @@ export function GlobeMap({
       <div ref={containerRef} className="globe-map__container" id="globe-map-container" />
 
       {/* ── Simulated fleet badge & legend (Phase 7C) ──────────────────────── */}
-      <SimulatedFleetBadge drivers={drivers} placeName={selectedPlace?.name} />
+      <SimulatedFleetBadge drivers={destinationPlace ? [] : drivers} placeName={selectedPlace?.name} />
 
       {/* ── Loading overlay ────────────────────────────────────────────────── */}
       {(showOverlay || fadingOut) && mapState.status !== 'error' && (

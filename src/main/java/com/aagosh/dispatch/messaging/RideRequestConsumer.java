@@ -26,7 +26,13 @@ import org.springframework.stereotype.Component;
 import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.support.serializer.SerializationUtils;
 
+import com.aagosh.dispatch.tracing.DispatchTrace;
+import com.aagosh.dispatch.tracing.DispatchTraceCollector;
+import com.aagosh.dispatch.tracing.DispatchTraceConfig;
+import com.aagosh.dispatch.tracing.DispatchTraceStore;
+
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +40,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Kafka consumer for ride dispatch request events.
@@ -113,6 +120,12 @@ public class RideRequestConsumer {
     private final AssignmentPersistenceService persistenceService;
     private final AdaptiveWindowController windowController;
     private final DispatchMetrics dispatchMetrics;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchTraceStore traceStore;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchTraceConfig traceConfig;
 
     /**
      * Dedicated monitor lock guarding all accesses to both in-flight and processed request caches.
@@ -363,10 +376,33 @@ public class RideRequestConsumer {
             List<Driver> drivers = driverRegistry.snapshotFresh(freshnessConfig);
             CostFunction costFunction = new DispatchCostFunction(costConfig, validBatchRequests);
 
+            Map<String, DispatchTraceCollector> collectors = new HashMap<>();
+            Function<String, DispatchTraceCollector> collectorProvider = null;
+            if (traceStore != null) {
+                DispatchTraceConfig config = traceConfig != null ? traceConfig : DispatchTraceConfig.DEFAULT;
+                collectorProvider = reqId -> collectors.computeIfAbsent(reqId, id -> DispatchTraceCollector.create(id, config));
+            }
+
             long matchStartNanos = System.nanoTime();
-            assignments = matcher.match(validBatchRequests, drivers, costFunction);
+            assignments = (collectorProvider != null)
+                    ? matcher.match(validBatchRequests, drivers, costFunction, collectorProvider)
+                    : matcher.match(validBatchRequests, drivers, costFunction);
             if (dispatchMetrics != null) {
                 dispatchMetrics.recordMatchingDuration(System.nanoTime() - matchStartNanos);
+            }
+
+            // Persist recorded dispatch traces
+            if (traceStore != null && !collectors.isEmpty()) {
+                for (DispatchTraceCollector col : collectors.values()) {
+                    try {
+                        DispatchTrace trace = col.build();
+                        if (trace != null) {
+                            traceStore.put(trace);
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to store trace for request: {}", e.getMessage());
+                    }
+                }
             }
 
             // Step 5: Atomic batch persistence

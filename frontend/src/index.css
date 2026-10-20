@@ -5,28 +5,33 @@
 /* ---- Google Font already loaded via index.html link ---- */
 
 :root {
-  /* Palette */
-  --color-bg:          #080b12;
-  --color-surface:     #0e1421;
-  --color-surface-alt: #131b2b;
-  --color-border:      rgba(99, 133, 202, 0.18);
-  --color-accent:      #4f8ef7;
-  --color-accent-glow: rgba(79, 142, 247, 0.25);
-  --color-text:        #e8edf5;
-  --color-text-muted:  #8a9bbf;
-  --color-error:       #f75c5c;
-  --color-error-bg:    rgba(247, 92, 92, 0.12);
-  --color-success:     #3dd68c;
+  /* Palette — Cyber Emerald & Obsidian Titanium (bespoke luxury automotive aesthetic) */
+  --color-bg:          #070a0f;
+  --color-surface:     #0d131c;
+  --color-surface-alt: #121a26;
+  --color-border:      rgba(255, 255, 255, 0.12);
+  --color-border-glow: rgba(16, 185, 129, 0.35);
+  --color-accent:      #10b981;
+  --color-accent-light:#34d399;
+  --color-accent-glow: rgba(16, 185, 129, 0.28);
+  --color-accent-plasma:#6ee7b7;
+  --color-text:        #f1f5f9;
+  --color-text-muted:  #94a3b8;
+  --color-error:       #f43f5e;
+  --color-error-bg:    rgba(244, 63, 94, 0.12);
+  --color-success:     #10b981;
+  --color-amber:       #f59e0b;
+  --color-amber-glow:  rgba(245, 158, 11, 0.3);
 
   /* Typography */
   --font-sans:    'Inter', system-ui, -apple-system, sans-serif;
   --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
 
   /* Spacing */
-  --header-h:     56px;
-  --radius-sm:    6px;
-  --radius-md:    12px;
-  --radius-lg:    20px;
+  --header-h:     64px;
+  --radius-sm:    8px;
+  --radius-md:    14px;
+  --radius-lg:    22px;
 
   /* Motion */
   --ease-out:     cubic-bezier(0.22, 1, 0.36, 1);

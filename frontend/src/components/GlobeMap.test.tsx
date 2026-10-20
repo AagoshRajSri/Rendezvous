@@ -39,6 +39,7 @@ const mockMapInstance = {
   addLayer: vi.fn((layer: { id: string }) => {
     mockLayers.add(layer.id);
   }),
+  setPaintProperty: vi.fn(),
   addControl: vi.fn(),
   fitBounds: vi.fn(),
   easeTo: vi.fn(),
@@ -52,6 +53,8 @@ const mockMapInstance = {
   }),
   remove: vi.fn(),
 };
+
+let lastCreatedMarkerElement: HTMLElement | undefined;
 
 const mockMarkerInstance = {
   setLngLat: vi.fn().mockReturnThis(),
@@ -67,7 +70,8 @@ vi.mock('maplibre-gl', () => {
     }),
     AttributionControl: vi.fn(),
     NavigationControl: vi.fn(),
-    Marker: vi.fn(function () {
+    Marker: vi.fn(function (options?: { element?: HTMLElement }) {
+      lastCreatedMarkerElement = options?.element;
       return mockMarkerInstance;
     }),
   };
@@ -701,5 +705,110 @@ describe('GlobeMap component', () => {
       })
     );
   });
+
+  it('creates and animates vehicle marker updating lngLat and rotating inner vehicle-icon element', () => {
+    const { rerender } = render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        animatedVehiclePosition={[2.3522, 48.8566]}
+        animatedVehicleBearing={90}
+      />
+    );
+
+    expect(mockMarkerInstance.setLngLat).toHaveBeenCalledWith([2.3522, 48.8566]);
+    expect(mockMarkerInstance.addTo).toHaveBeenCalled();
+
+    // Verify outer element does NOT have transform rotation set directly
+    expect(lastCreatedMarkerElement?.style.transform).toBe('');
+    // Verify inner icon element has rotation set
+    const iconEl = lastCreatedMarkerElement?.querySelector<HTMLElement>('.globe-map__vehicle-icon');
+    expect(iconEl?.style.transform).toBe('rotate(90deg)');
+
+    // Re-render with new coordinates and bearing
+    rerender(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        animatedVehiclePosition={[2.3600, 48.8600]}
+        animatedVehicleBearing={180}
+      />
+    );
+
+    expect(mockMarkerInstance.setLngLat).toHaveBeenLastCalledWith([2.3600, 48.8600]);
+    expect(lastCreatedMarkerElement?.style.transform).toBe('');
+    expect(iconEl?.style.transform).toBe('rotate(180deg)');
+  });
+
+  it('clears driverApproachRoute GeoJSON source when activePhase is arrived or in_progress', () => {
+    const approachCoords: [number, number][] = [
+      [2.3500, 48.8500],
+      [2.3522, 48.8566],
+    ];
+
+    const { rerender } = render(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        driverApproachRoute={approachCoords}
+        activePhase="en_route"
+      />
+    );
+
+    const approachSource = mockSources.get('rendezvous-driver-approach-route');
+    expect(approachSource?.setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: [
+          expect.objectContaining({
+            geometry: expect.objectContaining({
+              coordinates: approachCoords,
+            }),
+          }),
+        ],
+      })
+    );
+
+    // Transition to arrived: approach route must clear
+    rerender(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        driverApproachRoute={approachCoords}
+        activePhase="arrived"
+      />
+    );
+
+    expect(approachSource?.setData).toHaveBeenLastCalledWith({
+      type: 'FeatureCollection',
+      features: [],
+    });
+
+    // Transition to in_progress: approach route must stay cleared
+    rerender(
+      <GlobeMap
+        mapState={{ status: 'ready' }}
+        onLoad={vi.fn()}
+        onError={vi.fn()}
+        selectedPlace={dummyPlace}
+        driverApproachRoute={approachCoords}
+        activePhase="in_progress"
+      />
+    );
+
+    expect(approachSource?.setData).toHaveBeenLastCalledWith({
+      type: 'FeatureCollection',
+      features: [],
+    });
+  });
 });
+
 

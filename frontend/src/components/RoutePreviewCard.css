@@ -1,47 +1,53 @@
-/* ── RoutePreviewCard.css ───────────────────────────────────────────────── */
+/* ── RoutePreviewCard.css ─────────────────────────────────────────────────
+   Luxury Obsidian Glass aesthetic — human-crafted, elegant typography,
+   high-contrast hierarchy, and refined micro-interactions.
+   ────────────────────────────────────────────────────────────────────────── */
 
 .route-preview-card {
   position: absolute;
   top: 80px;
   right: 20px;
-  z-index: 20;
+  z-index: 25;
   width: 380px;
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 100px);
   overflow-y: auto;
-  background: rgba(13, 17, 23, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 24px rgba(56, 189, 248, 0.12);
-  border-radius: 14px;
-  padding: 16px;
-  color: #f1f5f9;
-  font-family: inherit;
+  background: rgba(10, 14, 23, 0.90);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 24px 50px -12px rgba(0, 0, 0, 0.85),
+    0 4px 16px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 14px 16px;
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  animation: slideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  gap: 10px;
+  animation: cardSlideIn 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes slideInRight {
+@keyframes cardSlideIn {
   from {
     opacity: 0;
-    transform: translateX(20px);
+    transform: translateY(-8px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0) scale(1);
   }
 }
 
-/* ── Header ── */
+/* ── Header ────────────────────────────────────────────────────────── */
 .route-preview-card__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .route-preview-card__title-row {
@@ -51,122 +57,131 @@
 }
 
 .route-preview-card__badge-icon {
-  font-size: 16px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #10b981;
 }
 
 .route-preview-card__title {
   font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: #38bdf8;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #ffffff;
 }
 
 .route-preview-card__fallback-tag {
-  background: rgba(245, 158, 11, 0.15);
+  background: rgba(245, 158, 11, 0.12);
   color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid rgba(245, 158, 11, 0.25);
   font-size: 10px;
   font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 100px;
+  letter-spacing: 0.02em;
 }
 
 .route-preview-card__close-btn {
-  background: transparent;
-  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: #94a3b8;
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
   transition: all 0.15s ease;
 }
 
 .route-preview-card__close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-/* ── Waypoints ── */
+/* ── Waypoints ──────────────────────────────────────────────────────── */
 .route-preview-card__waypoints {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  background: rgba(15, 23, 42, 0.6);
-  padding: 12px;
-  border-radius: 10px;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 9px 12px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .route-preview-card__waypoint {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
 }
 
 .route-preview-card__dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  margin-top: 4px;
   flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(10, 14, 23, 0.9);
 }
 
 .route-preview-card__dot--pickup {
   background: #10b981;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
 }
 
 .route-preview-card__dot--dest {
   background: #f43f5e;
-  box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.6);
 }
 
 .route-preview-card__waypoint-connector {
   position: absolute;
-  left: 16px;
+  left: 18px;
   top: 24px;
   bottom: 24px;
-  width: 2px;
-  border-left: 2px dashed rgba(255, 255, 255, 0.2);
+  width: 1px;
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .route-preview-card__waypoint-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   overflow: hidden;
 }
 
 .route-preview-card__waypoint-label {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  text-transform: uppercase;
 }
 
 .route-preview-card__waypoint-name {
   font-size: 13px;
-  font-weight: 600;
-  color: #f8fafc;
+  font-weight: 500;
+  color: #f1f5f9;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* ── Metrics Strip ── */
+/* ── Metrics Strip ──────────────────────────────────────────────────── */
 .route-preview-card__metrics {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
   align-items: center;
-  justify-content: space-around;
-  background: rgba(30, 41, 59, 0.7);
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(56, 189, 248, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 7px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .route-preview-card__metric {
@@ -178,23 +193,23 @@
 
 .route-preview-card__metric-label {
   font-size: 10px;
-  color: #94a3b8;
+  color: #64748b;
   font-weight: 500;
 }
 
 .route-preview-card__metric-value {
   font-size: 13px;
-  font-weight: 700;
-  color: #38bdf8;
+  font-weight: 600;
+  color: #ffffff;
 }
 
 .route-preview-card__metric-divider {
   width: 1px;
-  height: 24px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 22px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
-/* ── Tiers ── */
+/* ── Vehicle Tier Selector ──────────────────────────────────────────── */
 .route-preview-card__tiers {
   display: flex;
   flex-direction: column;
@@ -205,37 +220,39 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: 12px;
+  padding: 8px 12px;
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition: all 0.18s ease;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .route-preview-card__tier-item:hover {
-  background: rgba(30, 41, 59, 0.7);
-  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
 }
 
 .route-preview-card__tier-item--selected {
-  background: rgba(14, 165, 233, 0.12);
-  border-color: #38bdf8;
-  box-shadow: 0 0 14px rgba(56, 189, 248, 0.2);
+  background: rgba(16, 185, 129, 0.08);
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px #10b981, 0 8px 24px -6px rgba(16, 185, 129, 0.3);
 }
 
 .route-preview-card__tier-icon {
-  font-size: 24px;
-  width: 36px;
-  height: 36px;
+  font-size: 18px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
   flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .route-preview-card__tier-details {
@@ -249,18 +266,19 @@
 .route-preview-card__tier-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .route-preview-card__tier-name {
   font-size: 13px;
-  font-weight: 700;
-  color: #f8fafc;
+  font-weight: 600;
+  color: #ffffff;
 }
 
 .route-preview-card__tier-capacity {
   font-size: 10px;
-  color: #94a3b8;
+  color: #64748b;
+  font-weight: 500;
 }
 
 .route-preview-card__tier-sub {
@@ -276,6 +294,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 130px;
+  color: #64748b;
 }
 
 .route-preview-card__tier-fare {
@@ -285,11 +304,12 @@
 
 .route-preview-card__tier-price {
   font-size: 15px;
-  font-weight: 800;
-  color: #f1f5f9;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.01em;
 }
 
-/* ── Actions ── */
+/* ── Actions ────────────────────────────────────────────────────────── */
 .route-preview-card__actions {
   display: flex;
   flex-direction: column;
@@ -301,55 +321,63 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 18px;
-  border-radius: 10px;
+  padding: 11px 16px;
+  border-radius: 12px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   border: none;
-  transition: all 0.18s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .route-preview-card__btn--confirm {
-  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
   color: #ffffff;
-  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+  box-shadow: 0 4px 18px -2px rgba(16, 185, 129, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .route-preview-card__btn--confirm:hover:not(:disabled) {
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.5);
+  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+  box-shadow: 0 6px 24px -2px rgba(16, 185, 129, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   transform: translateY(-1px);
 }
 
+.route-preview-card__btn--confirm:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 .route-preview-card__btn--confirm:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .route-preview-card__btn-fare {
-  background: rgba(0, 0, 0, 0.25);
-  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.16);
+  padding: 3px 9px;
   border-radius: 6px;
   font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
-/* ── Footer ── */
+/* ── Footer ─────────────────────────────────────────────────────────── */
 .route-preview-card__footer {
   text-align: center;
   font-size: 10px;
-  color: #64748b;
-  padding-top: 4px;
+  color: #475569;
 }
 
-/* Mobile responsive */
+/* ── Mobile Responsive ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .route-preview-card {
     top: auto;
-    bottom: 20px;
+    bottom: max(16px, env(safe-area-inset-bottom, 16px));
     right: 12px;
     left: 12px;
     width: auto;
     max-width: none;
+    max-height: min(520px, calc(100dvh - 120px));
+    z-index: 30;
   }
 }
