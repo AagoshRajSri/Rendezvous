@@ -256,3 +256,385 @@ To reproduce the benchmarks evaluated in this report:
   "-Dexec.args=-cp %classpath com.aagosh.dispatch.matching.MatcherBenchmark"
 ```
 
+---
+
+## 9. Corrective Multi-Fork Benchmark: End-to-End Matcher & Construction Verification
+
+Following the initial audit of Phase D results, a corrective multi-fork evaluation was conducted to measure production-shaped query and end-to-end matching performance under strict hardware and JVM controls.
+
+### 9.1 Hierarchy of Evaluated Benchmarks
+
+To avoid ambiguity, three distinct tiers of benchmarks are evaluated in this codebase:
+
+1. **Initial Microbenchmark ($K=10$, Section 4):** Evaluated single-threaded nearest-neighbor traversal on a static prebuilt QuadTree querying a single fixed Hyderabad coordinate (`quadTreeQueryOnly`).
+2. **Production-Shaped Spatial Microbenchmark ($K=16$):** Evaluated nearest-neighbor queries with $K=16$ (matching `GreedyMatcher.INITIAL_WINDOW`) cycling across 8 distinct geographic query coordinates on a prebuilt tree with P-core affinity (`quadTreeQuery_productionK16`).
+3. **Corrective End-to-End Matcher Benchmark:** Evaluates the complete `GreedyMatcher` lifecycle—including in-memory QuadTree instantiation, driver coordinate insertion, spatial candidate querying, cost evaluation, atomic CAS claim acquisition, and claim release—executed across 18 scenarios in 3 independent JVM forks per scenario.
+
+### 9.2 Controlled Environment & Execution Parameters
+
+- **Hardware Topology & Affinity:** 13th Gen Intel(R) Core(TM) i7-1360P. Process affinity mask `0x00FF` pinned execution strictly to Performance cores (CPUs 0–7, Cores 0–3 with SMT enabled), isolating execution from Efficient cores.
+- **JVM Configuration:** OpenJDK 26.0.1+8-34, `-Xms4g -Xmx4g -XX:ActiveProcessorCount=8`.
+- **JMH Protocol:** 3 independent JVM forks (`-f 3`), 3 warmup iterations (1s each), 5 timed measurement iterations (1s each) per fork ($N = 15$ timed measurement iterations per scenario).
+- **Thermal Control:** 60-second hardware cooldown enforced between baseline (`374db9e`) and optimized (`de17a2b`) test suites.
+- **Assignment-Pair Verification:** Every trial match asserted that actual request-to-driver assignment pairs (`requestId -> driverId`) matched probe results exactly. All 18 scenarios matched 100% of requests within the initial $K=16$ spatial window with zero fallback expansions.
+- **Raw Evidence Logs (Local Artifacts):**
+  The raw execution outputs were saved locally in the evaluation scratch directory:
+  - Baseline raw log: `scratch/corrective-baseline.log` (generated under task ID `task-15517`)
+  - Optimized raw log: `scratch/corrective-optimized.log` (generated under task ID `task-15527`)
+  *Note: These raw logs are local scratch artifacts generated during the audit process and are preserved in the local environment rather than tracked in the Git repository.*
+
+### 9.3 Phase-Level Timing: QuadTree Construction Only
+
+To determine whether commit `de17a2b` altered tree construction overhead, QuadTree construction was benchmarked independently in test scope (`new QuadTree(WORLD_BOUNDS); for (Driver d : drivers) tree.insert(d.location());`) under identical JVM and P-core controls:
+
+| Fleet Size ($D$) | Baseline Construction Mean | Optimized Construction Mean | Point Speedup ($\mu_B / \mu_O$) | Finding |
+| :---: | :---: | :---: | :---: | :--- |
+| **$D = 200$** | $12.424\text{ µs} \pm 0.424\text{ µs}$ | $12.511\text{ µs} \pm 2.219\text{ µs}$ | **$0.99\times$** | No clear difference observed (overlapping 99.9% error intervals) |
+| **$D = 1\,000$** | $100.416\text{ µs} \pm 6.484\text{ µs}$ | $105.537\text{ µs} \pm 8.400\text{ µs}$ | **$0.95\times$** | No clear difference observed (overlapping 99.9% error intervals) |
+| **$D = 10,000$** | $1\,617.589\text{ µs} \pm 97.993\text{ µs}$ | $1\,573.137\text{ µs} \pm 250.319\text{ µs}$ | **$1.03\times$** | No clear difference observed ($\approx 1.6\text{ ms}$, overlapping intervals) |
+
+> [!NOTE]
+> **Construction Timing Interpretation:** The measured data shows similar means with overlapping reported intervals, supporting the observation that no clear difference in construction overhead was detected between revisions. While this supports the conclusion that construction was not directly optimized, it does not prove that construction costs are invariant or that all end-to-end performance gains arise *exclusively* from traversal; auxiliary interactions (such as memory cache retention or GC pressure) cannot be fully isolated without modifying production internals.
+
+### 9.4 Complete 18-Scenario End-to-End Matcher Results (`GreedyMatcher`)
+
+Scores reflect the complete match-and-release benchmark operation across 15 measurement iterations in 3 independent JVM forks (mean $\pm$ 99.9% CI error margin in µs/op):
+
+| Fleet ($D$) | Reqs ($R$) | Condition | Baseline Mean ($\mu_B$) | Optimized Mean ($\mu_O$) | Point Speedup ($\mu_B / \mu_O$) | Descriptive Ratio Bounds [Formula 1] | $1.0\times$ Overlap |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **200** | **1** | nominal | $45.293\text{ µs} \pm 6.362\text{ µs}$ | $43.637\text{ µs} \pm 3.987\text{ µs}$ | **$1.04\times$** | $[0.82\times,\; 1.30\times]$ | Overlaps $1.0\times$ |
+| **200** | **1** | contended | $40.039\text{ µs} \pm 2.967\text{ µs}$ | $35.190\text{ µs} \pm 2.057\text{ µs}$ | **$1.14\times$** | $[1.00\times,\; 1.30\times]$ | Touches $1.00\times$ |
+| **200** | **5** | nominal | $198.252\text{ µs} \pm 12.330\text{ µs}$ | $155.842\text{ µs} \pm 20.039\text{ µs}$ | **$1.27\times$** | $[1.06\times,\; 1.55\times]$ | Excludes $1.0\times$ |
+| **200** | **5** | contended | $167.098\text{ µs} \pm 12.474\text{ µs}$ | $122.899\text{ µs} \pm 9.110\text{ µs}$ | **$1.36\times$** | $[1.17\times,\; 1.58\times]$ | Excludes $1.0\times$ |
+| **200** | **20** | nominal | $3\,033.938\text{ µs} \pm 93.070\text{ µs}$ | $2\,731.783\text{ µs} \pm 216.159\text{ µs}$ | **$1.11\times$** | $[1.00\times,\; 1.24\times]$ | Touches $1.00\times$ |
+| **200** | **20** | contended | $1\,739.819\text{ µs} \pm 199.699\text{ µs}$ | $1\,538.228\text{ µs} \pm 72.827\text{ µs}$ | **$1.13\times$** | $[0.96\times,\; 1.32\times]$ | Overlaps $1.0\times$ |
+| **1,000** | **1** | nominal | $229.798\text{ µs} \pm 26.867\text{ µs}$ | $197.756\text{ µs} \pm 12.887\text{ µs}$ | **$1.16\times$** | $[0.96\times,\; 1.39\times]$ | Overlaps $1.0\times$ |
+| **1,000** | **1** | contended | $227.887\text{ µs} \pm 20.459\text{ µs}$ | $184.069\text{ µs} \pm 13.571\text{ µs}$ | **$1.24\times$** | $[1.05\times,\; 1.46\times]$ | Excludes $1.0\times$ |
+| **1,000** | **5** | nominal | $572.072\text{ µs} \pm 65.174\text{ µs}$ | $340.223\text{ µs} \pm 26.938\text{ µs}$ | **$1.68\times$** | $[1.38\times,\; 2.03\times]$ | Excludes $1.0\times$ |
+| **1,000** | **5** | contended | $553.255\text{ µs} \pm 52.696\text{ µs}$ | $291.789\text{ µs} \pm 32.683\text{ µs}$ | **$1.90\times$** | $[1.54\times,\; 2.34\times]$ | Excludes $1.0\times$ |
+| **1,000** | **20** | nominal | $4\,478.170\text{ µs} \pm 209.735\text{ µs}$ | $3\,225.233\text{ µs} \pm 155.914\text{ µs}$ | **$1.39\times$** | $[1.26\times,\; 1.53\times]$ | Excludes $1.0\times$ |
+| **1,000** | **20** | contended | $2\,845.821\text{ µs} \pm 193.304\text{ µs}$ | $1\,953.544\text{ µs} \pm 104.228\text{ µs}$ | **$1.46\times$** | $[1.29\times,\; 1.64\times]$ | Excludes $1.0\times$ |
+| **10,000** | **1** | nominal | $2\,915.074\text{ µs} \pm 382.095\text{ µs}$ | $2\,416.618\text{ µs} \pm 197.255\text{ µs}$ | **$1.21\times$** | $[0.97\times,\; 1.49\times]$ | Overlaps $1.0\times$ |
+| **10,000** | **1** | contended | $3\,073.320\text{ µs} \pm 242.163\text{ µs}$ | $2\,503.627\text{ µs} \pm 171.577\text{ µs}$ | **$1.23\times$** | $[1.06\times,\; 1.42\times]$ | Excludes $1.0\times$ |
+| **10,000** | **5** | nominal | $3\,992.887\text{ µs} \pm 310.068\text{ µs}$ | $2\,207.786\text{ µs} \pm 112.431\text{ µs}$ | **$1.81\times$** | $[1.59\times,\; 2.05\times]$ | Excludes $1.0\times$ |
+| **10,000** | **5** | contended | $3\,945.122\text{ µs} \pm 273.208\text{ µs}$ | $2\,756.120\text{ µs} \pm 418.699\text{ µs}$ | **$1.43\times$** | $[1.16\times,\; 1.80\times]$ | Excludes $1.0\times$ |
+| **10,000** | **20** | nominal | $10\,045.327\text{ µs} \pm 1\,509.541\text{ µs}$ | $5\,265.201\text{ µs} \pm 568.180\text{ µs}$ | **$1.91\times$** | $[1.46\times,\; 2.46\times]$ | Excludes $1.0\times$ |
+| **10,000** | **20** | contended | $8\,126.975\text{ µs} \pm 785.596\text{ µs}$ | $4\,738.060\text{ µs} \pm 341.362\text{ µs}$ | **$1.72\times$** | $[1.45\times,\; 2.03\times]$ | Excludes $1.0\times$ |
+
+### 9.5 Key Findings & Critical Boundaries
+
+1. **Resolution of Single-Process Artifacts:** In an earlier exploratory run without per-scenario JVM isolation, scenarios at $D=10,000$ exhibited performance regressions when executed after 18,000 continuous unisolated iterations. Under independent JVM forks (`-f 3`), the optimized revision demonstrated point speedups across all 18 scenarios ($1.04\times$ to $1.91\times$), resolving the earlier artifact.
+2. **Characterization of Statistical Uncertainty:** Six scenarios total have descriptive bounds that do not establish a statistically conclusive speedup: four scenarios overlap $1.0\times$ ($D=200, R=1$ nominal; $D=200, R=20$ contended; $D=1,000, R=1$ nominal; $D=10,000, R=1$ nominal) and two touch $1.00\times$ ($D=200, R=1$ contended; $D=200, R=20$ nominal). The remaining 12 scenarios strictly exclude $1.0\times$, with gains concentrated in multi-request batches ($R \ge 5$) and larger fleets ($D \ge 1,000$). Because these ratio intervals are descriptive bounds derived from separate JMH confidence intervals, they must not be interpreted as formal significance tests.
+3. **Complete Match-and-Release Lifecycle Scope:** Because assignment claims were cleared inside the measured benchmark method to support repeated invocation, the reported figures reflect the complete match-and-release lifecycle (including QuadTree instantiation, driver coordinate insertion, spatial candidate querying, cost evaluation, atomic CAS claim acquisition, and claim release), rather than isolated `match()` return latency.
+4. **Production System Applicability:** The production dispatch system's default engine is `AuctionMatcher` (dense bipartite cost matrix optimization), which does not use `QuadTree`. These benchmark results apply strictly to `GreedyMatcher` and spatial nearest-neighbor operations, and do not imply performance changes for the default `AuctionMatcher` dispatch path.
+
+### 9.6 Execution Protocol & Reproduction Guide
+
+> [!IMPORTANT]
+> **Reproducibility Limitations & Local Audit Artifact Prerequisites:**
+> 1. **Local Benchmark Harness Required:** The benchmark class `GreedyMatcherCorrectiveBenchmark.java` is an uncommitted local audit artifact developed specifically for this multi-fork evaluation. It is **not present in a clean Git clone** of either baseline (`374db9e`) or optimized (`de17a2b`). An independent reviewer cannot retrieve the harness from Git repository contents alone; reviewers must obtain the exact harness source separately and place it at `src/test/java/com/aagosh/dispatch/matching/GreedyMatcherCorrectiveBenchmark.java` in both worktrees prior to compilation.
+> 2. **Historical Raw Logs Are Local Artifacts:** The historical raw log files (`scratch/corrective-baseline.log` and `scratch/corrective-optimized.log`) are local scratch files produced on the audit workstation during tasks `task-15517` and `task-15527`. They are uncommitted local artifacts and are not available from a clean clone.
+> 3. **Proposed Experiment Repetition vs. Verification from Repository:** The reproduction procedure below is a **proposed way to repeat the experiment** in a controlled Windows environment, not a way to retrieve or independently verify the original historical measurements from tracked repository contents alone.
+
+> [!NOTE]
+> **Measurement Scope vs. Untimed Trial Setup:**
+> - **`greedyMatch`:** The timed benchmark method executes the complete match-and-release lifecycle: in-memory QuadTree instantiation, driver coordinate insertion, spatial candidate querying ($K=16$), cost matrix evaluation, atomic CAS driver claim acquisition, and claim release.
+> - **`quadTreeConstructionOnly`:** The timed benchmark method strictly isolates QuadTree instantiation and driver coordinate insertion (`new QuadTree(WORLD_BOUNDS); for (Driver d : drivers) tree.insert(d.location())`).
+> - **`@Setup(Level.Trial)` (Untimed):** Prior to timed measurement iterations, the setup method executes a full probe match and asserts 100% request-to-driver assignment pair matching against expected results. This verification runs outside the timed measurement iterations to validate input datasets without skewing latency.
+
+#### Windows-Specific CPU Affinity & HotSpot Configuration
+
+- **Topology & Mask Selection:** On the evaluation system (13th Gen Intel(R) Core(TM) i7-1360P, 12 physical cores, 16 logical processors), Cores 0–3 are Performance cores with SMT enabled, mapped to logical CPUs 0–7 (affinity bitmask `0x00FF`). Cores 4–11 are Efficient cores without SMT (logical CPUs 8–15, bitmask `0xFF00`). The mask `0x00FF` confines execution strictly to P-cores.
+- **Affinity Inheritance Mechanism:** Affinity is set on the launching PowerShell process via `[System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]0x00FF`. On Windows, child processes created via Win32 `CreateProcess` inherit the parent's process affinity mask by default. Preflight tests (`test_affinity.ps1`, `TestProcessBuilderAffinity.java`) confirmed that child PowerShell processes and Java `ProcessBuilder` children inherited `0x00FF`.
+- **Inheritance vs. Per-Fork Verification:** While preflight diagnostics confirmed process-tree inheritance, the individual JMH forked worker JVMs were not monitored by a continuous out-of-band affinity profiler during the benchmark execution. Affinity enforcement across the forked JVMs relies on Win32 parent-child process inheritance.
+- **Active Processor Count:** Passing `-XX:ActiveProcessorCount=8` inside `-jvmArgs` informs the HotSpot runtime that 8 processors are available, sizing HotSpot's internal thread pools (GC worker threads, JIT compiler threads, `ForkJoinPool.commonPool()`) to the 8 logical processors of the Performance cores, rather than the 16 threads of the entire physical package.
+- **Processor Count Preflight Limitation:** The preflight check `[Environment]::ProcessorCount -ge 8` establishes solely a threshold on total logical processors to prevent Win32 out-of-range CPU index exceptions when applying `0x00FF`. It does not inspect physical core topology or prove that logical CPUs 0–7 correspond to Performance cores on an arbitrary host. Reviewers on different hardware topologies must verify their core layout or adjust/remove the affinity mask accordingly.
+- **Platform Limitation:** This process-level affinity configuration is Windows PowerShell-specific. It relies on Win32 process inheritance and does not apply to other operating systems without platform-specific pinning tools.
+
+#### JMH Method Selection & Direct Process Execution Architecture
+
+To avoid fragile multi-shell nesting, the proposed reproduction procedure eliminates intermediate child PowerShell sessions entirely:
+- **Direct Process Execution:** The reproduction script runs each benchmark target individually via `cmd.exe /d /c` directly invoking `mvnw.cmd` inside the designated worktree directory (`WorkingDirectory = $WorktreePath`).
+- **JMH Regex Anchors (`$`):** JMH benchmark selection arguments are regular expressions. Trailing `$` anchors in `greedyMatch$` and `quadTreeConstructionOnly$` strictly match the end of the method name, preventing prefix collisions with other methods. In outer PowerShell, `$BenchmarkSelector` is passed as a verbatim single-quoted string literal (e.g. `'com.aagosh...greedyMatch$'`), completely avoiding variable interpolation or backtick escaping collisions in PowerShell.
+- **Argument Forwarding & Quote Preservation:** The command string passed to `cmd.exe /d /c` is enclosed in an outer pair of quotes (`cmd.exe /d /c ""%CMD%" %ARGS% 2>&1"`). Under standard Win32 `cmd.exe` parsing rules (`cmd.exe /?` rule 2), `cmd.exe` strips the outer boundary quotes and forwards the interior command and its double-quoted arguments verbatim. Maven's `-Dexec.args` preserves `-cp %classpath` and the unbroken single-quoted `-jvmArgs '-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'` string without nested shell expansion.
+- **Independent Exit-Code Detection & Sequence Halting:** Rather than string-chaining multiple commands, each benchmark target is executed as an independent step. The Win32 process exit code (`$proc.ExitCode`) is captured directly from `System.Diagnostics.Process`. If any benchmark step returns a non-zero exit code, the parent PowerShell script halts immediately with an exception, preventing subsequent benchmark targets, thermal cooldown, and subsequent worktree runs from executing.
+- **Affinity Inheritance & Caller Restoration:** At Step 0, the script sets `[System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]0x00FF` on the host PowerShell session. In Win32, all child processes (`cmd.exe`, `mvnw.cmd`, `java.exe`, and forked JMH worker JVMs) inherit this process affinity mask automatically upon creation. The entire execution block is enclosed in a `try ... finally` block that restores the caller's original affinity mask upon script completion or error.
+- **Single-Pipe Stream Merging & Resource Disposal:** Native OS stderr is redirected into stdout at the `cmd.exe` invocation level (`2>&1`), streaming a single combined pipe line-by-line to both the console and the log file without multi-pipe deadlock risk. In the `finally` block, both the `System.IO.StreamWriter` and `System.Diagnostics.Process` instances are explicitly checked, flushed, closed, and disposed, preventing resource or handle leaks on exceptional exit paths.
+
+#### Audit Execution History vs. Proposed Reviewer Reproduction Procedure
+
+**1. Historical Audit Invocations (Recorded):**
+In the recorded audit run, isolated temporary worktrees were used for each revision. Within each worktree, both benchmark methods were executed sequentially in a single chained PowerShell command with P-core affinity:
+- **Baseline Run (`task-15517`):** Executed in `C:\Aagosh\CODE\JAVA\dispatch-baseline-exp2-corrected` (commit `374db9e2510d023be208ef314a482d99c928f7ce`):
+  ```powershell
+  powershell -Command "[System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]0x00FF; Set-Location 'C:\Aagosh\CODE\JAVA\dispatch-baseline-exp2-corrected'; .\mvnw.cmd exec:exec '-Dexec.executable=java' '-Dexec.classpathScope=test' '-Dexec.args=-cp %classpath org.openjdk.jmh.Main com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.greedyMatch$ -f 3 -wi 3 -i 5 -p driverCount=200,1000,10000 -p requestCount=1,5,20 -p condition=nominal,contended -jvmArgs ''-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'''; .\mvnw.cmd exec:exec '-Dexec.executable=java' '-Dexec.classpathScope=test' '-Dexec.args=-cp %classpath org.openjdk.jmh.Main com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.quadTreeConstructionOnly$ -f 3 -wi 3 -i 5 -p driverCount=200,1000,10000 -p requestCount=1 -p condition=nominal -jvmArgs ''-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'''"
+  ```
+- **Thermal Cooldown:** An automated 60-second idle period was enforced between runs.
+- **Optimized Run (`task-15527`):** Executed in `C:\Aagosh\CODE\JAVA\dispatch-optimized-exp2-corrected` (commit `de17a2ba54536cc92776ffe104e0e7e1e353ab2b`):
+  ```powershell
+  powershell -Command "[System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]0x00FF; Set-Location 'C:\Aagosh\CODE\JAVA\dispatch-optimized-exp2-corrected'; .\mvnw.cmd exec:exec '-Dexec.executable=java' '-Dexec.classpathScope=test' '-Dexec.args=-cp %classpath org.openjdk.jmh.Main com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.greedyMatch$ -f 3 -wi 3 -i 5 -p driverCount=200,1000,10000 -p requestCount=1,5,20 -p condition=nominal,contended -jvmArgs ''-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'''; .\mvnw.cmd exec:exec '-Dexec.executable=java' '-Dexec.classpathScope=test' '-Dexec.args=-cp %classpath org.openjdk.jmh.Main com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.quadTreeConstructionOnly$ -f 3 -wi 3 -i 5 -p driverCount=200,1000,10000 -p requestCount=1 -p condition=nominal -jvmArgs ''-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'''"
+  ```
+
+**2. Proposed Robust Reproduction Procedure for Reviewers:**
+To re-run this experiment in an independent environment, execute the following PowerShell script from the repository root. This proposed procedure:
+- Intended to support **Windows PowerShell 5.1** and **PowerShell 7+** on 64-bit Windows, using standard `New-Object -TypeName ... -ArgumentList @(...)` constructor parameter syntax; note that full automated reproduction across both versions has not been runtime certified.
+- Dynamically derives and validates the Git worktree root using Git commands (rejecting silent fallbacks to hard-coded paths), while documenting machine-specific path and CPU topology assumptions.
+- Validates prerequisites (Git worktree status, target commit presence, worktree destination path availability, harness existence, diagnostic log preservation policy, and a host logical processor count threshold preventing out-of-range affinity index exceptions) before creating any worktrees.
+- Implements robust partial-failure handling during worktree creation and harness deployment, halting immediately and reporting surviving worktrees for manual inspection/cleanup.
+- Enforces explicit child-process exit-code capture via `System.Diagnostics.Process` independent of the output logging pipeline, halting immediately upon failure so a failed benchmark cannot run cooldown or subsequent targets.
+- Redirects native OS stderr into stdout at the child-process level (`cmd.exe /d /c ... 2>&1`), reading a single combined stream line-by-line to EOF. This preserves the stream sequence as observed on that pipe without multi-pipe deadlocks, while recognizing that independently buffered runtime output (such as JVM block-buffered stdout vs. unbuffered stderr) reflects the order in which buffers are flushed to the OS rather than physical simultaneity.
+- Preserves combined stdout and stderr in separate diagnostic logs located in the repository root.
+- Uses safe directory navigation (`Push-Location` / `Pop-Location` within `try` / `finally`).
+- Decouples worktree cleanup into a manual-only post-audit step, ensuring that worktrees and logs are never automatically removed on failure.
+
+```powershell
+# Stop on unhandled script exceptions
+$ErrorActionPreference = 'Stop'
+
+# Helper function: Execute a single benchmark target with direct Win32 exit-code capture,
+# single-pipe handle redirection (cmd.exe /d /c ... 2>&1), and robust resource disposal.
+# Intended PowerShell Environments: Windows PowerShell 5.1 or PowerShell 7+ on 64-bit Windows.
+# Note: Syntactically designed for Windows PowerShell 5.1 and PowerShell 7+, but full end-to-end execution
+# of this reproduction suite has not been automated or certified across both runtime versions.
+#
+# Native OS stderr (handle 2) is redirected into stdout (handle 1) at the child-process level via
+# 'cmd.exe /d /c ... 2>&1'. This merges shell, Maven, and JVM stdout and stderr into a single
+# combined stream across the OS pipe, avoiding multi-pipe buffer deadlocks and eliminating
+# deferred trailing stderr. This guarantees output is read in the exact order observed on that pipe, but
+# does not guarantee the wall-clock order of output events that are buffered independently by user-space runtimes.
+function Invoke-BenchmarkStep {
+    param(
+        [Parameter(Mandatory=$true)][string]$WorktreePath,
+        [Parameter(Mandatory=$true)][string]$BenchmarkSelector,
+        [Parameter(Mandatory=$true)][string]$LogPath
+    )
+
+    $psi = New-Object -TypeName System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cmd.exe"
+    $psi.WorkingDirectory = $WorktreePath
+
+    # Invoke mvnw.cmd directly via cmd.exe /d /c, redirecting stderr to stdout (2>&1).
+    # The entire command line is enclosed in outer quotes per standard cmd.exe quote-stripping rules.
+    $mvnwCmd = ".\mvnw.cmd"
+    $innerCmd = "$mvnwCmd exec:exec `"-Dexec.executable=java`" `"-Dexec.classpathScope=test`" `"-Dexec.args=-cp %classpath org.openjdk.jmh.Main $BenchmarkSelector -f 3 -wi 3 -i 5 -p driverCount=200,1000,10000 -p requestCount=1,5,20 -p condition=nominal,contended -jvmArgs '-Xms4g -Xmx4g -XX:ActiveProcessorCount=8'`" 2>&1"
+    $psi.Arguments = "/d /c `"$innerCmd`""
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.CreateNoWindow = $true
+
+    $proc = $null
+    $writer = $null
+
+    try {
+        # Append to log file so multiple sequential benchmark targets are preserved in the same log
+        $writer = New-Object -TypeName System.IO.StreamWriter -ArgumentList @($LogPath, $true, [System.Text.Encoding]::UTF8)
+        $proc = New-Object -TypeName System.Diagnostics.Process
+        $proc.StartInfo = $psi
+
+        $started = $proc.Start()
+        if (-not $started) {
+            throw "Failed to start benchmark process for selector '$BenchmarkSelector' in '$WorktreePath'."
+        }
+
+        # Synchronously stream the single combined stream line-by-line to both console and log in real time
+        while ($null -ne ($line = $proc.StandardOutput.ReadLine())) {
+            [Console]::Out.WriteLine($line)
+            $writer.WriteLine($line)
+        }
+
+        # Wait for the child process to exit
+        $proc.WaitForExit()
+        return $proc.ExitCode
+    } finally {
+        if ($null -ne $writer) {
+            $writer.Flush()
+            $writer.Close()
+            $writer.Dispose()
+        }
+        if ($null -ne $proc) {
+            $proc.Close()
+            $proc.Dispose()
+        }
+    }
+}
+
+# Step 0: Environment Detection, Path Configuration, & Machine-Specific Assumptions
+# Intended PowerShell Versions: Windows PowerShell 5.1 or PowerShell 7+ on 64-bit Windows.
+# This reproduction script assumes a 13th Gen Intel CPU topology where Performance cores reside
+# on logical CPUs 0-7 (affinity mask 0x00FF).
+# Repository root is dynamically derived via Git; hard-coded path fallbacks are intentionally avoided.
+$repoRootRaw = (git rev-parse --show-toplevel 2>$null)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRootRaw)) {
+    throw "Preflight validation failed: Unable to determine Git repository root via 'git rev-parse --show-toplevel'. Ensure Git is installed and execute this script from within the dispatch repository."
+}
+$repoRoot = $repoRootRaw.Trim().Replace('/', '\')
+
+# Validate worktree root using Git commands (compatible with both main repositories and linked worktrees)
+$isWorkTree = (git -C $repoRoot rev-parse --is-inside-work-tree 2>$null)
+if ($LASTEXITCODE -ne 0 -or $isWorkTree.Trim() -ne "true") {
+    throw "Preflight validation failed: '$repoRoot' is not recognized as a valid Git worktree by 'git rev-parse --is-inside-work-tree'."
+}
+
+# Define worktree paths and commits
+$baselinePath = "C:\Aagosh\CODE\JAVA\dispatch-baseline"
+$optimizedPath = "C:\Aagosh\CODE\JAVA\dispatch-optimized"
+$baselineCommit = "374db9e2510d023be208ef314a482d99c928f7ce"
+$optimizedCommit = "de17a2ba54536cc92776ffe104e0e7e1e353ab2b"
+
+# Define log paths (stored outside temporary worktrees in repository root)
+$baselineLog = "$repoRoot\reproduction-baseline.log"
+$optimizedLog = "$repoRoot\reproduction-optimized.log"
+
+# Define benchmark harness source path
+$harnessRelativePath = "src\test\java\com\aagosh\dispatch\matching\GreedyMatcherCorrectiveBenchmark.java"
+$harnessSource = "$repoRoot\$harnessRelativePath"
+
+# Step 1: Preflight Prerequisites Validation (Fail early before touching worktrees or logs)
+Write-Host "Validating reproduction prerequisites..."
+
+# 1a. Validate target commits exist in repository
+git -C $repoRoot cat-file -e "$baselineCommit^{commit}" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "Preflight failed: Baseline commit '$baselineCommit' does not exist in repository '$repoRoot'."
+}
+git -C $repoRoot cat-file -e "$optimizedCommit^{commit}" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "Preflight failed: Optimized commit '$optimizedCommit' does not exist in repository '$repoRoot'."
+}
+
+# 1b. Validate benchmark harness availability
+if (-not (Test-Path $harnessSource)) {
+    throw "Preflight failed: Benchmark harness not found at '$harnessSource'. Because GreedyMatcherCorrectiveBenchmark.java is an uncommitted local audit artifact, reviewers must provide this source file in the repository before executing reproduction."
+}
+
+# 1c. Validate worktree destination paths are not already occupied
+if (Test-Path $baselinePath) {
+    throw "Preflight failed: Baseline worktree destination '$baselinePath' already exists. Remove or relocate the existing directory before running."
+}
+if (Test-Path $optimizedPath) {
+    throw "Preflight failed: Optimized worktree destination '$optimizedPath' already exists. Remove or relocate the existing directory before running."
+}
+
+# 1d. Validate log preservation policy (do not overwrite existing diagnostic evidence)
+if (Test-Path $baselineLog) {
+    throw "Preflight failed: Existing diagnostic log found at '$baselineLog'. To protect recorded evidence against accidental overwrite, archive, rename, or remove the existing log before starting."
+}
+if (Test-Path $optimizedLog) {
+    throw "Preflight failed: Existing diagnostic log found at '$optimizedLog'. To protect recorded evidence against accidental overwrite, archive, rename, or remove the existing log before starting."
+}
+
+# 1e. Validate host CPU logical processor count threshold for affinity mask 0x00FF
+# IMPORTANT LIMITATION: This check verifies ONLY that the host has at least 8 logical processors
+# so that Win32 SetProcessAffinityMask does not throw an out-of-range CPU index exception.
+# It does NOT verify that logical CPUs 0-7 are Performance cores, nor does it inspect physical
+# core topology. The 0x00FF bitmask reflects the specific hardware topology of the audit
+# workstation (Intel Core i7-1360P: 4 P-cores / 8 threads on CPUs 0-7). On systems with different
+# core counts or non-hybrid topologies, adjust or remove the affinity mask accordingly.
+$logicalProcessorCount = [Environment]::ProcessorCount
+if ($logicalProcessorCount -lt 8) {
+    throw "Preflight failed: Host has $logicalProcessorCount logical processors, but the P-core affinity mask 0x00FF requires at least 8 logical processors (CPUs 0-7). On systems with fewer than 8 logical processors, adjust the affinity mask or remove affinity pinning."
+}
+
+# Preserve caller process affinity and apply P-core mask 0x00FF
+# All child processes (cmd.exe, mvnw.cmd, java.exe, JMH worker forks) inherit this mask via Win32 process inheritance.
+$originalAffinity = [System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity
+[System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]0x00FF
+
+try {
+    # Step A: Create isolated worktrees for baseline and optimized revisions
+    # Handles partial failure: if baseline worktree succeeds but optimized creation fails,
+    # report the surviving worktree and intentionally leave it intact for inspection/cleanup.
+    Write-Host "Creating isolated worktrees..."
+    git worktree add $baselinePath $baselineCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create baseline worktree at '$baselinePath' (exit code $LASTEXITCODE). No worktrees were created."
+    }
+
+    git worktree add $optimizedPath $optimizedCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create optimized worktree at '$optimizedPath' (exit code $LASTEXITCODE). Partial worktree creation detected: the surviving baseline worktree at '$baselinePath' has been intentionally left intact for manual inspection/cleanup. Remove it manually with: git worktree remove '$baselinePath' --force"
+    }
+
+    # Step B: Copy benchmark harness into both worktrees (guarded with explicit error handling)
+    Write-Host "Deploying benchmark harness to worktrees..."
+    try {
+        Copy-Item -Path $harnessSource -Destination "$baselinePath\$harnessRelativePath" -Force -ErrorAction Stop
+    } catch {
+        throw "Failed to copy benchmark harness to baseline worktree at '$baselinePath\$harnessRelativePath': $($_.Exception.Message). Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection/cleanup."
+    }
+
+    try {
+        Copy-Item -Path $harnessSource -Destination "$optimizedPath\$harnessRelativePath" -Force -ErrorAction Stop
+    } catch {
+        throw "Failed to copy benchmark harness to optimized worktree at '$optimizedPath\$harnessRelativePath': $($_.Exception.Message). Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection/cleanup."
+    }
+
+    # Step C: Compile test classes in baseline worktree
+    Write-Host "Compiling baseline test classes..."
+    Push-Location $baselinePath
+    try {
+        .\mvnw.cmd test-compile
+        if ($LASTEXITCODE -ne 0) { throw "Baseline compilation failed with exit code $LASTEXITCODE. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection." }
+    } finally {
+        Pop-Location
+    }
+
+    # Step D: Compile test classes in optimized worktree
+    Write-Host "Compiling optimized test classes..."
+    Push-Location $optimizedPath
+    try {
+        .\mvnw.cmd test-compile
+        if ($LASTEXITCODE -ne 0) { throw "Optimized compilation failed with exit code $LASTEXITCODE. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection." }
+    } finally {
+        Pop-Location
+    }
+
+    # Step E: Run Baseline Benchmark Suite with P-Core Affinity (0x00FF)
+    # Output is concurrently streamed to console and preserved to $baselineLog.
+    # Each target is executed independently with explicit exit code verification.
+    Write-Host "Executing baseline benchmark (1/2: greedyMatch)..."
+    $exitE1 = Invoke-BenchmarkStep -WorktreePath $baselinePath -BenchmarkSelector 'com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.greedyMatch$' -LogPath $baselineLog
+    if ($exitE1 -ne 0) {
+        throw "Baseline greedyMatch benchmark run failed with child process exit code $exitE1. Halting execution; quadTreeConstructionOnly, cooldown, and optimized suite will not run. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection. Inspect diagnostic log at: $baselineLog"
+    }
+
+    Write-Host "Executing baseline benchmark (2/2: quadTreeConstructionOnly)..."
+    $exitE2 = Invoke-BenchmarkStep -WorktreePath $baselinePath -BenchmarkSelector 'com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.quadTreeConstructionOnly$' -LogPath $baselineLog
+    if ($exitE2 -ne 0) {
+        throw "Baseline quadTreeConstructionOnly benchmark run failed with child process exit code $exitE2. Halting execution; cooldown and optimized suite will not run. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection. Inspect diagnostic log at: $baselineLog"
+    }
+
+    # Step F: Enforce 60-second thermal cooldown
+    Write-Host "Baseline benchmark complete. Enforcing 60-second thermal cooldown..."
+    Start-Sleep -Seconds 60
+
+    # Step G: Run Optimized Benchmark Suite with P-Core Affinity (0x00FF)
+    # Output is concurrently streamed to console and preserved to $optimizedLog.
+    # Each target is executed independently with explicit exit code verification.
+    Write-Host "Executing optimized benchmark (1/2: greedyMatch)..."
+    $exitG1 = Invoke-BenchmarkStep -WorktreePath $optimizedPath -BenchmarkSelector 'com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.greedyMatch$' -LogPath $optimizedLog
+    if ($exitG1 -ne 0) {
+        throw "Optimized greedyMatch benchmark run failed with child process exit code $exitG1. Halting execution; quadTreeConstructionOnly will not run. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection. Inspect diagnostic log at: $optimizedLog"
+    }
+
+    Write-Host "Executing optimized benchmark (2/2: quadTreeConstructionOnly)..."
+    $exitG2 = Invoke-BenchmarkStep -WorktreePath $optimizedPath -BenchmarkSelector 'com.aagosh.dispatch.matching.GreedyMatcherCorrectiveBenchmark.quadTreeConstructionOnly$' -LogPath $optimizedLog
+    if ($exitG2 -ne 0) {
+        throw "Optimized quadTreeConstructionOnly benchmark run failed with child process exit code $exitG2. Halting execution. Surviving worktrees at '$baselinePath' and '$optimizedPath' have been intentionally left intact for manual inspection. Inspect diagnostic log at: $optimizedLog"
+    }
+
+    Write-Host "Reproduction suite completed successfully."
+    Write-Host "Baseline log preserved at: $baselineLog"
+    Write-Host "Optimized log preserved at: $optimizedLog"
+} finally {
+    # Restore original caller process affinity mask
+    [System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = $originalAffinity
+}
+
+# Step H: Manual Worktree Cleanup (Explicit Post-Audit Action)
+# By design, this script NEVER automatically removes worktrees on success or failure.
+# This guarantees worktree files and compiled classes remain accessible for post-run inspection.
+# Once logs and output have been verified, execute cleanup manually:
+#   git worktree remove C:\Aagosh\CODE\JAVA\dispatch-baseline --force
+#   git worktree remove C:\Aagosh\CODE\JAVA\dispatch-optimized --force
+```
