@@ -4,30 +4,59 @@
    ────────────────────────────────────────────────────────────────────────── */
 
 .route-preview-card {
-  position: absolute;
-  top: 80px;
+  position: fixed;
+  top: calc(var(--header-h, 64px) + 16px);
   right: 20px;
   z-index: 25;
   width: 380px;
   max-width: calc(100vw - 40px);
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - var(--header-h, 64px) - 36px);
   overflow-y: auto;
-  background: rgba(10, 14, 23, 0.90);
+  background: rgba(6, 6, 8, 0.95);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow:
-    0 24px 50px -12px rgba(0, 0, 0, 0.85),
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 24px 50px -12px rgba(0, 0, 0, 0.9),
+    0 4px 16px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
   border-radius: 16px;
   padding: 14px 16px;
-  color: #f8fafc;
+  color: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   display: flex;
   flex-direction: column;
   gap: 10px;
   animation: cardSlideIn 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Aesthetic White Scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
+}
+
+.route-preview-card::-webkit-scrollbar {
+  width: 5px;
+}
+
+.route-preview-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.route-preview-card::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.route-preview-card::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.route-preview-card::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 @keyframes cardSlideIn {
@@ -199,8 +228,9 @@
 
 .route-preview-card__metric-value {
   font-size: 13px;
-  font-weight: 600;
-  color: #ffffff;
+  font-weight: 700;
+  color: #34d399; /* Green variable */
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .route-preview-card__metric-divider {
@@ -305,8 +335,9 @@
 .route-preview-card__tier-price {
   font-size: 15px;
   font-weight: 700;
-  color: #ffffff;
+  color: #34d399; /* Green variable */
   letter-spacing: -0.01em;
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 /* ── Actions ────────────────────────────────────────────────────────── */
@@ -377,7 +408,7 @@
     left: 12px;
     width: auto;
     max-width: none;
-    max-height: min(520px, calc(100dvh - 120px));
+    max-height: calc(100dvh - var(--header-h, 56px) - 24px);
     z-index: 30;
   }
 }

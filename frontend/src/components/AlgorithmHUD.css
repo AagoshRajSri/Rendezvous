@@ -1,24 +1,24 @@
 /* ============================================================
    Algorithm HUD - Telemetry & Spatial Graph Visualizer
-   Clean, human-crafted Obsidian Slate styling docked at bottom-right
-   to eliminate collisions with top-right trip preview cards.
+   Luxury Monochrome Obsidian styling docked cleanly below navbar
+   with aesthetic white scrollbar and green variable accents.
    ============================================================ */
 
 .algorithm-hud {
-  position: absolute;
+  position: fixed;
   width: 340px;
   max-width: calc(100vw - 40px);
-  max-height: min(480px, calc(100vh - 120px));
-  background: rgba(10, 14, 23, 0.90);
+  max-height: calc(100vh - var(--header-h, 64px) - 36px);
+  background: rgba(6, 6, 8, 0.95);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   box-shadow:
-    0 20px 45px -10px rgba(0, 0, 0, 0.8),
-    0 4px 16px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  color: #f1f5f9;
+    0 20px 45px -10px rgba(0, 0, 0, 0.9),
+    0 4px 16px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   z-index: 20;
   display: flex;
@@ -37,14 +37,15 @@
   bottom: 84px;
   left: 20px;
   right: auto;
+  max-height: calc(100vh - var(--header-h, 64px) - 100px);
 }
 
 .algorithm-hud--minimized {
   width: auto;
   max-height: 40px;
   border-radius: 100px;
-  background: rgba(10, 14, 23, 0.85);
-  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.6);
+  background: rgba(6, 6, 8, 0.92);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.7);
 }
 
 .algorithm-hud--inactive {
@@ -58,8 +59,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.02);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   gap: 12px;
 }
 
@@ -92,13 +93,13 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: #f8fafc;
+  color: #ffffff;
   text-transform: uppercase;
 }
 
 .algorithm-hud__subtitle {
   font-size: 10px;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.6);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,8 +117,8 @@
   align-items: center;
   gap: 5px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ffffff;
   border-radius: 6px;
   padding: 3px 8px;
   font-size: 10px;
@@ -127,12 +128,12 @@
 }
 
 .algorithm-hud__toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
 }
 
 .algorithm-hud__toggle-btn--on {
-  background: rgba(16, 185, 129, 0.12);
+  background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.4);
   color: #34d399;
 }
@@ -145,9 +146,9 @@
 }
 
 .algorithm-hud__icon-btn {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #ffffff;
   font-size: 13px;
   cursor: pointer;
   width: 24px;
@@ -160,7 +161,7 @@
 }
 
 .algorithm-hud__icon-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.15);
   color: #ffffff;
 }
 
@@ -171,6 +172,35 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+
+  /* Aesthetic White Scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
+}
+
+.algorithm-hud__body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.algorithm-hud__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.algorithm-hud__body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.algorithm-hud__body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.algorithm-hud__body::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .algorithm-hud__section {
@@ -179,7 +209,7 @@
   gap: 8px;
   padding: 10px;
   background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
 }
 
@@ -192,28 +222,33 @@
 
 .algorithm-hud__section-icon {
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .algorithm-hud__section-title {
   font-size: 11px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #ffffff;
   flex: 1;
 }
 
 .algorithm-hud__section-tag {
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, monospace;
   background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  color: #34d399; /* Green variable */
   padding: 2px 6px;
   border-radius: 4px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .algorithm-hud__action-chip {
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
   font-size: 9px;
   font-weight: 600;
   padding: 2px 7px;
@@ -239,27 +274,29 @@
   display: flex;
   flex-direction: column;
   padding: 5px 6px;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.35);
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .algorithm-hud__metric-label {
   font-size: 8.5px;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 
 .algorithm-hud__metric-val {
   font-size: 11px;
-  font-weight: 600;
-  color: #f8fafc;
+  font-weight: 700;
+  color: #34d399; /* Green for variables */
+  font-family: ui-monospace, SFMono-Regular, monospace;
   margin-top: 2px;
 }
 
 .algorithm-hud__metric-val--highlight {
-  color: #a855f7;
+  color: #34d399; /* Green variable */
+  font-weight: 700;
 }
 
 /* ── Stage Pills ───────────────────────────────────────────────────── */
@@ -271,9 +308,9 @@
 
 .algorithm-hud__stage-pill {
   font-size: 9px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #ffffff;
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -284,9 +321,9 @@
   align-items: center;
   gap: 8px;
   font-size: 10px;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.7);
   padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.03);
   border-left: 2px solid #10b981;
   border-radius: 4px;
 }
@@ -300,18 +337,18 @@
 
 /* ── Cost Function & Candidates ────────────────────────────────────── */
 .algorithm-hud__formula {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.4);
   padding: 6px 8px;
   border-radius: 6px;
-  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Monaco, monospace;
   font-size: 9px;
-  color: #cbd5e1;
-  border-left: 2px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border-left: 2px solid #10b981;
 }
 
 .algorithm-hud__candidate--winner {
-  background: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(16, 185, 129, 0.35);
   border-radius: 8px;
   padding: 8px 10px;
   display: flex;
@@ -328,22 +365,27 @@
 .algorithm-hud__candidate-badge {
   font-size: 9px;
   font-weight: 700;
-  color: #10b981;
+  color: #34d399; /* Green */
   letter-spacing: 0.04em;
 }
 
 .algorithm-hud__candidate-id {
   font-size: 11px;
-  font-weight: 600;
-  color: #ffffff;
-  font-family: monospace;
+  font-weight: 700;
+  color: #34d399; /* Green variable */
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .algorithm-hud__candidate-scores {
   display: flex;
   justify-content: space-between;
   font-size: 9.5px;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.algorithm-hud__candidate-scores strong {
+  color: #34d399; /* Green variable */
+  font-family: ui-monospace, monospace;
 }
 
 .algorithm-hud__candidate-list {
@@ -355,7 +397,7 @@
 .algorithm-hud__candidate-list-title {
   font-size: 9px;
   text-transform: uppercase;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.6);
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -366,22 +408,30 @@
   justify-content: space-between;
   font-size: 9.5px;
   padding: 3px 6px;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 4px;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .algorithm-hud__candidate-row-id {
-  font-family: monospace;
-  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: #34d399; /* Green variable */
+  font-weight: 600;
+}
+
+.algorithm-hud__candidate-row-dist,
+.algorithm-hud__candidate-row-score {
+  color: #34d399; /* Green variable */
+  font-family: ui-monospace, monospace;
 }
 
 .algorithm-hud__candidate-row-tag {
   font-size: 8px;
   padding: 1px 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 3px;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.6);
   font-weight: 600;
 }
 
@@ -399,17 +449,17 @@
     z-index: 40;
   }
 
-  /* When expanded on mobile, present as a focused modal dialog with backdrop */
+  /* When expanded on mobile, present as a focused modal dialog cleanly below navbar */
   .algorithm-hud--expanded {
     position: fixed;
-    top: 50%;
+    top: calc(var(--header-h, 56px) + 12px);
     left: 50%;
     right: auto;
     bottom: auto;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     width: calc(100vw - 24px);
     max-width: 420px;
-    max-height: min(520px, 80vh);
+    max-height: calc(100dvh - var(--header-h, 56px) - 24px);
     z-index: 200;
     box-shadow:
       0 25px 60px -10px rgba(0, 0, 0, 0.95),

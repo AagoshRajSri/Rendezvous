@@ -122,7 +122,7 @@ export function AlgorithmHUD({
           <div className="algorithm-hud__section">
             <div className="algorithm-hud__section-header">
               <span className="algorithm-hud__section-icon" aria-hidden="true">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2"/>
                   <line x1="12" y1="3" x2="12" y2="21"/>
                   <line x1="3" y1="12" x2="21" y2="12"/>
@@ -169,7 +169,7 @@ export function AlgorithmHUD({
             <div className="algorithm-hud__section">
               <div className="algorithm-hud__section-header">
                 <span className="algorithm-hud__section-icon" aria-hidden="true">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="6" cy="19" r="3"/>
                     <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/>
                     <circle cx="18" cy="5" r="3"/>
@@ -229,7 +229,7 @@ export function AlgorithmHUD({
             <div className="algorithm-hud__section">
               <div className="algorithm-hud__section-header">
                 <span className="algorithm-hud__section-icon" aria-hidden="true">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="20" x2="18" y2="10"/>
                     <line x1="12" y1="20" x2="12" y2="4"/>
                     <line x1="6" y1="20" x2="6" y2="14"/>

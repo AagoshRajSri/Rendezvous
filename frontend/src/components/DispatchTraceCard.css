@@ -6,20 +6,20 @@
 .dispatch-trace-card {
   margin-top: 10px;
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(6, 6, 8, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   overflow: hidden;
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .dispatch-trace-card:hover {
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .dispatch-trace-card--expanded {
-  background: rgba(10, 14, 23, 0.95);
-  border-color: rgba(16, 185, 129, 0.35);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  background: rgba(6, 6, 8, 0.98);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
 }
 
 /* ── Accordion Header Button ─────────────────────────────────────────────────── */
@@ -33,7 +33,7 @@
   background: transparent;
   border: none;
   cursor: pointer;
-  color: #f1f5f9;
+  color: #ffffff;
   text-align: left;
   font-family: inherit;
   font-size: 11px;
@@ -59,19 +59,19 @@
 
 .dispatch-trace-card__icon {
   font-size: 13px;
-  color: #a855f7;
+  color: #10b981;
 }
 
 .dispatch-trace-card__title {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.85);
+  color: #ffffff;
 }
 
 .dispatch-trace-card__chevron {
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.6);
   transition: transform 0.2s ease;
 }
 
@@ -83,8 +83,8 @@
 
 .dispatch-trace-status-pill {
   font-size: 9.5px;
-  font-weight: 500;
-  padding: 2px 6px;
+  font-weight: 600;
+  padding: 2px 7px;
   border-radius: 999px;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -96,13 +96,13 @@
 .dispatch-trace-status-pill--loading {
   background: rgba(16, 185, 129, 0.12);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .dispatch-trace-status-pill--neutral {
   background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .dispatch-trace-status-pill--error {
@@ -112,32 +112,49 @@
 }
 
 .dispatch-trace-status-pill--ready {
-  background: rgba(16, 185, 129, 0.12);
+  background: rgba(16, 185, 129, 0.15);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
 /* ── Body ────────────────────────────────────────────────────────────────────── */
 
 .dispatch-trace-card__body {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 420px;
+  max-height: 380px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
 }
 
-/* Scrollbar styling */
+/* Aesthetic White Scrollbar */
 .dispatch-trace-card__body::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 5px;
+}
+
+.dispatch-trace-card__body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .dispatch-trace-card__body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dispatch-trace-card__body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.dispatch-trace-card__body::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 /* ── State Boxes (Loading, 404, Error) ───────────────────────────────────────── */
@@ -278,7 +295,7 @@
 
 .dispatch-trace-card__metric {
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 6px 8px;
   border-radius: 6px;
   display: flex;
@@ -288,29 +305,31 @@
 
 .dispatch-trace-card__metric-label {
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
 .dispatch-trace-card__metric-val {
   font-size: 11px;
-  font-weight: 600;
-  color: #f1f5f9;
+  font-weight: 700;
+  color: #34d399; /* Green for variables */
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .dispatch-trace-outcome-tag {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .dispatch-trace-outcome-tag--matched {
-  color: #34d399;
+  color: #34d399; /* Green variable */
 }
 
 .dispatch-trace-outcome-tag--unmatched {
-  color: #fbbf24;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* Decision Box */
@@ -322,7 +341,7 @@
   border-radius: 0 6px 6px 0;
   font-size: 10.5px;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.85);
+  color: #ffffff;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -346,6 +365,30 @@
   overflow-x: auto;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
+}
+
+.dispatch-trace-card__table-wrapper::-webkit-scrollbar {
+  height: 5px;
+}
+
+.dispatch-trace-card__table-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dispatch-trace-card__table-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dispatch-trace-card__table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.dispatch-trace-card__table-wrapper::-webkit-scrollbar-button {
+  display: none !important;
 }
 
 .dispatch-trace-card__table {
@@ -357,44 +400,47 @@
 }
 
 .dispatch-trace-card__table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   padding: 6px 8px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.55);
+  color: #ffffff;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .dispatch-trace-card__table td {
   padding: 6px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .dispatch-trace-card__table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .dispatch-trace-card__cell-rank {
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .dispatch-trace-card__cell-driver code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #34d399;
+  color: #34d399; /* Green variable */
+  font-weight: 700;
 }
 
 .dispatch-trace-card__cell-cost {
-  font-weight: 600;
-  color: #f1f5f9;
+  font-weight: 700;
+  color: #34d399; /* Green variable */
+  font-family: ui-monospace, monospace;
 }
 
 .dispatch-trace-card__cell-breakdown {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.6);
+  font-family: ui-monospace, monospace;
 }
 
 .dispatch-trace-card__cell-reason {
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -418,26 +464,26 @@
 }
 
 .dispatch-trace-outcome-badge--outcompeted {
-  background: rgba(148, 163, 184, 0.1);
-  color: #94a3b8;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .dispatch-trace-outcome-badge--unavailable {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .dispatch-trace-outcome-badge--claim_lost {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .dispatch-trace-outcome-badge--unmatched {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 

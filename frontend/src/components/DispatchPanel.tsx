@@ -416,7 +416,7 @@ export function DispatchPanel({
             <div className="dispatch-panel__summary-grid">
               <div className="dispatch-panel__summary-row">
                 <span className="dispatch-panel__summary-label">Driver ID</span>
-                <span className="dispatch-panel__summary-value">{matchedDriverId ?? '--'}</span>
+                <span className="dispatch-panel__summary-value dispatch-panel__summary-value--variable">{matchedDriverId ?? '--'}</span>
               </div>
               <div className="dispatch-panel__summary-row">
                 <span className="dispatch-panel__summary-label">Pickup</span>
@@ -433,7 +433,7 @@ export function DispatchPanel({
               {route && (
                 <div className="dispatch-panel__summary-row">
                   <span className="dispatch-panel__summary-label">Journey</span>
-                  <span className="dispatch-panel__summary-value">
+                  <span className="dispatch-panel__summary-value dispatch-panel__summary-value--variable">
                     {formatDistanceUtil(route.distanceMeters)} · {formatDurationUtil(route.durationSeconds)}
                   </span>
                 </div>
