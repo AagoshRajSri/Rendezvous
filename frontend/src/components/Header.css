@@ -178,18 +178,29 @@
 /* ── Mobile Responsive ────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .header__inner {
-    padding: 0 16px;
+    padding: 0 12px;
   }
 
   .header__brand-group {
-    gap: 16px;
+    gap: 12px;
   }
 
   .header__nav {
-    display: none;
+    display: flex;
+    gap: 2px;
+    margin-left: 0;
+  }
+
+  .header__nav-item {
+    padding: 5px 10px;
+    font-size: 12px;
   }
 
   .header__title {
-    font-size: 18px;
+    font-size: 16px;
+  }
+
+  .header__status-text {
+    display: none;
   }
 }

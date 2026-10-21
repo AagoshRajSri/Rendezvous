@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { GlobeMap } from './components/GlobeMap';
-import { Header } from './components/Header';
+import { Header, type NavigationTab } from './components/Header';
 import { SearchBar, type SearchTarget } from './components/SearchBar';
 import { DispatchPanel } from './components/DispatchPanel';
 import { RoutePreviewCard } from './components/RoutePreviewCard';
 import { AlgorithmHUD } from './components/AlgorithmHUD';
+import { FleetTelemetryDrawer } from './components/FleetTelemetryDrawer';
+import { DispatchInspectorDrawer } from './components/DispatchInspectorDrawer';
 import { useMapReady } from './hooks/useMapReady';
 import { usePlaceSearch } from './hooks/usePlaceSearch';
 import { useSimulatedDrivers } from './hooks/useSimulatedDrivers';
@@ -14,6 +16,7 @@ import { useRoute } from './hooks/useRoute';
 import { useDriverApproach } from './hooks/useDriverApproach';
 import { useVehicleAnimation } from './hooks/useVehicleAnimation';
 import type { PlaceSuggestion } from './types/place';
+import type { SimulatedDriver } from './types/driver';
 
 /**
  * Root application component.
@@ -35,15 +38,28 @@ import type { PlaceSuggestion } from './types/place';
  *   - isAlgorithmMode  : whether live algorithm visualizer overlays and HUD are active
  *   - replayPulseToken : numeric token to re-trigger wavefront shortest path animations
  */
+const SHOWCASE_PLACE: PlaceSuggestion = {
+  id: 'showcase-london',
+  name: 'Central London, United Kingdom',
+  subtitle: 'Greater London, England, United Kingdom',
+  lat: 51.5074,
+  lon: -0.1276,
+  type: 'city',
+  bbox: [-0.25, 51.42, 0.02, 51.58],
+};
+
 export default function App() {
   const { state: mapState, onLoad, onError } = useMapReady();
   const search = usePlaceSearch();
+  const [activeTab, setActiveTab] = useState<NavigationTab>('ride');
   const [activeTarget, setActiveTarget] = useState<SearchTarget>('pickup');
   const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
   const [destinationPlace, setDestinationPlace] = useState<PlaceSuggestion | null>(null);
   const [isTraceExpanded, setIsTraceExpanded] = useState(false);
   const [isAlgorithmMode, setIsAlgorithmMode] = useState(true);
   const [replayPulseToken, setReplayPulseToken] = useState(0);
+  const [focusFleetToken, setFocusFleetToken] = useState(0);
+  const [focusDriverLocation, setFocusDriverLocation] = useState<{ lon: number; lat: number } | null>(null);
 
   const drivers = useSimulatedDrivers(selectedPlace);
   const {
@@ -177,6 +193,30 @@ export default function App() {
     setIsTraceExpanded(false);
   }
 
+  function handleSelectTab(tab: NavigationTab) {
+    setActiveTab(tab);
+    if (tab === 'fleet') {
+      if (!selectedPlace) {
+        setSelectedPlace(SHOWCASE_PLACE);
+      }
+      setFocusFleetToken((prev) => prev + 1);
+    } else if (tab === 'dispatch') {
+      if (!selectedPlace) {
+        setSelectedPlace(SHOWCASE_PLACE);
+      }
+      setIsAlgorithmMode(true);
+      setIsTraceExpanded(true);
+    }
+  }
+
+  function handleFocusCluster() {
+    setFocusFleetToken((prev) => prev + 1);
+  }
+
+  function handleFocusDriver(driver: SimulatedDriver) {
+    setFocusDriverLocation({ lon: driver.lon, lat: driver.lat });
+  }
+
   const hasDecidedTripRoute = Boolean(
     routeState.route &&
     routeState.route.coordinates &&
@@ -239,23 +279,52 @@ export default function App() {
 
   return (
     <>
-      <Header mapState={mapState} />
-
-      <SearchBar
-        query={search.query}
-        state={search.state}
-        onQueryChange={search.setQuery}
-        onClear={handleClear}
-        onRetry={search.retry}
-        onSelect={handleSelect}
-        mapReady={mapState.status === 'ready'}
-        activeTarget={activeTarget}
-        onTargetChange={setActiveTarget}
-        pickupPlace={selectedPlace}
-        destinationPlace={destinationPlace}
-        onSwap={handleSwap}
-        onClearDestination={handleClearDestination}
+      <Header
+        mapState={mapState}
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
       />
+
+      {/* ── Fleet Telemetry Drawer (Phase: Fleet tab) ────────────────────────── */}
+      <FleetTelemetryDrawer
+        isOpen={activeTab === 'fleet'}
+        onClose={() => setActiveTab('ride')}
+        drivers={drivers}
+        placeName={selectedPlace?.name}
+        onFocusDriver={handleFocusDriver}
+        onFocusCluster={handleFocusCluster}
+      />
+
+      {/* ── Dispatch Engine & Cost Inspector Drawer (Phase: Dispatch tab) ────── */}
+      <DispatchInspectorDrawer
+        isOpen={activeTab === 'dispatch'}
+        onClose={() => setActiveTab('ride')}
+        traceState={traceState}
+        onRefreshTrace={refreshTrace}
+        isTraceExpanded={isTraceExpanded}
+        onToggleTraceExpand={setIsTraceExpanded}
+        onRunDiagnostic={requestDispatch}
+        placeName={selectedPlace?.name}
+      />
+
+      {/* ── Standard Ride-booking inputs (hidden when inspecting Fleet or Dispatch drawers) ── */}
+      {activeTab === 'ride' && (
+        <SearchBar
+          query={search.query}
+          state={search.state}
+          onQueryChange={search.setQuery}
+          onClear={handleClear}
+          onRetry={search.retry}
+          onSelect={handleSelect}
+          mapReady={mapState.status === 'ready'}
+          activeTarget={activeTarget}
+          onTargetChange={setActiveTarget}
+          pickupPlace={selectedPlace}
+          destinationPlace={destinationPlace}
+          onSwap={handleSwap}
+          onClearDestination={handleClearDestination}
+        />
+      )}
 
       <GlobeMap
         mapState={mapState}
@@ -274,6 +343,9 @@ export default function App() {
         trace={traceState.trace}
         showTraceOverlay={isAlgorithmMode || (isTraceExpanded && traceState.status === 'ready')}
         replayPulseToken={replayPulseToken}
+        focusFleetToken={focusFleetToken}
+        focusDriverLocation={focusDriverLocation}
+        isFleetHighlighted={activeTab === 'fleet'}
       />
 
       {/* ── High-Tech Algorithm Visualizer HUD Overlay ───────────────────────── */}
@@ -292,10 +364,11 @@ export default function App() {
             ? 'left'
             : 'right'
         }
+        forceOpen={activeTab === 'dispatch'}
       />
 
       {/* ── Phase 11.1: Road route preview & fare card (only while idle) ──────── */}
-      {selectedPlace && destinationPlace && routeState.route && mapState.status === 'ready' && dispatchState.phase === 'idle' && (
+      {activeTab === 'ride' && selectedPlace && destinationPlace && routeState.route && mapState.status === 'ready' && dispatchState.phase === 'idle' && (
         <RoutePreviewCard
           pickup={selectedPlace}
           destination={destinationPlace}
@@ -309,7 +382,7 @@ export default function App() {
       )}
 
       {/* ── Phase 11.2 & 11.3: Real dispatch & vehicle tracking panel ────────── */}
-      {selectedPlace && mapState.status === 'ready' && (!destinationPlace || dispatchState.phase !== 'idle') && (
+      {activeTab === 'ride' && selectedPlace && mapState.status === 'ready' && (!destinationPlace || dispatchState.phase !== 'idle') && (
         <DispatchPanel
           placeName={selectedPlace.name}
           dispatchState={dispatchState}

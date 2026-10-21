@@ -165,6 +165,31 @@
   margin: 0;
 }
 
+/* ── Fleet Highlighted Mode ──────────────────────────────────────────────── */
+.simulated-fleet-badge--highlighted {
+  border-color: rgba(16, 185, 129, 0.7);
+  box-shadow:
+    0 0 0 2px rgba(16, 185, 129, 0.25),
+    0 0 28px rgba(16, 185, 129, 0.45),
+    0 16px 36px -8px rgba(0, 0, 0, 0.85);
+  animation: fleet-badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes fleet-badge-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px rgba(16, 185, 129, 0.25),
+      0 0 24px rgba(16, 185, 129, 0.4),
+      0 16px 36px -8px rgba(0, 0, 0, 0.85);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(16, 185, 129, 0.5),
+      0 0 36px rgba(16, 185, 129, 0.7),
+      0 16px 36px -8px rgba(0, 0, 0, 0.85);
+  }
+}
+
 @media (max-width: 768px) {
   .simulated-fleet-badge {
     display: none;

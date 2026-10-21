@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { DispatchTrace, DispatchPhase } from '../types/dispatch';
 import type { RouteSummary } from '../types/routing';
 import './AlgorithmHUD.css';
@@ -15,6 +15,7 @@ export interface AlgorithmHUDProps {
   dockPosition?: 'left' | 'right';
   hasDestination?: boolean;
   defaultMinimized?: boolean;
+  forceOpen?: boolean;
 }
 
 export function AlgorithmHUD({
@@ -29,18 +30,27 @@ export function AlgorithmHUD({
   dockPosition = 'right',
   hasDestination = false,
   defaultMinimized,
+  forceOpen = false,
 }: AlgorithmHUDProps) {
   const [isMinimized, setIsMinimized] = useState(() => {
+    if (forceOpen) return false;
     if (defaultMinimized !== undefined) return defaultMinimized;
     if (typeof window !== 'undefined' && window.innerWidth <= 768) return true;
     return false;
   });
 
+  // When forced open (e.g. from Dispatch header tab), automatically unminimize
+  useEffect(() => {
+    if (forceOpen) {
+      setIsMinimized(false);
+    }
+  }, [forceOpen]);
+
   // Active route being visualized: destination route or driver approach route
   const activeRoute = (phase === 'matched' || phase === 'en_route') ? approachRoute : route;
 
-  // Don't render if neither a trace nor a route exists
-  const hasContent = Boolean(trace || activeRoute);
+  // Don't render if neither a trace, route, nor forceOpen is active
+  const hasContent = Boolean(trace || activeRoute || forceOpen);
   if (!hasContent) {
     return null;
   }
@@ -215,7 +225,7 @@ export function AlgorithmHUD({
           )}
 
           {/* ── Section 3: Multiobjective Cost Function ────────────────── */}
-          {trace && (
+          {(trace || forceOpen) && (
             <div className="algorithm-hud__section">
               <div className="algorithm-hud__section-header">
                 <span className="algorithm-hud__section-icon" aria-hidden="true">
@@ -265,6 +275,12 @@ export function AlgorithmHUD({
                       <span className="algorithm-hud__candidate-row-tag">PRUNED</span>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {!trace && forceOpen && (
+                <div className="algorithm-hud__status-banner" style={{ marginTop: 8 }}>
+                  <span>Kuhn-Munkres Bipartite Matcher optimizing global fleet assignment with zero double-booking guarantee.</span>
                 </div>
               )}
             </div>

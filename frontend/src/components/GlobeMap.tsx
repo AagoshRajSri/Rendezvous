@@ -753,6 +753,18 @@ interface GlobeMapProps {
    * Numeric token bumped to re-trigger the shortest-path wavefront discovery animation.
    */
   replayPulseToken?: number;
+  /**
+   * Token bumped to re-center and fit camera to the entire active driver cluster.
+   */
+  focusFleetToken?: number;
+  /**
+   * When set, smoothly flies the camera to target a specific driver's coordinates.
+   */
+  focusDriverLocation?: { lon: number; lat: number } | null;
+  /**
+   * Whether the fleet breakdown should be highlighted (e.g., in Fleet tab view).
+   */
+  isFleetHighlighted?: boolean;
 }
 
 /**
@@ -785,6 +797,9 @@ export function GlobeMap({
   trace = null,
   showTraceOverlay = false,
   replayPulseToken = 0,
+  focusFleetToken = 0,
+  focusDriverLocation = null,
+  isFleetHighlighted = false,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -1319,6 +1334,58 @@ export function GlobeMap({
     }
   }, [animatedVehiclePosition, animatedVehicleBearing]);
 
+  // ── Camera Framing: Focus entire driver cluster on Fleet view ──────────────
+  useEffect(() => {
+    if (!focusFleetToken || !mapRef.current) return;
+    const map = mapRef.current;
+    if (drivers.length === 0) return;
+
+    let minLon = Infinity;
+    let maxLon = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+
+    for (const d of drivers) {
+      if (d.lon < minLon) minLon = d.lon;
+      if (d.lon > maxLon) maxLon = d.lon;
+      if (d.lat < minLat) minLat = d.lat;
+      if (d.lat > maxLat) maxLat = d.lat;
+    }
+
+    if (
+      isFinite(minLon) &&
+      isFinite(maxLon) &&
+      isFinite(minLat) &&
+      isFinite(maxLat)
+    ) {
+      map.fitBounds(
+        [
+          [minLon, minLat],
+          [maxLon, maxLat],
+        ],
+        {
+          padding: { top: 90, bottom: 90, left: 440, right: 90 },
+          maxZoom: 14,
+          duration: FLY_DURATION_MS,
+          essential: true,
+        },
+      );
+    }
+  }, [focusFleetToken, drivers]);
+
+  // ── Camera Targeting: Fly camera to specific driver ────────────────────────
+  useEffect(() => {
+    if (!focusDriverLocation || !mapRef.current) return;
+    const map = mapRef.current;
+    map.flyTo({
+      center: [focusDriverLocation.lon, focusDriverLocation.lat],
+      zoom: 16,
+      pitch: 40,
+      duration: 1000,
+      essential: true,
+    });
+  }, [focusDriverLocation]);
+
   // ── Electric-wave animated route (Phase 11.5 - enhanced) ────────────────────
   // Phase A: wavefront sweep - progressively reveals route geometry (1.4 s)
   // Phase B: continuous spark loop - travelling dashes simulate live electricity
@@ -1513,7 +1580,11 @@ export function GlobeMap({
       <div ref={containerRef} className="globe-map__container" id="globe-map-container" />
 
       {/* ── Simulated fleet badge & legend (Phase 7C) ──────────────────────── */}
-      <SimulatedFleetBadge drivers={destinationPlace ? [] : drivers} placeName={selectedPlace?.name} />
+      <SimulatedFleetBadge
+        drivers={destinationPlace && !isFleetHighlighted ? [] : drivers}
+        placeName={selectedPlace?.name}
+        isHighlighted={isFleetHighlighted}
+      />
 
       {/* ── Loading overlay ────────────────────────────────────────────────── */}
       {(showOverlay || fadingOut) && mapState.status !== 'error' && (

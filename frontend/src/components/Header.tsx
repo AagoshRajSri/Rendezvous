@@ -1,8 +1,12 @@
 import type { MapReadyState } from '../hooks/useMapReady';
 import './Header.css';
 
+export type NavigationTab = 'ride' | 'fleet' | 'dispatch';
+
 interface HeaderProps {
   mapState: MapReadyState;
+  activeTab?: NavigationTab;
+  onSelectTab?: (tab: NavigationTab) => void;
 }
 
 const STATUS_LABELS: Record<MapReadyState['status'], string> = {
@@ -15,13 +19,18 @@ const STATUS_LABELS: Record<MapReadyState['status'], string> = {
  * Uber-inspired executive navigation bar with minimalist geometric Rendezvous emblem,
  * Apple-grade frosted glass, and clean mobility navigation tabs.
  */
-export function Header({ mapState }: HeaderProps) {
+export function Header({ mapState, activeTab = 'ride', onSelectTab }: HeaderProps) {
   return (
     <header className="header" role="banner">
       <div className="header__inner">
         {/* ── Brand: Minimalist Geometric Logo + Typography ─────────────── */}
         <div className="header__brand-group">
-          <div className="header__logo" aria-hidden="true">
+          <div
+            className="header__logo"
+            aria-hidden="true"
+            onClick={() => onSelectTab?.('ride')}
+            title="Rendezvous Home"
+          >
             <svg
               className="header__logo-svg"
               viewBox="0 0 32 32"
@@ -47,19 +56,38 @@ export function Header({ mapState }: HeaderProps) {
             </svg>
           </div>
 
-          <div className="header__wordmark">
+          <div
+            className="header__wordmark"
+            onClick={() => onSelectTab?.('ride')}
+            style={{ cursor: 'pointer' }}
+          >
             <span className="header__title">Rendezvous</span>
           </div>
 
           {/* ── Uber-style navigation items ──────────────────────────────── */}
           <nav className="header__nav" aria-label="Main Navigation">
-            <button type="button" className="header__nav-item header__nav-item--active">
+            <button
+              type="button"
+              className={`header__nav-item ${activeTab === 'ride' ? 'header__nav-item--active' : ''}`}
+              onClick={() => onSelectTab?.('ride')}
+              aria-current={activeTab === 'ride' ? 'page' : undefined}
+            >
               Ride
             </button>
-            <button type="button" className="header__nav-item">
+            <button
+              type="button"
+              className={`header__nav-item ${activeTab === 'fleet' ? 'header__nav-item--active' : ''}`}
+              onClick={() => onSelectTab?.('fleet')}
+              aria-current={activeTab === 'fleet' ? 'page' : undefined}
+            >
               Fleet
             </button>
-            <button type="button" className="header__nav-item">
+            <button
+              type="button"
+              className={`header__nav-item ${activeTab === 'dispatch' ? 'header__nav-item--active' : ''}`}
+              onClick={() => onSelectTab?.('dispatch')}
+              aria-current={activeTab === 'dispatch' ? 'page' : undefined}
+            >
               Dispatch
             </button>
           </nav>

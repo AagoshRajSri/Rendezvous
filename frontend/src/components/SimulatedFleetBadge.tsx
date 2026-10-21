@@ -4,6 +4,7 @@ import './SimulatedFleetBadge.css';
 interface SimulatedFleetBadgeProps {
   drivers: SimulatedDriver[];
   placeName?: string;
+  isHighlighted?: boolean;
 }
 
 /**
@@ -12,7 +13,11 @@ interface SimulatedFleetBadgeProps {
  * Explicitly identifies the driver data as simulated to prevent any implication
  * of real-world dispatch supply.
  */
-export function SimulatedFleetBadge({ drivers, placeName }: SimulatedFleetBadgeProps) {
+export function SimulatedFleetBadge({
+  drivers,
+  placeName,
+  isHighlighted = false,
+}: SimulatedFleetBadgeProps) {
   if (drivers.length === 0) {
     return null;
   }
@@ -23,7 +28,7 @@ export function SimulatedFleetBadge({ drivers, placeName }: SimulatedFleetBadgeP
 
   return (
     <aside
-      className="simulated-fleet-badge"
+      className={`simulated-fleet-badge ${isHighlighted ? 'simulated-fleet-badge--highlighted' : ''}`}
       role="status"
       aria-label={`Simulated fleet: ${availableCount} available of ${totalCount} total simulated drivers`}
       id="simulated-fleet-badge"
