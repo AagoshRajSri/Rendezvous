@@ -42,14 +42,42 @@ interface SimTrip {
   createdAt: number;
 }
 
-let isDemoMode = false;
+function isStaticCloudHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (sessionStorage.getItem('rendezvous_standalone_demo') === 'true') {
+      return true;
+    }
+  } catch {
+    // ignore sessionStorage errors in restricted environments
+  }
+  const host = window.location.hostname;
+  return (
+    host.endsWith('.pages.dev') ||
+    host.endsWith('.workers.dev') ||
+    host.endsWith('.github.io') ||
+    host.endsWith('.vercel.app') ||
+    host.endsWith('.netlify.app')
+  );
+}
+
+let isDemoMode = isStaticCloudHost();
 const simDrivers = new Map<string, SimDriver>();
 const simTrips = new Map<string, SimTrip>();
 
 export function _resetDemoMode(): void {
-  isDemoMode = false;
+  isDemoMode = isStaticCloudHost();
   simDrivers.clear();
   simTrips.clear();
+}
+
+export function _enableDemoMode(): void {
+  isDemoMode = true;
+  try {
+    sessionStorage.setItem('rendezvous_standalone_demo', 'true');
+  } catch {
+    // ignore
+  }
 }
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -121,7 +149,7 @@ export async function registerDriver(
   } catch (err: unknown) {
     const isStatic405 = err instanceof Error && (err.message.includes('405') || err.message.includes('Failed to fetch'));
     if (isStatic405) {
-      isDemoMode = true;
+      _enableDemoMode();
       simDrivers.set(request.driverId, {
         driverId: request.driverId,
         lat: request.latitude,
@@ -152,7 +180,7 @@ export async function submitRideRequest(
   } catch (err: unknown) {
     const isStatic405 = err instanceof Error && (err.message.includes('405') || err.message.includes('Failed to fetch'));
     if (isStatic405) {
-      isDemoMode = true;
+      _enableDemoMode();
       return simulateSubmission(request);
     }
     throw err;
@@ -293,7 +321,7 @@ export async function fetchEligibleDrivers(signal?: AbortSignal): Promise<Eligib
   } catch (err: unknown) {
     const isStatic405 = err instanceof Error && (err.message.includes('405') || err.message.includes('Failed to fetch'));
     if (isStatic405) {
-      isDemoMode = true;
+      _enableDemoMode();
       return Array.from(simDrivers.values()).map((d) => ({
         driverId: d.driverId,
         status: 'AVAILABLE',

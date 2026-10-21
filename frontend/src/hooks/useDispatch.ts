@@ -504,24 +504,41 @@ async function runDispatchFlow(
 
   try {
     if (availableVisible.length > 0) {
-      // Register all visible available drivers with session-fresh unique IDs to guarantee freshness
-      // in DriverRegistry and prevent duplicate REGISTER drops.
-      await Promise.all(
-        availableVisible.map((d) => {
-          const freshId = `${d.id}-${sessionNonce}`;
-          registeredDriverIds.add(freshId);
-          return registerDriver(
-            {
-              driverId: freshId,
-              latitude: d.lat,
-              longitude: d.lon,
-              action: 'REGISTER',
-              capturedAt: Date.now(),
-            },
-            signal,
-          );
-        }),
+      // Register the first driver sequentially to establish/verify backend connectivity without parallel error spam
+      const firstDriver = availableVisible[0];
+      const firstFreshId = `${firstDriver.id}-${sessionNonce}`;
+      registeredDriverIds.add(firstFreshId);
+      await registerDriver(
+        {
+          driverId: firstFreshId,
+          latitude: firstDriver.lat,
+          longitude: firstDriver.lon,
+          action: 'REGISTER',
+          capturedAt: Date.now(),
+        },
+        signal,
       );
+
+      // Remaining drivers register cleanly (in-memory if demo mode was engaged, or concurrently if backend is alive)
+      const remainingDrivers = availableVisible.slice(1);
+      if (remainingDrivers.length > 0) {
+        await Promise.all(
+          remainingDrivers.map((d) => {
+            const freshId = `${d.id}-${sessionNonce}`;
+            registeredDriverIds.add(freshId);
+            return registerDriver(
+              {
+                driverId: freshId,
+                latitude: d.lat,
+                longitude: d.lon,
+                action: 'REGISTER',
+                capturedAt: Date.now(),
+              },
+              signal,
+            );
+          }),
+        );
+      }
     } else {
       const driverId = generateDriverId(place.name);
       registeredDriverIds.add(driverId);
