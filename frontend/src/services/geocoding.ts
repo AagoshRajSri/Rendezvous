@@ -1,5 +1,5 @@
 /**
- * Phase 7B — Photon geocoding service implementation.
+ * Phase 7B - Photon geocoding service implementation.
  *
  * Photon (photon.komoot.io) is an open-source geocoding engine built on
  * OpenStreetMap data, provided by Komoot as a best-effort public service.
@@ -145,13 +145,13 @@ export class PhotonGeocodingService implements GeocodingService {
     try {
       response = await fetch(url.toString(), { signal });
     } catch (err: unknown) {
-      // AbortError is not a failure — the caller intentionally cancelled.
+      // AbortError is not a failure - the caller intentionally cancelled.
       if (err instanceof DOMException && err.name === 'AbortError') {
         return { status: 'empty' };
       }
       return {
         status: 'error',
-        message: 'Network error — check your connection.',
+        message: 'Network error - check your connection.',
         retryable: true,
       };
     }

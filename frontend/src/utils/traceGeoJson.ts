@@ -1,5 +1,5 @@
 /**
- * Phase 11.4F — GeoJSON conversion utilities for dispatch execution trace map overlays.
+ * Phase 11.4F - GeoJSON conversion utilities for dispatch execution trace map overlays.
  *
  * Converts backend SpatialStage bounding boxes to GeoJSON Polygons and TraceCandidate
  * coordinates to GeoJSON Points, ensuring strict [longitude, latitude] WGS-84 coordinate ordering.

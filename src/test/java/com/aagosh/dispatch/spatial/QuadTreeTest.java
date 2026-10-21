@@ -468,7 +468,7 @@ class QuadTreeTest {
             points.add(p);
         }
 
-        // Query from near the South Pole — the main asymmetric case
+        // Query from near the South Pole - the main asymmetric case
         assertNearestMatchesBruteForce(tree, points, new GeoPoint(-89.0, -45.0), 10);
         assertNearestMatchesBruteForce(tree, points, new GeoPoint(-89.9, 135.0), 10);
         assertNearestMatchesBruteForce(tree, points, new GeoPoint(-90.0, 0.0), 10);

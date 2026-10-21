@@ -1,5 +1,5 @@
 /**
- * Phase 7E.2 — Unit tests for the useDispatch hook.
+ * Phase 7E.2 - Unit tests for the useDispatch hook.
  *
  * Uses vi.mock to replace the dispatch service so no real HTTP requests are made.
  * Tests cover phase transitions, duplicate-submission prevention, abort on place
@@ -87,7 +87,7 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('useDispatch — initial state', () => {
+describe('useDispatch - initial state', () => {
   it('starts in idle phase with null values', () => {
     const { result } = renderHook(() => useDispatch(null));
     expect(result.current.dispatchState.phase).toBe('idle');
@@ -103,7 +103,7 @@ describe('useDispatch — initial state', () => {
   });
 });
 
-describe('useDispatch — happy path: MATCHED', () => {
+describe('useDispatch - happy path: MATCHED', () => {
   it('transitions through registering → submitting → polling → matched → en_route', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'DRIVER-1', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-1', message: 'ok' });
@@ -125,7 +125,7 @@ describe('useDispatch — happy path: MATCHED', () => {
 
     expect(result.current.dispatchState.phase).toBe('en_route');
     expect(result.current.dispatchState.matchedDriverId).toBe('DRIVER-42');
-    // No telemetry in this response — coordinates remain null
+    // No telemetry in this response - coordinates remain null
     expect(result.current.dispatchState.matchedDriverLocation).toBeNull();
     expect(result.current.dispatchState.matchedDriverLocationAt).toBeNull();
     expect(result.current.dispatchState.errorMessage).toBeNull();
@@ -224,7 +224,7 @@ describe('useDispatch — happy path: MATCHED', () => {
   });
 });
 
-describe('useDispatch — NO_DRIVERS terminal state', () => {
+describe('useDispatch - NO_DRIVERS terminal state', () => {
   it('transitions to no_drivers when backend returns NO_DRIVERS', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'DRIVER-X', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-nd', message: 'ok' });
@@ -246,7 +246,7 @@ describe('useDispatch — NO_DRIVERS terminal state', () => {
   });
 });
 
-describe('useDispatch — registration failure', () => {
+describe('useDispatch - registration failure', () => {
   it('transitions to error when registerDriver throws', async () => {
     vi.mocked(registerDriver).mockRejectedValue(new Error('Broker unavailable'));
 
@@ -259,7 +259,7 @@ describe('useDispatch — registration failure', () => {
   });
 });
 
-describe('useDispatch — submission failure', () => {
+describe('useDispatch - submission failure', () => {
   it('transitions to error when submitRideRequest throws', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
     vi.mocked(submitRideRequest).mockRejectedValue(new Error('requestId must not be blank'));
@@ -273,7 +273,7 @@ describe('useDispatch — submission failure', () => {
   });
 });
 
-describe('useDispatch — duplicate submission prevention', () => {
+describe('useDispatch - duplicate submission prevention', () => {
   it('ignores a second requestDispatch() call while in-flight', () => {
     // Registration returns a promise that never resolves (flow stays in-flight)
     vi.mocked(registerDriver).mockReturnValue(new Promise(() => {}));
@@ -284,14 +284,14 @@ describe('useDispatch — duplicate submission prevention', () => {
     // First call: flow is in-flight (registering)
     expect(result.current.dispatchState.phase).toBe('registering');
 
-    act(() => { result.current.requestDispatch(); }); // duplicate — must be ignored
+    act(() => { result.current.requestDispatch(); }); // duplicate - must be ignored
 
     // registerDriver must have been called exactly once
     expect(vi.mocked(registerDriver)).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('useDispatch — reset', () => {
+describe('useDispatch - reset', () => {
   it('returns to idle after reset()', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-r', message: 'ok' });
@@ -316,7 +316,7 @@ describe('useDispatch — reset', () => {
   });
 });
 
-describe('useDispatch — place change cancels in-flight flow', () => {
+describe('useDispatch - place change cancels in-flight flow', () => {
   it('resets to idle when selectedPlace changes during in-flight registration', async () => {
     // Registration never resolves
     vi.mocked(registerDriver).mockReturnValue(new Promise(() => {}));
@@ -329,7 +329,7 @@ describe('useDispatch — place change cancels in-flight flow', () => {
     act(() => { result.current.requestDispatch(); });
     expect(result.current.dispatchState.phase).toBe('registering');
 
-    // Change the selected place — hook should abort and reset
+    // Change the selected place - hook should abort and reset
     place = makePlaceSuggestion('Paris');
     await act(async () => { rerender({ p: place }); });
 
@@ -339,11 +339,11 @@ describe('useDispatch — place change cancels in-flight flow', () => {
 
 // ── Abort / cancellation tests (Phase 7E.3) ───────────────────────────────────
 
-describe('useDispatch — abort during polling delay terminates cleanly', () => {
+describe('useDispatch - abort during polling delay terminates cleanly', () => {
   it('returns to idle without unhandled rejection when reset fires while flow is sleeping between poll attempts', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D-ABORT', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-abort', message: 'ok' });
-    // getRequestStatus resolves only after timer advances — keep it pending via PENDING status
+    // getRequestStatus resolves only after timer advances - keep it pending via PENDING status
     vi.mocked(getRequestStatus).mockResolvedValue({
       requestId: 'req-abort',
       status: 'PENDING',
@@ -362,7 +362,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     // Reset while delay is in progress (flow is sleeping between poll attempts)
     act(() => { result.current.reset(); });
 
-    // Confirm clean termination — no unhandled rejection, state is idle
+    // Confirm clean termination - no unhandled rejection, state is idle
     expect(result.current.dispatchState.phase).toBe('idle');
   });
 
@@ -383,7 +383,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
     expect(result.current.dispatchState.phase).toBe('polling');
 
-    // Unmount the component — the cleanup effect calls abortRef.current?.abort()
+    // Unmount the component - the cleanup effect calls abortRef.current?.abort()
     // The dangling abort listener must NOT produce an unhandled rejection.
     expect(() => act(() => { unmount(); })).not.toThrow();
   });
@@ -408,7 +408,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
     expect(result.current.dispatchState.phase).toBe('polling');
 
-    // Change place mid-polling delay — abort fires during the sleep window
+    // Change place mid-polling delay - abort fires during the sleep window
     place = makePlaceSuggestion('Tokyo');
     await act(async () => { rerender({ p: place }); });
 
@@ -432,7 +432,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
     const { result } = renderHook(() => useDispatch(makePlaceSuggestion()));
     act(() => { result.current.requestDispatch(); });
 
-    // Run to completion — timer resolves normally, flow reaches EN_ROUTE
+    // Run to completion - timer resolves normally, flow reaches EN_ROUTE
     await drainHook();
     expect(result.current.dispatchState.phase).toBe('en_route');
 
@@ -590,7 +590,7 @@ describe('useDispatch — abort during polling delay terminates cleanly', () => 
 
 // ── isValidDriverCoords unit tests (Phase 7E.2) ───────────────────────────────────
 
-describe('useDispatch — fleet synchronization (Phase 11.2)', () => {
+describe('useDispatch - fleet synchronization (Phase 11.2)', () => {
   it('registers all available visible drivers with their exact IDs and coordinates', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'd-1', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-sync', message: 'ok' });
@@ -632,7 +632,7 @@ describe('useDispatch — fleet synchronization (Phase 11.2)', () => {
   });
 });
 
-describe('useDispatch — cancelRide (Phase 11.2)', () => {
+describe('useDispatch - cancelRide (Phase 11.2)', () => {
   it('calls cancelTrip and transitions phase to cancelled', async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-cancel', message: 'ok' });
@@ -799,7 +799,7 @@ describe('isValidDriverCoords', () => {
 
 // ── Phase 11.3: End-to-End Trip Lifecycle ────────────────────────────────────
 
-describe('useDispatch — Phase 11.3 Trip Lifecycle', () => {
+describe('useDispatch - Phase 11.3 Trip Lifecycle', () => {
   const setupMatchedTrip = async () => {
     vi.mocked(registerDriver).mockResolvedValue({ driverId: 'D1', message: 'ok' });
     vi.mocked(submitRideRequest).mockResolvedValue({ requestId: 'req-11-3', message: 'ok' });

@@ -1,5 +1,5 @@
 /**
- * Phase 11.4F — Unit tests for traceGeoJson utilities.
+ * Phase 11.4F - Unit tests for traceGeoJson utilities.
  */
 
 import { describe, it, expect } from 'vitest';

@@ -45,7 +45,7 @@ describe('SimulatedFleetBadge', () => {
     render(<SimulatedFleetBadge drivers={sampleDrivers} />);
 
     expect(
-      screen.getByText('Synthetic data for display — not real dispatch supply'),
+      screen.getByText('Synthetic data for display - not real dispatch supply'),
     ).not.toBeNull();
   });
 });

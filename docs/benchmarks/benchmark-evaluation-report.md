@@ -1,4 +1,4 @@
-# Rendezvous — Controlled Performance Benchmark & Resume Metrics Evaluation Report
+# Rendezvous - Controlled Performance Benchmark & Resume Metrics Evaluation Report
 
 > **Document Status:** Official Benchmark Evidence Record  
 > **Date:** October 20, 2026  
@@ -21,14 +21,14 @@ All figures documented herein represent actual measured values from live runs ex
 | Metric Category | Workload / Scenario | Measured Value | Unit / Definition | Verification Method |
 |:---|:---|:---:|:---|:---|
 | **Peak Ingestion Throughput** | High-Load (Stage 2) | **60.00** | HTTP req/s | k6 sustained arrival rate |
-| **HTTP Ingestion Latency (p50)** | Low-Load / High-Load | **15.0 – 22.0** | ms | Roundtrip to broker (HTTP 202) |
-| **HTTP Ingestion Latency (p95)** | Low-Load / High-Load | **24.0 – 32.0** | ms | Broker ACK SLA confirmation |
-| **HTTP Ingestion Latency (p99)** | Low-Load / High-Load | **26.0 – 47.6** | ms | 99th percentile ingestion duration |
+| **HTTP Ingestion Latency (p50)** | Low-Load / High-Load | **15.0-22.0** | ms | Roundtrip to broker (HTTP 202) |
+| **HTTP Ingestion Latency (p95)** | Low-Load / High-Load | **24.0-32.0** | ms | Broker ACK SLA confirmation |
+| **HTTP Ingestion Latency (p99)** | Low-Load / High-Load | **26.0-47.6** | ms | 99th percentile ingestion duration |
 | **HTTP Ingestion Availability** | 13,813 total requests | **100.00%** | Zero 5xx, zero dropped iters | k6 check assertions |
-| **Observed E2E Dispatch Latency (p50)** | Low-Load (3 req/s) | **47.0 – 48.0** | ms | Submission $\to$ Durable DB commit |
-| **Observed E2E Dispatch Latency (p95)** | Low-Load (3 req/s) | **62.5 – 86.0** | ms | Includes $\approx 7.5\text{ ms}$ poll quantization |
-| **Observed E2E Dispatch Latency (p50)** | High-Load (60 req/s) | **54.0 – 56.0** | ms | Submission $\to$ Terminal status |
-| **Observed E2E Dispatch Latency (p95)** | High-Load (60 req/s) | **63.0 – 64.0** | ms | Sampled across 654 requests |
+| **Observed E2E Dispatch Latency (p50)** | Low-Load (3 req/s) | **47.0-48.0** | ms | Submission $\to$ Durable DB commit |
+| **Observed E2E Dispatch Latency (p95)** | Low-Load (3 req/s) | **62.5-86.0** | ms | Includes $\approx 7.5\text{ ms}$ poll quantization |
+| **Observed E2E Dispatch Latency (p50)** | High-Load (60 req/s) | **54.0-56.0** | ms | Submission $\to$ Terminal status |
+| **Observed E2E Dispatch Latency (p95)** | High-Load (60 req/s) | **63.0-64.0** | ms | Sampled across 654 requests |
 | **AuctionMatcher Execution Latency** | Single request ($R=1, D=50$) | **64.6** | $\mu\text{s}$ (p50) | In-memory Bertsekas auction |
 | **AuctionMatcher Execution Latency** | Batch ($R=5, D=50$) | **237.6** | $\mu\text{s}$ (p50) | Dense valuation matrix |
 | **AuctionMatcher Execution Latency** | Batch ($R=20, D=50$) | **5.88** | ms (p50) | Full bipartite matching |

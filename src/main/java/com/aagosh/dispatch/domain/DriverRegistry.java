@@ -39,23 +39,23 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <h2>Concurrency guarantees</h2>
  * <ul>
- *   <li><strong>Registration</strong> – guaranteed by {@link ConcurrentHashMap#putIfAbsent},
+ *   <li><strong>Registration</strong> - guaranteed by {@link ConcurrentHashMap#putIfAbsent},
  *       which is atomic. Duplicate registration is rejected deterministically: the second
  *       call returns the existing entry without touching its state or claim.</li>
- *   <li><strong>Location updates</strong> – performed with a CAS loop on the
+ *   <li><strong>Location updates</strong> - performed with a CAS loop on the
  *       {@link AtomicReference}. Every accepted location is guaranteed to be one of the
  *       values actually submitted. If two updates race, only the one with the strictly
  *       larger timestamp will eventually win; stale updates are silently rejected.</li>
- *   <li><strong>Claim preservation</strong> – the CAS loop always reads the current
+ *   <li><strong>Claim preservation</strong> - the CAS loop always reads the current
  *       {@link AtomicReference} value, extracts its {@link DriverState}, and builds the
  *       replacement snapshot from that same state object. A location update can therefore
  *       never reset a {@code CLAIMED}, {@code EN_ROUTE}, or {@code ON_TRIP} status.</li>
- *   <li><strong>Snapshots</strong> – {@link #snapshot()} iterates the
+ *   <li><strong>Snapshots</strong> - {@link #snapshot()} iterates the
  *       {@link AtomicReference} values and returns an immutable {@link List}. The list is
  *       a stable collection at the instant of iteration; it is <em>not</em> an atomic
  *       cross-driver consistent view, because drivers registered or updated concurrently
  *       during the iteration may or may not appear in the result.</li>
- *   <li><strong>No registry lock during matching</strong> – callers retrieve a snapshot and
+ *   <li><strong>No registry lock during matching</strong> - callers retrieve a snapshot and
  *       pass it to the matcher. The matcher holds no reference to the registry, so spatial
  *       indexing and auction computation proceed without any registry lock.</li>
  * </ul>
@@ -210,7 +210,7 @@ public final class DriverRegistry {
             if (current.updatedAt() >= newTimestamp) {
                 return false;
             }
-            // Reuse the exact same DriverState object — never recreate it.
+            // Reuse the exact same DriverState object - never recreate it.
             updated = new Driver(current.id(), newLocation, current.state(), newTimestamp);
         } while (!ref.compareAndSet(current, updated));
 
@@ -291,11 +291,11 @@ public final class DriverRegistry {
      *
      * <p>A driver is included only when <em>all</em> of the following hold:
      * <ol>
-     *   <li>{@code updatedAt > 0L} — a verified, timestamped location fix has been received
+     *   <li>{@code updatedAt > 0L} - a verified, timestamped location fix has been received
      *       (timestamp-less drivers that arrived only via legacy unversioned pings are excluded).</li>
-     *   <li>{@code updatedAt >= nowMs - stalenessMs} — the location is not older than the
+     *   <li>{@code updatedAt >= nowMs - stalenessMs} - the location is not older than the
      *       configured staleness threshold.</li>
-     *   <li>{@code updatedAt <= nowMs + maxFutureSkewMs} — the timestamp is not implausibly
+     *   <li>{@code updatedAt <= nowMs + maxFutureSkewMs} - the timestamp is not implausibly
      *       far in the future (guards against misbehaving or spoofed clients).</li>
      * </ol>
      *
@@ -319,7 +319,7 @@ public final class DriverRegistry {
             Driver d = ref.get();
             long ts = d.updatedAt();
             if (ts <= 0L) {
-                // No verified timestamp — exclude from production matching.
+                // No verified timestamp - exclude from production matching.
                 continue;
             }
             if (ts < nowMs - stalenessMs) {

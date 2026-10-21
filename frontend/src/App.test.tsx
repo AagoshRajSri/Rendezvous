@@ -1,5 +1,5 @@
 /**
- * Phase 7E.3 — End-to-end frontend integration tests for App.tsx.
+ * Phase 7E.3 - End-to-end frontend integration tests for App.tsx.
  *
  * Verifies:
  * - Happy path: location selection → dispatch request → MATCHED with telemetry

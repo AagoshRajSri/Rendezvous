@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/rendezvous-hero.svg" alt="Rendezvous — Real-Time Ride Dispatch Matching Engine" width="100%">
+  <img src="docs/assets/rendezvous-hero.svg" alt="Rendezvous - Real-Time Ride Dispatch Matching Engine" width="100%">
 </p>
 
 # Rendezvous
@@ -28,13 +28,13 @@
 
 ## Navigation
 
-- [Part A — Visual Showcase](#part-a--visual-showcase)
+- [Part A - Visual Showcase](#part-a--visual-showcase)
   - [Project at a Glance](#project-at-a-glance)
   - [What Rendezvous Does](#what-rendezvous-does)
   - [System Architecture](#system-architecture)
   - [Feature Showcase](#feature-showcase)
   - [Engineering Highlights](#engineering-highlights)
-- [Part B — Technical Statistics & Engineering Evidence](#part-b--technical-statistics--engineering-evidence)
+- [Part B - Technical Statistics & Engineering Evidence](#part-b--technical-statistics--engineering-evidence)
   - [Verified Technology Stack](#verified-technology-stack)
   - [Verified Engineering Statistics](#verified-engineering-statistics)
   - [Performance & Benchmark Evidence](#performance--benchmark-evidence)
@@ -45,7 +45,7 @@
 
 ---
 
-# Part A — Visual Showcase
+# Part A - Visual Showcase
 
 ## Project at a Glance
 
@@ -55,7 +55,7 @@
 | **Ingestion Pipeline** | Asynchronous Kafka event streaming returning immediate `202 Accepted` receipts; partitioned by `driverId` and `requestId`. |
 | **Spatial Matching Core** | Hierarchical 2D `QuadTree` spatial index with branch-and-bound distance pruning, progressive radius expansion ($1\text{ km} \to 3\text{ km} \to 5\text{ km}$), and Bertsekas Auction Algorithm with $\varepsilon$-scaling. |
 | **Concurrency Safety** | In-memory `AtomicReference<State>` Compare-And-Set (CAS) state transitions; zero double-booking under extreme concurrency; GPS pings strictly preserve active ride claims. |
-| **Durability & Caching** | PostgreSQL 16 (Flyway V1–V3) for durable terminal states; Redis 7 non-authoritative read cache with 30s TTL Lua script writes and automatic in-memory fallback. |
+| **Durability & Caching** | PostgreSQL 16 (Flyway V1 - V3) for durable terminal states; Redis 7 non-authoritative read cache with 30s TTL Lua script writes and automatic in-memory fallback. |
 | **Automated Verification** | **834 total tests (100% passing)**: 581 backend unit/slice/integration tests across 41 test classes (528 passing + 53 integration tests skipped cleanly without Docker) + 253 frontend Vitest tests across 21 test files. |
 | **Measured Performance** | High-load benchmark (4,424 requests, 60 req/s sustained): **100% HTTP 202 acceptance**, **100% durable persistence**, **p95 dispatch 63 ms**, **p99 dispatch 66 ms**, zero timeouts. Stage 2 JMH benchmarks: **$1.30\times$ to $41.01\times$ QuadTree query speedup**; **$1.04\times$ to $1.91\times$ Matcher speedup**. |
 | **Trip Lifecycle & Observability** | Deterministic 5-stage lifecycle (`DISPATCHED` $\to$ `EN_ROUTE` $\to$ `ARRIVED` $\to$ `IN_PROGRESS` $\to$ `COMPLETED`/`CANCELLED`), OSRM road routing, fare estimation, and end-to-end dispatch execution tracing (`/api/requests/{id}/trace`). |
@@ -159,7 +159,7 @@ graph TD
     end
 
     subgraph StorageLayer["6. Persistence & Caching Layer"]
-        PG[("PostgreSQL 16 (:5434)<br/>ride_requests, assignments, trips<br/>Flyway Migrations V1–V3")]
+        PG[("PostgreSQL 16 (:5434)<br/>ride_requests, assignments, trips<br/>Flyway Migrations V1 - V3")]
         RD[("Redis 7 (:6380)<br/>driver:{id}:location Hash<br/>30s TTL Lua Script (Non-Authoritative)")]
     end
 
@@ -249,7 +249,7 @@ Thread A (Request 1) ───► Read Driver D101 (AVAILABLE) ─────�
 Thread B (Request 2) ────────► Read Driver D101 (AVAILABLE) ──► Overwrite D101: CLAIMED [DOUBLE BOOKING!]
 ```
 
-Without synchronization, two concurrent requests both observe `Driver D101` as `AVAILABLE` and both write their claim. The driver receives two distinct passengers—a catastrophic lost-update anomaly.
+Without synchronization, two concurrent requests both observe `Driver D101` as `AVAILABLE` and both write their claim. The driver receives two distinct passengers - a catastrophic lost-update anomaly.
 
 Using database-level pessimistic locking (`SELECT ... FOR UPDATE`) introduces severe disk I/O bottlenecks and transaction serialization delays that cripple dispatch throughput. Rendezvous solves this in memory using Java's `AtomicReference<State>`:
 
@@ -292,7 +292,7 @@ Rendezvous avoids this by using k6's open-loop `ramping-arrival-rate` executor:
 Under sustained 60 req/s load generation, the observed average Kafka poll batch size was **$1.13$** (with a peak of 3), remaining below the architectural design target of **$\ge 10.0$**.
 
 **Why this happens:**  
-Spring Kafka's default consumer configuration operates with `fetch.min.bytes=1`. Under arrival rates of 60 req/s (one request every $\sim 16.6\text{ ms}$), the consumer thread polls the broker every 2–4 ms and immediately drains whatever records are available rather than pausing to accumulate larger batches.
+Spring Kafka's default consumer configuration operates with `fetch.min.bytes=1`. Under arrival rates of 60 req/s (one request every $\sim 16.6\text{ ms}$), the consumer thread polls the broker every 2-4 ms and immediately drains whatever records are available rather than pausing to accumulate larger batches.
 
 **Why this matters & why it is deferred:**  
 While larger batches would reduce database transaction overhead by consolidating inserts, aggressively tuning `fetch.min.bytes` and `fetch.max.wait.ms` introduces artificial latency buffering under low-to-medium traffic. Because the current implementation easily achieved p99 dispatch latency of $66\text{ ms}$ (well below the $250\text{ ms}$ SLA) with 100% persistence, consumer batch accumulation was explicitly documented and **deferred** to a future consumer-tuning milestone rather than prematurely optimized.
@@ -309,7 +309,7 @@ Rendezvous optimizes this in `QuadTree.findNearestNeighborsK()` using **branch-a
 
 ---
 
-# Part B — Technical Statistics & Engineering Evidence
+# Part B - Technical Statistics & Engineering Evidence
 
 ## Verified Technology Stack
 
@@ -345,8 +345,8 @@ The following table summarizes verified statistics derived directly from automat
 | **Backend Test Suite** | **581 tests** | 41 test classes (528 unit/slice + 53 integration tests); Maven Surefire/Failsafe | **100% PASS** (0 failures, 0 errors, 53 cleanly skipped without Docker) |
 | **Frontend Test Suite** | **253 tests** | 21 test files executed via Vitest in jsdom environment | **100% PASS** (253/253 passing) |
 | **Total Automated Tests** | **834 tests** | Combined automated test coverage across full backend and frontend codebases | **100% PASS** |
-| **Spatial Query Speedup (QuadTree)** | **1.30x – 41.01x** | Controlled 3-fork JMH microbenchmark ($K=10$, $N=100\text{ to }100,000$ points) with bounding-box pruning | **VERIFIED** (Stage 2 report) |
-| **Matcher Pipeline Speedup** | **1.04x – 1.91x** | Complete Matcher lifecycle point speedup across 18 batch scenarios ($R=1\text{ to }20$, $D=200\text{ to }10,000$) | **VERIFIED** (Stage 2 report) |
+| **Spatial Query Speedup (QuadTree)** | **1.30x - 41.01x** | Controlled 3-fork JMH microbenchmark ($K=10$, $N=100\text{ to }100,000$ points) with bounding-box pruning | **VERIFIED** (Stage 2 report) |
+| **Matcher Pipeline Speedup** | **1.04x - 1.91x** | Complete Matcher lifecycle point speedup across 18 batch scenarios ($R=1\text{ to }20$, $D=200\text{ to }10,000$) | **VERIFIED** (Stage 2 report) |
 | **Benchmark Workload** | **4,424 requests** | 85-second open-loop test ramping from 10 to 60 req/s sustained (`k6/high-load.js`) | **EXECUTED** |
 | **HTTP Ingestion Availability** | **100.00%** | 4,424 / 4,424 requests accepted with HTTP `202 Accepted` receipts | **PASS** ($\ge 99.9\%$ SLA) |
 | **Ingestion Latency (p95)** | **24 ms** | Client HTTP POST submission to HTTP `202 Accepted` broker confirmation | **PASS** ($< 40\text{ ms}$ SLA) |
@@ -375,19 +375,19 @@ To evaluate the operational impact of real-time metrics collection, the system w
 
 | Benchmark Metric | Phase 8 Baseline (No Scrape) | Phase 9.5 Observability (Active Scrape) | Architectural SLA | Measured Delta |
 | :--- | :---: | :---: | :---: | :---: |
-| **Total Requests Submitted** | 4,424 | 4,424 | — | Identical workload |
+| **Total Requests Submitted** | 4,424 | 4,424 | - | Identical workload |
 | **HTTP Acceptance Rate** | 100.00% (4,424 / 4,424) | 100.00% (4,424 / 4,424) | $\ge 99.9\%$ | $0.00\%$ delta |
 | **Ingestion Latency (p95)** | $24\text{ ms}$ | $24\text{ ms}$ | $< 40\text{ ms}$ | $0\text{ ms}$ |
 | **Ingestion Latency (p99)** | $28\text{ ms}$ | $26\text{ ms}$ | $< 80\text{ ms}$ | $-2\text{ ms}$ |
-| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | $15.15\text{ ms}$ | — | $+0.21\text{ ms}$ overhead |
+| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | $15.15\text{ ms}$ | - | $+0.21\text{ ms}$ overhead |
 | **Dispatch Latency (p95)** | $64\text{ ms}$ | $63\text{ ms}$ | $< 150\text{ ms}$ | $-1\text{ ms}$ |
 | **Dispatch Latency (p99)** | $70\text{ ms}$ | $66\text{ ms}$ | $< 250\text{ ms}$ | $-4\text{ ms}$ |
-| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | $54.61\text{ ms}$ | — | $+0.06\text{ ms}$ overhead |
+| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | $54.61\text{ ms}$ | - | $+0.06\text{ ms}$ overhead |
 | **Durable Ingestion Persistence** | 100.00% (+4,424 rows) | 100.00% (+4,424 rows) | 100% | $100\%$ durable |
 | **Dispatch Failures / Timeouts** | 0 | 0 | 0 | 0 errors |
 | **Observed Mean Batch Size** | 1.12 | 1.13 (Peak: 3) | $\ge 10.0$ | Deferred target |
-| **Active Prometheus Scraping** | Disabled | Enabled (every 5 seconds) | — | Live Actuator pull |
-| **Active Grafana Panels** | 0 | 21 provisioned panels | — | Active monitoring |
+| **Active Prometheus Scraping** | Disabled | Enabled (every 5 seconds) | - | Live Actuator pull |
+| **Active Grafana Panels** | 0 | 21 provisioned panels | - | Active monitoring |
 
 ### Methodology & Metric Definitions
 - **Workload Profile (`k6/high-load.js`):** Open-loop arrival rate starting with a 15-second ramp (10 $\to$ 60 req/s), followed by a 60-second steady-state window at 60 req/s, and a 10-second drain window.
@@ -433,7 +433,7 @@ For complete technical logs, JIT configurations, and database query baselines, s
 | **Atomic Compare-And-Set (CAS)** | Manages driver claiming via `AtomicReference<State>` in `DriverState`. Concurrency races are resolved at the hardware CPU instruction level with zero lock contention. *Alternatives considered:* Pessimistic database row locks (`SELECT ... FOR UPDATE` introduces high latency) and synchronized Java methods (creates thread convoying). | Requires claim compensation logic to reconcile in-memory claims with database transaction rollbacks if persistence fails. |
 | **In-Memory Dispatch Traces** | Bounded circular buffer (`DispatchTraceStore`, 1,000 entries) capturing spatial quadrants, candidate evaluations, and CAS claim outcomes. Enables instant operational inspection via `/api/requests/{id}/trace` without database overhead. *Alternatives considered:* Direct database trace writes (introduces I/O lock contention) and transient log parsing. | Traces are ephemeral in-memory records and evict via LRU; not intended as permanent legal or financial audit logs. |
 | **OSRM Road Network Routing** | Integrates OSRM API v5 for realistic road geometries, turn routes, and distance/duration with local Haversine fallback. *Alternatives considered:* Commercial Google/Mapbox APIs (introduces billing and rate limits) and pure Haversine (unrealistic road routing). | Dependent on network access to public OSRM servers; gracefully degrades to Haversine straight-line calculation if offline. |
-| **PostgreSQL & Flyway for State** | Stores requests, assignments, and trip lifecycles with strict ACID guarantees, foreign keys, and unique constraints. Flyway migrations (`V1`–`V3`) maintain deterministic schema version control. *Alternatives considered:* Pure in-memory state (risks catastrophic data loss on crash). | Database writes represent the primary latency component in the dispatch pipeline (~40–50 ms of the 54 ms mean dispatch latency). |
+| **PostgreSQL & Flyway for State** | Stores requests, assignments, and trip lifecycles with strict ACID guarantees, foreign keys, and unique constraints. Flyway migrations (`V1` - `V3`) maintain deterministic schema version control. *Alternatives considered:* Pure in-memory state (risks catastrophic data loss on crash). | Database writes represent the primary latency component in the dispatch pipeline (~40-50 ms of the 54 ms mean dispatch latency). |
 | **Redis Non-Authoritative Cache** | Telemetry pings write to Redis hash key `driver:{id}:location` with a 30s TTL via conditional Lua scripts. Offloads high-frequency driver location lookups from the application heap. *Alternatives considered:* Querying PostgreSQL (saturates database with GPS pings) and authoritative Redis (risks cache inconsistency). | Redis operates strictly as a read-through cache; the in-memory `DriverRegistry` remains the authoritative source of truth for matching. |
 | **Micrometer, Prometheus & Grafana** | Standardized metric collection via Spring Boot Actuator with pre-provisioned Grafana dashboards. Validated to introduce only $+0.06\text{ ms}$ dispatch overhead under peak load. *Alternatives considered:* Third-party APM agents (proprietary, heavier memory footprint) and ad-hoc log parsing. | Requires running two additional infrastructure containers (`prom/prometheus` and `grafana/grafana`) during local development. |
 
@@ -456,7 +456,7 @@ The platform components communicate across the following host and container port
 | :--- | :--- | :---: | :---: | :--- | :--- |
 | **Backend** | Spring Boot (`dispatch`) | `8080` | `8080` (host) | HTTP (`/api/*`, `/actuator/*`) | REST ingestion, Kafka producers/consumers, spatial matching engine, dispatch traces, trip lifecycle |
 | **Frontend** | React + Vite (`rendezvous-frontend`) | `5173` | `5173` (host) | HTTP (`/`) | Interactive UI, MapLibre GL map, fleet simulation, reverse proxy `/api` |
-| **PostgreSQL** | Database (`postgres:16`) | `5434` | `5432` | JDBC (`dispatch_db`) | Durable request status, assignments, and trip lifecycle tables (Flyway V1–V3) |
+| **PostgreSQL** | Database (`postgres:16`) | `5434` | `5432` | JDBC (`dispatch_db`) | Durable request status, assignments, and trip lifecycle tables (Flyway V1 - V3) |
 | **Redis** | Cache (`redis:7`) | `6380` | `6379` | RESP | Non-authoritative location cache (`driver:{id}:location`, 30s TTL, Lua script) |
 | **Kafka** | Message Broker (`apache/kafka:3.7.0`) | `9092` | `9092` | PLAINTEXT | Asynchronous event streaming (`driver-pings`, `ride-requests`) |
 | **Prometheus** | Metrics Collector (`prom/prometheus:v2.54.1`) | `9090` | `9090` | HTTP (`/`) | Scrapes backend `/actuator/prometheus` via `host.docker.internal:8080` every 5s |
@@ -602,7 +602,7 @@ k6 run k6/high-load.js
 
 ## Architectural Status & Honest Limitations
 
-1. **Deferred Kafka Poll Batch Size ($\sim 1.13$ vs. $\ge 10.0$ Target):** Under sustained load testing, the observed average Kafka poll batch size was approximately **$1.13$** (with a peak of 3), remaining below the architectural design target of $\ge 10.0$. Because Spring Kafka defaults to `fetch.min.bytes=1`, it drains records immediately every 2–4 ms rather than buffering larger batches. Tuning `fetch.min.bytes` and `fetch.max.wait.ms` is explicitly documented as a **deferred optimization** to be addressed in future consumer-tuning milestones.
+1. **Deferred Kafka Poll Batch Size ($\sim 1.13$ vs. $\ge 10.0$ Target):** Under sustained load testing, the observed average Kafka poll batch size was approximately **$1.13$** (with a peak of 3), remaining below the architectural design target of $\ge 10.0$. Because Spring Kafka defaults to `fetch.min.bytes=1`, it drains records immediately every 2-4 ms rather than buffering larger batches. Tuning `fetch.min.bytes` and `fetch.max.wait.ms` is explicitly documented as a **deferred optimization** to be addressed in future consumer-tuning milestones.
 2. **Absence of Dedicated Dead-Letter Topic (DLT):** Exhausted Kafka consumer retries are logged and skipped via Spring Kafka's `DefaultErrorHandler`. Production deployments should configure a dedicated Dead-Letter Topic (DLT) with automated alerting and manual replay capabilities.
 3. **Single-Broker Local Kafka Deployment:** The local Docker Compose setup deploys a single KRaft broker (`KAFKA_NODE_ID: 1`, partition replication factor 1). Production deployments require a multi-broker quorum across availability zones.
 4. **Single-JVM In-Memory Spatial State:** `QuadTree` and `DriverRegistry` reside in JVM heap memory. Scaling across multiple application instances requires distributed spatial partitioning (e.g., Uber H3 or Redis GEO) and distributed consensus.
@@ -613,8 +613,8 @@ k6 run k6/high-load.js
 
 ## Reference Documentation
 
-- [REST API Specification](API_DOCUMENTATION.md) — Comprehensive endpoint schemas, headers, request/response payloads, error structures, trip lifecycle endpoints (`/en-route`), and route aliases.
-- [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) — High-load k6 evaluation, Alternative A batched lookup analysis, latency percentiles, and batching metrics.
-- [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) — Empirical assessment of Prometheus/Grafana observability overhead under 60 req/s load, latency comparison, and live dashboard validation.
-- [Controlled Double-Booking Concurrency Experiment](docs/double-booking-experiment.md) — In-depth concurrency race condition analysis and atomic CAS verification using Java's `AtomicReference`.
-- [Phase 11 Stage 2 & Phase D Benchmark Evidence Report](docs/benchmarks/stage-2-matcher-quadtree-report.md) — Controlled 3-fork JMH benchmark evaluating Stage 2 QuadTree nearest-neighbor pruning across 18 scenarios ($D=100\text{ to }100,000$, $R=1\text{ to }20$) under P-core affinity, reporting $1.3\times$ to $41\times$ query speedups.
+- [REST API Specification](API_DOCUMENTATION.md) - Comprehensive endpoint schemas, headers, request/response payloads, error structures, trip lifecycle endpoints (`/en-route`), and route aliases.
+- [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) - High-load k6 evaluation, Alternative A batched lookup analysis, latency percentiles, and batching metrics.
+- [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) - Empirical assessment of Prometheus/Grafana observability overhead under 60 req/s load, latency comparison, and live dashboard validation.
+- [Controlled Double-Booking Concurrency Experiment](docs/double-booking-experiment.md) - In-depth concurrency race condition analysis and atomic CAS verification using Java's `AtomicReference`.
+- [Phase 11 Stage 2 & Phase D Benchmark Evidence Report](docs/benchmarks/stage-2-matcher-quadtree-report.md) - Controlled 3-fork JMH benchmark evaluating Stage 2 QuadTree nearest-neighbor pruning across 18 scenarios ($D=100\text{ to }100,000$, $R=1\text{ to }20$) under P-core affinity, reporting $1.3\times$ to $41\times$ query speedups.

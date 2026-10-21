@@ -1,6 +1,6 @@
 # Double-Booking Experiment
 
-> ⚠️ **Educational experiment — branch `experiment/double-booking` only.**
+> ⚠️ **Educational experiment - branch `experiment/double-booking` only.**
 > The unsafe code lives exclusively in the test source set and must never be
 > merged into `main`.
 
@@ -39,7 +39,7 @@ if (status == AVAILABLE) {          // ← check: read status
 
 **Result:** Two requests both received `true`. Both believe they own the
 driver. One ride will be dispatched to a driver who was already sent to
-another pickup — a real-world customer safety incident.
+another pickup - a real-world customer safety incident.
 
 ### Why `volatile` alone doesn't fix it
 
@@ -97,7 +97,7 @@ caller signals HTTP 409 Conflict to the client.
 the set. This widening of the vulnerability window is necessary only to make
 the race _reliably_ reproducible in a single-machine unit test. In
 production, an OS scheduler preemption between any two bytecodes is
-sufficient to trigger the same bug under load — no sleep is needed.
+sufficient to trigger the same bug under load - no sleep is needed.
 
 ---
 
@@ -116,7 +116,7 @@ Run 5: winners = 2  ← double-booking confirmed
 With 8 threads the winner count exceeds 2, showing the bug scales with
 concurrency.
 
-### Safe (CAS — production DriverState)
+### Safe (CAS - production DriverState)
 
 ```
 Run 1: winners = 1  ✓
@@ -168,10 +168,10 @@ The production `DriverState.tryClaim` has been correct since the initial
 Phase 4 Step 1 implementation. This experiment exists to make the
 correctness argument concrete:
 
-- [`DriverState.java`](../src/main/java/com/aagosh/dispatch/domain/DriverState.java) — production CAS implementation
-- [`DriverRegistry.java`](../src/main/java/com/aagosh/dispatch/domain/DriverRegistry.java) — uses the shared `DriverState` across location updates
-- [`RideController.java`](../src/main/java/com/aagosh/dispatch/api/RideController.java) — HTTP layer; returns 409 when `tryClaim` returns `false`
-- [`RideControllerTest.java`](../src/test/java/com/aagosh/dispatch/api/RideControllerTest.java) — HTTP-level 16-thread stress test confirming single-winner at the API surface
+- [`DriverState.java`](../src/main/java/com/aagosh/dispatch/domain/DriverState.java) - production CAS implementation
+- [`DriverRegistry.java`](../src/main/java/com/aagosh/dispatch/domain/DriverRegistry.java) - uses the shared `DriverState` across location updates
+- [`RideController.java`](../src/main/java/com/aagosh/dispatch/api/RideController.java) - HTTP layer; returns 409 when `tryClaim` returns `false`
+- [`RideControllerTest.java`](../src/test/java/com/aagosh/dispatch/api/RideControllerTest.java) - HTTP-level 16-thread stress test confirming single-winner at the API surface
 
 ---
 

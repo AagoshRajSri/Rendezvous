@@ -235,7 +235,7 @@ public final class QuadTree {
 
         // Extract in nearest-first order using the cached distances.
         // The heap holds at most k elements; sort is O(k log k) on
-        // already-computed values — no new distanceToKm calls.
+        // already-computed values - no new distanceToKm calls.
         List<Candidate> result = new ArrayList<>(nearest);
         result.sort(Comparator.naturalOrder()); // nearest-first via Comparable
         List<GeoPoint> points = new ArrayList<>(result.size());
@@ -255,7 +255,7 @@ public final class QuadTree {
         if (nearest.size() == k) {
             double lowerBound = minimumPossibleDistanceKm(query);
 
-            // worstKm[0] is always nearest.peek().distKm — no re-computation.
+            // worstKm[0] is always nearest.peek().distKm - no re-computation.
             if (lowerBound > worstKm[0] + PRUNING_TOLERANCE_KM) {
                 if (observer != null) {
                     try {
@@ -398,7 +398,7 @@ public final class QuadTree {
         }
 
         if (northWest == null) {
-            // Leaf node — check each stored point directly.
+            // Leaf node - check each stored point directly.
             for (GeoPoint point : this.points) {
                 if (center.distanceToKm(point) <= radiusKm) {
                     count[0]++;

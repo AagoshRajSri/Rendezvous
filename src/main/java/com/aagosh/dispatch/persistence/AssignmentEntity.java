@@ -28,7 +28,7 @@ public class AssignmentEntity {
     private Long id;
 
     /**
-     * The logical request identifier — unique within this table and a FK to
+     * The logical request identifier - unique within this table and a FK to
      * {@code ride_requests.request_id}.
      */
     @Column(name = "request_id", nullable = false, unique = true, length = 255)

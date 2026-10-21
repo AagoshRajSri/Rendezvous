@@ -25,9 +25,9 @@ import java.util.Objects;
  * <p>Each driver is stored under the key {@code driver:{driverId}:location} as a Redis
  * Hash with three fields:
  * <ul>
- *   <li>{@code lat}        – latitude as a decimal string</li>
- *   <li>{@code lon}        – longitude as a decimal string</li>
- *   <li>{@code updated_at} – epoch milliseconds as a decimal string</li>
+ *   <li>{@code lat} - latitude as a decimal string</li>
+ *   <li>{@code lon} - longitude as a decimal string</li>
+ *   <li>{@code updated_at} - epoch milliseconds as a decimal string</li>
  * </ul>
  *
  * <h2>Atomic conditional write</h2>
@@ -67,11 +67,11 @@ public class RedisLocationCache {
      *
      * <p>Arguments:
      * <ul>
-     *   <li>KEYS[1]  – the driver location key</li>
-     *   <li>ARGV[1]  – new latitude string</li>
-     *   <li>ARGV[2]  – new longitude string</li>
-     *   <li>ARGV[3]  – new timestamp (epoch millis, decimal string)</li>
-     *   <li>ARGV[4]  – TTL in milliseconds (decimal string)</li>
+     *   <li>KEYS[1] - the driver location key</li>
+     *   <li>ARGV[1] - new latitude string</li>
+     *   <li>ARGV[2] - new longitude string</li>
+     *   <li>ARGV[3] - new timestamp (epoch millis, decimal string)</li>
+     *   <li>ARGV[4] - TTL in milliseconds (decimal string)</li>
      * </ul>
      *
      * <p>Returns 1 if the write was performed, 0 if rejected (stale timestamp).
@@ -173,9 +173,9 @@ public class RedisLocationCache {
      * Discriminated result type for {@link #getLocation(String)}.
      *
      * <ul>
-     *   <li>{@link Found}  – key exists and contained valid lat/lon/updated_at fields.</li>
-     *   <li>{@link Miss}   – key does not exist in Redis (expired TTL or never written).</li>
-     *   <li>{@link RedisError} – Redis was unreachable or returned an unexpected error.
+     *   <li>{@link Found} - key exists and contained valid lat/lon/updated_at fields.</li>
+     *   <li>{@link Miss} - key does not exist in Redis (expired TTL or never written).</li>
+     *   <li>{@link RedisError} - Redis was unreachable or returned an unexpected error.
      *       This is explicitly <em>not</em> treated as a cache miss so callers can handle
      *       infrastructure failures differently from genuine absence of data.</li>
      * </ul>
@@ -230,7 +230,7 @@ public class RedisLocationCache {
             String tsStr  = (String) fields.get(FIELD_UPDATED_AT);
 
             if (latStr == null || lonStr == null || tsStr == null) {
-                // Partial write — treat as a miss rather than silently fabricating data.
+                // Partial write - treat as a miss rather than silently fabricating data.
                 log.warn("Incomplete Redis location entry for driver {}: lat={} lon={} ts={}",
                         driverId, latStr, lonStr, tsStr);
                 return recordResult(LocationResult.Miss.INSTANCE);
@@ -243,7 +243,7 @@ public class RedisLocationCache {
             return recordResult(new LocationResult.Found(location, updatedAt));
 
         } catch (RedisConnectionFailureException ex) {
-            // Explicit infrastructure failure — must NOT be silently downgraded to a Miss.
+            // Explicit infrastructure failure - must NOT be silently downgraded to a Miss.
             log.warn("Redis connection failure reading location for driver {}: {}", driverId, ex.getMessage());
             return recordResult(new LocationResult.RedisError("connection failure: " + ex.getMessage()));
         } catch (NumberFormatException ex) {
@@ -254,7 +254,7 @@ public class RedisLocationCache {
             log.warn("Invalid coordinates in Redis for driver {}: {}", driverId, ex.getMessage());
             return recordResult(new LocationResult.RedisError("invalid coordinates: " + ex.getMessage()));
         } catch (Exception ex) {
-            // Unexpected Redis exception — not a cache miss.
+            // Unexpected Redis exception - not a cache miss.
             log.warn("Unexpected error reading Redis location for driver {}: {}", driverId, ex.getMessage());
             return recordResult(new LocationResult.RedisError("unexpected error: " + ex.getMessage()));
         }

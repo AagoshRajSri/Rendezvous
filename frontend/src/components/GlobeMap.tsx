@@ -17,7 +17,7 @@ import { SimulatedFleetBadge } from './SimulatedFleetBadge';
 import './GlobeMap.css';
 
 // ── Real matched-driver layer constants (Phase 7E.2) ────────────────────────────
-// Amber/gold dots — distinct from the green simulated fleet
+// Amber/gold dots - distinct from the green simulated fleet
 const MATCHED_DRIVER_SOURCE_ID = 'rendezvous-matched-driver';
 const MATCHED_DRIVER_HALO_LAYER_ID = 'rendezvous-matched-driver-halo';
 const MATCHED_DRIVER_CORE_LAYER_ID = 'rendezvous-matched-driver-core';
@@ -151,7 +151,7 @@ function ensureMatchedDriverLayers(map: MapLibreMap) {
       source: MATCHED_DRIVER_SOURCE_ID,
       paint: {
         'circle-radius': 18,
-        'circle-color': '#ffc542', // amber — distinct from simulated fleet
+        'circle-color': '#ffc542', // amber - distinct from simulated fleet
         'circle-opacity': 0.2,
         'circle-pitch-alignment': 'map',
       },
@@ -332,11 +332,11 @@ function ensureDriverApproachLayers(map: MapLibreMap) {
   }
 }
 
-// ── Electric wave route layers (Phase 11.5 — enhanced) ───────────────────────
+// ── Electric wave route layers (Phase 11.5 - enhanced) ───────────────────────
 // Three layers stacked on the same GeoJSON source:
-//   1. Corona glow   — wide blurred halo for neon bloom
-//   2. Core wire     — bright narrow centre line
-//   3. Spark dashes  — animated flowing electricity (rAF-driven dash offset)
+//   1. Corona glow - wide blurred halo for neon bloom
+//   2. Core wire - bright narrow centre line
+//   3. Spark dashes - animated flowing electricity (rAF-driven dash offset)
 export const PATH_PULSE_SOURCE_ID = 'rendezvous-path-pulse';
 export const PATH_PULSE_LAYER_ID = 'rendezvous-path-pulse-layer'; // kept for compat
 const PATH_ELECTRIC_CORONA_LAYER_ID = 'rendezvous-path-electric-corona';
@@ -395,7 +395,7 @@ function ensurePathPulseLayer(map: MapLibreMap) {
   }
 
   // ── 3. Travelling spark dashes ─────────────────────────────────────────────
-  // Initial dasharray — offset animation driven externally via setPaintProperty.
+  // Initial dasharray - offset animation driven externally via setPaintProperty.
   if (!map.getLayer(PATH_ELECTRIC_SPARK_LAYER_ID)) {
     map.addLayer(
       {
@@ -414,7 +414,7 @@ function ensurePathPulseLayer(map: MapLibreMap) {
     );
   }
 
-  // Legacy alias layer — keep exported ID pointing at something real
+  // Legacy alias layer - keep exported ID pointing at something real
   // (external code only reads PATH_PULSE_LAYER_ID; we alias to spark)
   // No-op if already registered above.
   if (!map.getLayer(PATH_PULSE_LAYER_ID)) {
@@ -646,7 +646,7 @@ function ensureTraceLayers(map: MapLibreMap) {
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 
 // ── Globe projection constants (MapLibre GL JS ≥ 5.0.0) ─────────────────────
-// Initial view: centred on 0°N 20°E (Atlantic/Africa) — no predetermined city.
+// Initial view: centred on 0°N 20°E (Atlantic/Africa) - no predetermined city.
 const INITIAL_CENTER: [number, number] = [20, 5];
 const INITIAL_ZOOM = 1.8;
 
@@ -714,34 +714,34 @@ interface GlobeMapProps {
   /** Simulated drivers to render on the map (Phase 7C). Empty array = no drivers shown. */
   drivers?: SimulatedDriver[];
   /**
-   * Phase 7E.2 — Verified coordinates of the matched driver's last-known fresh fix.
+   * Phase 7E.2 - Verified coordinates of the matched driver's last-known fresh fix.
    * Only rendered when explicitly non-null with validated lat/lon.
    * Never falls back to pickup coordinates or simulated-driver positions.
    */
   matchedDriverLocation?: { lat: number; lon: number } | null;
   /**
-   * Phase 11.2 — Road coordinates [[lon, lat], ...] from assigned driver to pickup.
+   * Phase 11.2 - Road coordinates [[lon, lat], ...] from assigned driver to pickup.
    */
   driverApproachRoute?: [number, number][] | null;
   /**
-   * Phase 11.2 — Current animated vehicle position [lon, lat] along approach route.
+   * Phase 11.2 - Current animated vehicle position [lon, lat] along approach route.
    */
   animatedVehiclePosition?: [number, number] | null;
   /**
-   * Phase 11.2 — Current vehicle bearing in degrees [0, 360).
+   * Phase 11.2 - Current vehicle bearing in degrees [0, 360).
    */
   animatedVehicleBearing?: number;
   /**
-   * Phase 11.3 — Active lifecycle phase to trigger destination camera framing.
+   * Phase 11.3 - Active lifecycle phase to trigger destination camera framing.
    */
   activePhase?: DispatchPhase;
   /**
-   * Phase 11.4F — Read-only dispatch execution trace containing spatial exploration
+   * Phase 11.4F - Read-only dispatch execution trace containing spatial exploration
    * stages and evaluated candidates.
    */
   trace?: DispatchTrace | null;
   /**
-   * Phase 11.4F — Whether to render spatial trace overlays (bounding boxes and candidates).
+   * Phase 11.4F - Whether to render spatial trace overlays (bounding boxes and candidates).
    * Typically active when the Dispatch Trace accordion is expanded or Algorithm Mode is ON.
    */
   showTraceOverlay?: boolean;
@@ -840,7 +840,7 @@ export function GlobeMap({
       attributionControl: false, // We add a custom-positioned one below
     });
 
-    // Add attribution in the bottom-right — required by OSM & OpenFreeMap licences.
+    // Add attribution in the bottom-right - required by OSM & OpenFreeMap licences.
     map.addControl(
       new maplibregl.AttributionControl({ compact: true }),
       'bottom-right',
@@ -1319,9 +1319,9 @@ export function GlobeMap({
     }
   }, [animatedVehiclePosition, animatedVehicleBearing]);
 
-  // ── Electric-wave animated route (Phase 11.5 — enhanced) ────────────────────
-  // Phase A: wavefront sweep — progressively reveals route geometry (1.4 s)
-  // Phase B: continuous spark loop — travelling dashes simulate live electricity
+  // ── Electric-wave animated route (Phase 11.5 - enhanced) ────────────────────
+  // Phase A: wavefront sweep - progressively reveals route geometry (1.4 s)
+  // Phase B: continuous spark loop - travelling dashes simulate live electricity
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -1360,7 +1360,7 @@ export function GlobeMap({
 
     let animId: number | null = null;
     const sweepStart = performance.now();
-    const sweepDuration = 1500; // ms — smooth wavefront sweep
+    const sweepDuration = 1500; // ms - smooth wavefront sweep
 
     // Fine-grained dash patterns that cycle to create the fluid "electricity flowing" illusion
     const SPARK_PATTERNS: [number, number][] = [

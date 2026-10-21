@@ -1,5 +1,5 @@
 /**
- * Phase 7E.3 — Unit and component tests for GlobeMap.
+ * Phase 7E.3 - Unit and component tests for GlobeMap.
  *
  * Verifies:
  * - Real matched driver and connector GeoJSON source updates.

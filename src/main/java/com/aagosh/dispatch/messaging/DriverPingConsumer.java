@@ -37,7 +37,7 @@ import java.util.Optional;
  * field using the same logic as the pre-Kafka {@code DriverController}:
  * <ul>
  *   <li>{@link PingAction#REGISTER}: registers the driver if absent; logs a warning and
- *       acknowledges on duplicate (the driver already exists — this is idempotent).</li>
+ *       acknowledges on duplicate (the driver already exists - this is idempotent).</li>
  *   <li>{@link PingAction#UPDATE}: updates the driver's location. Logs a warning and
  *       acknowledges if the driver is not found (registration may not have been processed yet
  *       due to at-least-once reordering). Does <em>not</em> reset claim state.</li>
@@ -55,14 +55,14 @@ import java.util.Optional;
  * <h2>Timestamp handling and ordering guarantees</h2>
  * <p>Location ordering is resolved by {@link #resolveTimestamp(DriverPingRequest, long)} in priority order:
  * <ol>
- *   <li><strong>Client-provided {@code capturedAt}</strong> (preferred) – epoch milliseconds indicating
+ *   <li><strong>Client-provided {@code capturedAt}</strong> (preferred) - epoch milliseconds indicating
  *       when the GPS fix was acquired on the mobile device.</li>
- *   <li><strong>Kafka record timestamp</strong> (best-effort fallback) – used when {@code capturedAt}
+ *   <li><strong>Kafka record timestamp</strong> (best-effort fallback) - used when {@code capturedAt}
  *       is absent or non-positive. <em>Limitation:</em> This timestamp reflects broker append or producer
  *       transmission time, <strong>not</strong> GPS capture time. Under network delays, client reconnection,
  *       or producer retries, records may reach Kafka out of chronological order. Chronological ordering
  *       for legacy events relying on this fallback is therefore strictly best-effort.</li>
- *   <li><strong>{@code 0L} (unversioned)</strong> – used when neither client {@code capturedAt} nor
+ *   <li><strong>{@code 0L} (unversioned)</strong> - used when neither client {@code capturedAt} nor
  *       a positive Kafka record timestamp is present. Indicates that no chronological ordering is available.
  *       An unversioned event can update a driver in the local {@link DriverRegistry} only while the driver
  *       remains unversioned ({@code updatedAt == 0L}); it <em>cannot</em> overwrite a location that has
@@ -161,8 +161,8 @@ public class DriverPingConsumer {
         }
 
         // Resolve the best available location timestamp:
-        //  1. Client-provided capturedAt (preferred — reflects actual GPS fix time).
-        //  2. Kafka broker-append timestamp (fallback — see class Javadoc for limitations).
+        //  1. Client-provided capturedAt (preferred - reflects actual GPS fix time).
+        //  2. Kafka broker-append timestamp (fallback - see class Javadoc for limitations).
         long timestamp = resolveTimestamp(event, record.timestamp());
 
         GeoPoint location = new GeoPoint(event.latitude(), event.longitude());
@@ -197,7 +197,7 @@ public class DriverPingConsumer {
             // Write initial location to Redis for newly registered drivers.
             updateRedisCacheSafe(driverId, location, timestamp);
         } catch (IllegalStateException ex) {
-            // Driver already registered — ensure state recovery if currently AVAILABLE
+            // Driver already registered - ensure state recovery if currently AVAILABLE
             recoverDriverStateIfActive(driverId);
             log.warn("Duplicate REGISTER event for already-registered driver {}; acknowledging",
                     driverId);

@@ -234,7 +234,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 1 — Driver ingestion: REST → Kafka → DriverRegistry + Redis
+    // Scenario 1 - Driver ingestion: REST → Kafka → DriverRegistry + Redis
     // =========================================================================
 
     @Test
@@ -285,7 +285,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 2 — Location update: newer ping overwrites, stale ping is rejected
+    // Scenario 2 - Location update: newer ping overwrites, stale ping is rejected
     // =========================================================================
 
     @Test
@@ -306,7 +306,7 @@ class DispatchEndToEndIT {
                .pollInterval(Duration.ofMillis(50))
                .untilAsserted(() -> assertTrue(driverRegistry.findById(driverId).isPresent()));
 
-        // Send a newer ping (ts=9000) — must be accepted
+        // Send a newer ping (ts=9000) - must be accepted
         mockMvc.perform(post("/ping")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -324,7 +324,7 @@ class DispatchEndToEndIT {
                    assertEquals(9000L, d.updatedAt());
                });
 
-        // Send a stale ping (ts=3000) — must be rejected
+        // Send a stale ping (ts=3000) - must be rejected
         mockMvc.perform(post("/ping")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -356,7 +356,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 3 — Successful ride assignment (full pipeline)
+    // Scenario 3 - Successful ride assignment (full pipeline)
     // =========================================================================
 
     @Test
@@ -413,7 +413,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 4 — No eligible drivers
+    // Scenario 4 - No eligible drivers
     // =========================================================================
 
     @Test
@@ -443,7 +443,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 5 — Duplicate HTTP submission (same requestId posted twice)
+    // Scenario 5 - Duplicate HTTP submission (same requestId posted twice)
     // =========================================================================
 
     @Test
@@ -504,7 +504,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 6 — Duplicate Kafka event publication (consumer idempotency path)
+    // Scenario 6 - Duplicate Kafka event publication (consumer idempotency path)
     // =========================================================================
 
     @Test
@@ -589,7 +589,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 7 — Competing requests for one driver
+    // Scenario 7 - Competing requests for one driver
     // =========================================================================
 
     @Test
@@ -646,7 +646,7 @@ class DispatchEndToEndIT {
         String finalA = persistenceService.getRequestStatus(requestA).orElseThrow();
         String finalB = persistenceService.getRequestStatus(requestB).orElseThrow();
 
-        // Invariant: strict mutual exclusion — exactly one wins (MATCHED) and one loses (NO_DRIVERS)
+        // Invariant: strict mutual exclusion - exactly one wins (MATCHED) and one loses (NO_DRIVERS)
         boolean aWon = AssignmentPersistenceService.STATUS_MATCHED.equals(finalA)
                     && AssignmentPersistenceService.STATUS_NO_DRIVERS.equals(finalB);
         boolean bWon = AssignmentPersistenceService.STATUS_MATCHED.equals(finalB)
@@ -676,7 +676,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 8 — Redis failure isolation
+    // Scenario 8 - Redis failure isolation
     // =========================================================================
 
     @Test
@@ -690,7 +690,7 @@ class DispatchEndToEndIT {
                       .pauseContainerCmd(redisContainer.getContainerId())
                       .exec();
         try {
-            // Register driver — must succeed despite Redis being paused
+            // Register driver - must succeed despite Redis being paused
             long capturedAt = System.currentTimeMillis();
             mockMvc.perform(post("/register")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -706,7 +706,7 @@ class DispatchEndToEndIT {
                            driverRegistry.findById(driverId).isPresent(),
                            "Driver must appear in DriverRegistry even when Redis is paused"));
 
-            // Submit ride request — matching and PostgreSQL persistence must still work
+            // Submit ride request - matching and PostgreSQL persistence must still work
             mockMvc.perform(post("/request")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
@@ -749,7 +749,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 9 — Request status with telemetry: fresh driver returns MATCHED + coordinates
+    // Scenario 9 - Request status with telemetry: fresh driver returns MATCHED + coordinates
     // =========================================================================
 
     @Test
@@ -792,7 +792,7 @@ class DispatchEndToEndIT {
                            "Request must be MATCHED");
                });
 
-        // 4. Poll GET /api/requests/{requestId} — verify full telemetry payload
+        // 4. Poll GET /api/requests/{requestId} - verify full telemetry payload
         mockMvc.perform(get("/api/requests/" + requestId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requestId").value(requestId))
@@ -804,7 +804,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 10 — Stale driver excluded by matching pipeline yields NO_DRIVERS
+    // Scenario 10 - Stale driver excluded by matching pipeline yields NO_DRIVERS
     // =========================================================================
 
     @Test
@@ -812,7 +812,7 @@ class DispatchEndToEndIT {
     void staleDriverExcludedByMatchingYieldsNoDrivers() throws Exception {
         String driverId  = "E2E-D-S10";
         String requestId = "E2E-REQ-S10";
-        // 120 seconds ago — strictly exceeds default 60s freshness window
+        // 120 seconds ago - strictly exceeds default 60s freshness window
         long staleCapturedAt = System.currentTimeMillis() - 120_000L;
 
         // 1. Register driver with stale timestamp
@@ -849,7 +849,7 @@ class DispatchEndToEndIT {
                            "Request must terminate in NO_DRIVERS due to stale candidate exclusion");
                });
 
-        // 4. Query GET /api/requests/{requestId} — verify status is NO_DRIVERS with no driver or telemetry
+        // 4. Query GET /api/requests/{requestId} - verify status is NO_DRIVERS with no driver or telemetry
         mockMvc.perform(get("/api/requests/" + requestId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requestId").value(requestId))
@@ -861,7 +861,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 11 — End-to-end multi-request batch dispatch & passive telemetry
+    // Scenario 11 - End-to-end multi-request batch dispatch & passive telemetry
     // =========================================================================
 
     @Test
@@ -919,7 +919,7 @@ class DispatchEndToEndIT {
     }
 
     // =========================================================================
-    // Scenario 12 — End-to-end mixed batch: poison pill skipped without stalling partition
+    // Scenario 12 - End-to-end mixed batch: poison pill skipped without stalling partition
     // =========================================================================
 
     @Test

@@ -101,9 +101,9 @@ Submits a driver GPS location update. Publishes an event to Kafka topic `driver-
 #### Request Schema (`DriverPingRequest`)
 | Field | Type | Required | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
-| `driverId` | `String` | Yes | — | Non-blank driver identifier (e.g., `"D101"`). |
-| `latitude` | `Double` | Yes | — | WGS-84 latitude between `-90.0` and `90.0`. |
-| `longitude` | `Double` | Yes | — | WGS-84 longitude between `-180.0` and `180.0`. |
+| `driverId` | `String` | Yes | - | Non-blank driver identifier (e.g., `"D101"`). |
+| `latitude` | `Double` | Yes | - | WGS-84 latitude between `-90.0` and `90.0`. |
+| `longitude` | `Double` | Yes | - | WGS-84 longitude between `-180.0` and `180.0`. |
 | `action` | `String` | No | `"AUTO"` | Processing mode: `"AUTO"`, `"UPDATE"`, or `"REGISTER"`. |
 | `capturedAt`| `Long` | No | `null` | Optional client fix timestamp in epoch milliseconds. |
 
@@ -502,7 +502,7 @@ Per `application.properties`, only `health` and `prometheus` endpoints are expos
 
 ## 10. References & Further Documentation
 
-- [Project README](README.md) — Comprehensive setup instructions, 7-service port topology, Docker Compose configuration, and test breakdown.
-- [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) — High-load empirical findings, latency distributions, and batching analysis under full JIT compilation.
-- [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) — Empirical assessment of Prometheus/Grafana observability overhead under 60 req/s load, latency comparison, and live dashboard validation.
-- [Double-Booking Concurrency Experiment](docs/double-booking-experiment.md) — Multi-threaded race condition analysis and atomic CAS proof.
+- [Project README](README.md) - Comprehensive setup instructions, 7-service port topology, Docker Compose configuration, and test breakdown.
+- [Phase 8 Benchmark Evidence Report](docs/benchmarks/phase-8-alternative-a-report.md) - High-load empirical findings, latency distributions, and batching analysis under full JIT compilation.
+- [Phase 9 Observability Benchmark Report](docs/benchmarks/phase-9-observability-report.md) - Empirical assessment of Prometheus/Grafana observability overhead under 60 req/s load, latency comparison, and live dashboard validation.
+- [Double-Booking Concurrency Experiment](docs/double-booking-experiment.md) - Multi-threaded race condition analysis and atomic CAS proof.

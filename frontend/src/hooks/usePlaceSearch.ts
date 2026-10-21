@@ -1,5 +1,5 @@
 /**
- * Phase 7B — usePlaceSearch hook.
+ * Phase 7B - usePlaceSearch hook.
  *
  * Manages the search query lifecycle:
  *   - 300ms debounce before dispatching a request.

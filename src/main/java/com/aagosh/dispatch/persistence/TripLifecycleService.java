@@ -20,8 +20,8 @@ import java.util.Optional;
  * are delegated to {@link TripTransitionPersistor}, whose {@code @Transactional} methods
  * commit the database transaction before returning to this class. Only after that return
  * does this class mutate the in-memory {@link DriverState}. This guarantees that a database
- * rollback inside {@code TripTransitionPersistor} never reaches — and therefore never
- * corrupts — the in-memory driver state. No self-invocation is used; the delegation to a
+ * rollback inside {@code TripTransitionPersistor} never reaches - and therefore never
+ * corrupts - the in-memory driver state. No self-invocation is used; the delegation to a
  * separate Spring-managed bean ensures the proxy transaction boundary is honoured.
  *
  * <h2>Driver absence handling</h2>
@@ -36,7 +36,7 @@ import java.util.Optional;
  * compare-and-set fails (e.g., the driver's state has been concurrently advanced by another
  * operation, or the in-memory state is unexpectedly out of sync), this class returns
  * {@link LifecycleOutcome#DRIVER_STATE_DIVERGED} and logs enough context to diagnose the
- * condition. No compensating database rollback is attempted — the committed database state
+ * condition. No compensating database rollback is attempted - the committed database state
  * is authoritative. The in-memory state will be lazily reconciled by
  * {@code DriverPingConsumer.recoverDriverStateIfActive} on the next driver ping.
  *

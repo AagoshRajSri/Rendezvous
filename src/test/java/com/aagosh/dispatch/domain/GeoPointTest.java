@@ -41,7 +41,7 @@ class GeoPointTest {
     }
 
     // -------------------------------------------------------------------------
-    // Message consistency — GeoPoint errors must match the API contract
+    // Message consistency - GeoPoint errors must match the API contract
     // -------------------------------------------------------------------------
 
     @Test

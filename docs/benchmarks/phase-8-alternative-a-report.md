@@ -199,7 +199,7 @@ Post-run Arrival Rate (EMA): 0.01 req/s
 1. **Passive Observation Model:**  
    `AdaptiveWindowController` does not currently hold an in-memory accumulation buffer across Kafka listener invocations. It passively records batch sizes received directly from `RideRequestConsumer.onRideRequests(records, ack)`.
 2. **Kafka Poll Dynamics:**  
-   `records.size()` is determined by Spring Kafka’s `batchKafkaListenerContainerFactory` calling `Consumer.poll(Duration)`. At 60 req/s, one request arrives every $\sim 16.7\text{ ms}$. Because Alternative A processes and commits each batch in $2\text{--}4\text{ ms}$, the consumer loop immediately repolls Kafka before a backlog accumulates, receiving 1–2 records per poll.
+   `records.size()` is determined by Spring Kafka’s `batchKafkaListenerContainerFactory` calling `Consumer.poll(Duration)`. At 60 req/s, one request arrives every $\sim 16.7\text{ ms}$. Because Alternative A processes and commits each batch in $2\text{--}4\text{ ms}$, the consumer loop immediately repolls Kafka before a backlog accumulates, receiving 1-2 records per poll.
 3. **Status of Target:**  
    The experimental batch size target ($\ge 10$) remains **unresolved**. To achieve batch sizes $\ge 10$ under 60 req/s, either Kafka consumer poll pacing (`fetch.min.bytes`, `fetch.max.wait.ms`) must be tuned, or active buffering must be added to `RideRequestConsumer`.
 
@@ -240,8 +240,8 @@ Following benchmark execution, the entire automated test suite was run against r
 * **Errors:** **0**
 * **Skipped:** **0**
 * **Alternative A Unit Tests Verified:**
-  * `RideRequestConsumerTest` (Tests 28–32): Verified batch filtering, lookup exception in-flight release, duplicate ID filtering, empty batch handling, and single-invocation guarantees.
-  * `AssignmentPersistenceServiceTest` (Tests 18–20): Verified `findFinalizedRequestIdsIn` null handling, terminal status queries, and repository exception propagation.
+  * `RideRequestConsumerTest` (Tests 28-32): Verified batch filtering, lookup exception in-flight release, duplicate ID filtering, empty batch handling, and single-invocation guarantees.
+  * `AssignmentPersistenceServiceTest` (Tests 18-20): Verified `findFinalizedRequestIdsIn` null handling, terminal status queries, and repository exception propagation.
   * `AssignmentPersistenceServiceIT` (14 tests) & `TripLifecycleServiceIT` (15 tests): Verified persistence and state transitions against PostgreSQL Testcontainers.
 
 ---

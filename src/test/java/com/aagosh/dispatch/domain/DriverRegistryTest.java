@@ -100,7 +100,7 @@ class DriverRegistryTest {
         Driver duplicate = new Driver("D1", new GeoPoint(0.0, 0.0), new DriverState());
         assertThrows(IllegalStateException.class, () -> registry.register(duplicate));
 
-        // Existing entry must be untouched — same state, same claim
+        // Existing entry must be untouched - same state, same claim
         Driver stored = registry.findById("D1").orElseThrow();
         assertSame(original.state(), stored.state(),
                 "Duplicate registration must not replace existing DriverState");
@@ -116,10 +116,10 @@ class DriverRegistryTest {
 
     @Test
     void nullAndBlankInputsAreRejected() {
-        // register(null) — Objects.requireNonNull throws NPE (matches domain convention)
+        // register(null) - Objects.requireNonNull throws NPE (matches domain convention)
         assertThrows(NullPointerException.class, () -> registry.register(null));
 
-        // String inputs — requireNonBlank throws IAE for null/blank IDs
+        // String inputs - requireNonBlank throws IAE for null/blank IDs
         assertThrows(IllegalArgumentException.class, () -> registry.findById(null));
         assertThrows(IllegalArgumentException.class, () -> registry.findById(""));
         assertThrows(IllegalArgumentException.class, () -> registry.findById("  "));
@@ -128,7 +128,7 @@ class DriverRegistryTest {
         assertThrows(IllegalArgumentException.class,
                 () -> registry.updateLocation("", new GeoPoint(0, 0), 1L));
 
-        // updateLocation with null location — Objects.requireNonNull throws NPE.
+        // updateLocation with null location - Objects.requireNonNull throws NPE.
         // Driver must be registered first so the NPE is reached (not IllegalStateException).
         registry.register(driver("D_NULL_LOC", 0.0, 0.0));
         assertThrows(NullPointerException.class,
@@ -161,7 +161,7 @@ class DriverRegistryTest {
         registry.register(d);
         assertTrue(d.state().tryClaim("REQ-1"));
 
-        // Attempt a further claim after location update — must fail because still CLAIMED
+        // Attempt a further claim after location update - must fail because still CLAIMED
         registry.updateLocation("D1", new GeoPoint(18.0, 79.0), 1L);
 
         Driver updated = registry.findById("D1").orElseThrow();
@@ -179,7 +179,7 @@ class DriverRegistryTest {
 
         Driver updated = registry.findById("D1").orElseThrow();
         assertSame(originalState, updated.state(),
-                "The exact same DriverState object must be reused — not recreated");
+                "The exact same DriverState object must be reused - not recreated");
     }
 
     @Test
@@ -461,7 +461,7 @@ class DriverRegistryTest {
                         List<Driver> snap = registry.snapshot();
                         for (Driver d : snap) {
                             if (d.id().startsWith("PRE-")) {
-                                // Each PRE-* driver was claimed — must remain so
+                                // Each PRE-* driver was claimed - must remain so
                                 if (d.state().getStatus() != MatchStatus.CLAIMED) {
                                     errors.incrementAndGet();
                                 }
@@ -512,7 +512,7 @@ class DriverRegistryTest {
         assertEquals(1, snap.size());
         Driver snapshotDriver = snap.get(0);
 
-        // The snapshot's state IS the original state — same object, same claim
+        // The snapshot's state IS the original state - same object, same claim
         assertSame(d.state(), snapshotDriver.state(),
                 "Snapshot driver must share the original DriverState");
         assertEquals(MatchStatus.CLAIMED, snapshotDriver.state().getStatus());

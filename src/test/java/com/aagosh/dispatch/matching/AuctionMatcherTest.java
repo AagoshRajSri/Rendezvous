@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AuctionMatcherTest {
 
     // =========================================================================
-    // Hungarian algorithm — independent reference implementation
+    // Hungarian algorithm - independent reference implementation
     // =========================================================================
 
     /**
@@ -273,7 +273,7 @@ class AuctionMatcherTest {
     }
 
     // =========================================================================
-    // AuctionConfig — validation tests
+    // AuctionConfig - validation tests
     // =========================================================================
 
     @Test
@@ -297,7 +297,7 @@ class AuctionMatcherTest {
     }
 
     // =========================================================================
-    // AuctionMatcher — null input rejection
+    // AuctionMatcher - null input rejection
     // =========================================================================
 
     @Test
@@ -530,7 +530,7 @@ class AuctionMatcherTest {
 
     @Test
     void multipleOptimalAssignments_costIsOptimal() {
-        // Symmetric cost matrix — 2 optimal assignments exist.
+        // Symmetric cost matrix - 2 optimal assignments exist.
         //   R0→D0: 1, R0→D1: 1
         //   R1→D0: 1, R1→D1: 1
         // Both assignments have total cost 2.
@@ -677,7 +677,7 @@ class AuctionMatcherTest {
                 List.of(r1), List.of(driver), claimDuringSideEffect
         );
 
-        // The driver was already claimed before commitment — result must be empty
+        // The driver was already claimed before commitment - result must be empty
         // or if the driver passed eligibility check before the side effect ran,
         // the tryClaim in commitment will fail and drop the assignment.
         // Either way: no assignment for D1 should survive.
@@ -977,10 +977,10 @@ class AuctionMatcherTest {
         //
         // Pickup locations: all at (0, 0).
         // Driver positions:
-        //   D0 at (0, 0.01) — ~1.1 km
-        //   D1 at (0, 0.02) — ~2.2 km
-        //   D2 at (0, 0.03) — ~3.3 km
-        //   D3 at (0, 0.04) — ~4.4 km
+        //   D0 at (0, 0.01) - ~1.1 km
+        //   D1 at (0, 0.02) - ~2.2 km
+        //   D2 at (0, 0.03) - ~3.3 km
+        //   D3 at (0, 0.04) - ~4.4 km
         //
         // All requests at (0,0), so cost = distance to pickup.
         // Both greedy and auction should produce the same assignment since the

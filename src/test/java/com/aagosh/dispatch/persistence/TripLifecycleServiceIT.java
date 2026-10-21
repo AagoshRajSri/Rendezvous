@@ -161,7 +161,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("2. cancelTrip from ASSIGNED — DB = CANCELLED, driver AVAILABLE")
+    @DisplayName("2. cancelTrip from ASSIGNED - DB = CANCELLED, driver AVAILABLE")
     void cancelTrip_fromAssigned() {
         Driver driver = persistAssignmentAndRegister("REQ-LC-002", "DRV-LC-002");
 
@@ -177,7 +177,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("3. cancelTrip from EN_ROUTE — DB = CANCELLED, driver AVAILABLE")
+    @DisplayName("3. cancelTrip from EN_ROUTE - DB = CANCELLED, driver AVAILABLE")
     void cancelTrip_fromEnRoute() {
         Driver driver = persistAssignmentAndRegister("REQ-LC-003", "DRV-LC-003");
         service.beginEnRoute("REQ-LC-003", "DRV-LC-003");
@@ -194,7 +194,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("4. cancelTrip from IN_PROGRESS — INVALID_TRANSITION; DB unchanged, DriverState unchanged")
+    @DisplayName("4. cancelTrip from IN_PROGRESS - INVALID_TRANSITION; DB unchanged, DriverState unchanged")
     void cancelTrip_fromInProgress_rejected() {
         Driver driver = persistAssignmentAndRegister("REQ-LC-004", "DRV-LC-004");
         service.beginEnRoute("REQ-LC-004", "DRV-LC-004");
@@ -212,7 +212,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("5. Idempotent: beginEnRoute called twice — second returns ALREADY_IN_TARGET_STATE")
+    @DisplayName("5. Idempotent: beginEnRoute called twice - second returns ALREADY_IN_TARGET_STATE")
     void beginEnRoute_idempotent() {
         persistAssignmentAndRegister("REQ-LC-005", "DRV-LC-005");
 
@@ -229,7 +229,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("6. Idempotent: cancelTrip called twice — second returns ALREADY_IN_TARGET_STATE")
+    @DisplayName("6. Idempotent: cancelTrip called twice - second returns ALREADY_IN_TARGET_STATE")
     void cancelTrip_idempotent() {
         persistAssignmentAndRegister("REQ-LC-006", "DRV-LC-006");
 
@@ -246,7 +246,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("7. Trip not found — TRIP_NOT_FOUND; no DB mutation")
+    @DisplayName("7. Trip not found - TRIP_NOT_FOUND; no DB mutation")
     void beginEnRoute_tripNotFound() {
         // Register driver so the pre-flight check passes
         DriverState state  = new DriverState();
@@ -260,11 +260,11 @@ class TripLifecycleServiceIT {
     }
 
     // -------------------------------------------------------------------------
-    // Test 8: Ownership mismatch — wrong driverId supplied
+    // Test 8: Ownership mismatch - wrong driverId supplied
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("8. Ownership mismatch — OWNERSHIP_MISMATCH; DB unchanged")
+    @DisplayName("8. Ownership mismatch - OWNERSHIP_MISMATCH; DB unchanged")
     void beginEnRoute_ownershipMismatch() {
         persistAssignmentAndRegister("REQ-LC-008", "DRV-LC-008");
 
@@ -277,12 +277,12 @@ class TripLifecycleServiceIT {
         LifecycleOutcome result = service.beginEnRoute("REQ-LC-008", "DRV-LC-WRONG");
 
         assertEquals(LifecycleOutcome.OWNERSHIP_MISMATCH, result);
-        // DB unchanged — still ASSIGNED
+        // DB unchanged - still ASSIGNED
         assertEquals(TripStatus.ASSIGNED, tripRepository.findByRequestId("REQ-LC-008").orElseThrow().getStatus());
     }
 
     // -------------------------------------------------------------------------
-    // Test 9: DRIVER_STATE_DIVERGED — DB commits but DriverState CAS fails
+    // Test 9: DRIVER_STATE_DIVERGED - DB commits but DriverState CAS fails
     // -------------------------------------------------------------------------
 
     @Test
@@ -293,7 +293,7 @@ class TripLifecycleServiceIT {
         TripEntity trip = new TripEntity("REQ-LC-009", "DRV-LC-009", TripStatus.ASSIGNED);
         tripRepository.saveAndFlush(trip);
 
-        // Register driver whose DriverState is AVAILABLE (never claimed) — CAS will fail
+        // Register driver whose DriverState is AVAILABLE (never claimed) - CAS will fail
         DriverState state = new DriverState();   // AVAILABLE, not CLAIMED
         Driver driver = new Driver("DRV-LC-009", new GeoPoint(17.0, 78.0), state);
         try { driverRegistry.register(driver); } catch (IllegalStateException ignored) {}
@@ -303,7 +303,7 @@ class TripLifecycleServiceIT {
         assertEquals(LifecycleOutcome.DRIVER_STATE_DIVERGED, result);
         // DB was committed to EN_ROUTE
         assertEquals(TripStatus.EN_ROUTE, tripRepository.findByRequestId("REQ-LC-009").orElseThrow().getStatus());
-        // DriverState was NOT mutated — still AVAILABLE
+        // DriverState was NOT mutated - still AVAILABLE
         assertEquals(MatchStatus.AVAILABLE, state.getStatus());
     }
 
@@ -312,7 +312,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("10. Invalid transition ASSIGNED → COMPLETED — INVALID_TRANSITION; DB unchanged")
+    @DisplayName("10. Invalid transition ASSIGNED → COMPLETED - INVALID_TRANSITION; DB unchanged")
     void completeTrip_fromAssigned_invalidTransition() {
         persistAssignmentAndRegister("REQ-LC-010", "DRV-LC-010");
 
@@ -327,7 +327,7 @@ class TripLifecycleServiceIT {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("11. Re-opening a CANCELLED trip — INVALID_TRANSITION; terminal status preserved")
+    @DisplayName("11. Re-opening a CANCELLED trip - INVALID_TRANSITION; terminal status preserved")
     void beginEnRoute_afterCancelled_invalid() {
         persistAssignmentAndRegister("REQ-LC-011", "DRV-LC-011");
         service.cancelTrip("REQ-LC-011", "DRV-LC-011");
@@ -339,7 +339,7 @@ class TripLifecycleServiceIT {
     }
 
     // -------------------------------------------------------------------------
-    // Test 12: KEY TEST — Concurrent beginEnRoute: DB and DriverState consistent
+    // Test 12: KEY TEST - Concurrent beginEnRoute: DB and DriverState consistent
     // Uses NOT_SUPPORTED so each transaction actually commits.
     // -------------------------------------------------------------------------
 
@@ -347,7 +347,7 @@ class TripLifecycleServiceIT {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("12. Concurrent beginEnRoute: exactly one TRANSITIONED, DB = EN_ROUTE, DriverState = EN_ROUTE")
     void concurrentBeginEnRoute_exactlyOneWins() throws Exception {
-        // Setup: create request, assignment, trip — these commit because NOT_SUPPORTED has no ambient tx
+        // Setup: create request, assignment, trip - these commit because NOT_SUPPORTED has no ambient tx
         RideRequest req = new RideRequest("REQ-LC-CONC", new GeoPoint(17.39, 78.49));
         assignmentPersistenceService.persistRequest(req);
 
@@ -400,18 +400,18 @@ class TripLifecycleServiceIT {
 
         // DriverState reflects EN_ROUTE (updated by the winning thread)
         assertEquals(MatchStatus.EN_ROUTE, state.getStatus(),
-                "DriverState must be EN_ROUTE — the winning thread updated it after its DB commit");
+                "DriverState must be EN_ROUTE - the winning thread updated it after its DB commit");
     }
 
     // -------------------------------------------------------------------------
-    // Test 13: KEY TEST — DB rollback must NOT mutate DriverState
+    // Test 13: KEY TEST - DB rollback must NOT mutate DriverState
     // Simulates a DB failure path via an invalid transition that forces a non-commit path.
     // Uses NOT_SUPPORTED to exercise real transactions.
     // -------------------------------------------------------------------------
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    @DisplayName("13. DB non-transition (INVALID_TRANSITION) — DriverState is never mutated")
+    @DisplayName("13. DB non-transition (INVALID_TRANSITION) - DriverState is never mutated")
     void invalidTransition_driverStateNotMutated() {
         // Setup: create trip in ASSIGNED status
         assignmentPersistenceService.persistRequest(
@@ -424,15 +424,15 @@ class TripLifecycleServiceIT {
         Driver driver = new Driver("DRV-LC-ROLLBACK", new GeoPoint(17.0, 78.0), state);
         try { driverRegistry.register(driver); } catch (IllegalStateException ignored) {}
 
-        // Attempt an invalid transition (ASSIGNED → COMPLETED — not permitted)
+        // Attempt an invalid transition (ASSIGNED → COMPLETED - not permitted)
         LifecycleOutcome result = service.completeTrip("REQ-LC-ROLLBACK", "DRV-LC-ROLLBACK");
 
         assertEquals(LifecycleOutcome.INVALID_TRANSITION, result);
 
-        // DB unchanged — still ASSIGNED
+        // DB unchanged - still ASSIGNED
         assertEquals(TripStatus.ASSIGNED, tripRepository.findByRequestId("REQ-LC-ROLLBACK").orElseThrow().getStatus());
 
-        // DriverState unchanged — still CLAIMED
+        // DriverState unchanged - still CLAIMED
         assertEquals(MatchStatus.CLAIMED, state.getStatus());
         assertEquals("REQ-LC-ROLLBACK", state.getClaimedByRequestId());
     }

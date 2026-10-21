@@ -1,5 +1,5 @@
 /**
- * Phase 7D — Unit tests for the dispatch API client (services/dispatch.ts).
+ * Phase 7D - Unit tests for the dispatch API client (services/dispatch.ts).
  *
  * All tests use vi.stubGlobal('fetch', ...) to mock the global fetch.
  * No real HTTP requests are made.

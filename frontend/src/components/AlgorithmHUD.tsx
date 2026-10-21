@@ -100,7 +100,7 @@ export function AlgorithmHUD({
             aria-label={isMinimized ? 'Expand HUD' : 'Minimize HUD'}
             title={isMinimized ? 'Expand' : 'Minimize'}
           >
-            {isMinimized ? '⤢' : '—'}
+            {isMinimized ? '⤢' : ' - '}
           </button>
         </div>
       </div>
@@ -139,7 +139,7 @@ export function AlgorithmHUD({
               </div>
               <div className="algorithm-hud__metric">
                 <span className="algorithm-hud__metric-label">Candidates</span>
-                <span className="algorithm-hud__metric-val">{trace ? trace.candidates.length : '—'}</span>
+                <span className="algorithm-hud__metric-val">{trace ? trace.candidates.length : ' - '}</span>
               </div>
             </div>
 
@@ -260,7 +260,7 @@ export function AlgorithmHUD({
                         {cand.distanceKm.toFixed(1)} km
                       </span>
                       <span className="algorithm-hud__candidate-row-score">
-                        Cost: {cand.totalCost != null ? cand.totalCost.toFixed(2) : '—'}
+                        Cost: {cand.totalCost != null ? cand.totalCost.toFixed(2) : ' - '}
                       </span>
                       <span className="algorithm-hud__candidate-row-tag">PRUNED</span>
                     </div>

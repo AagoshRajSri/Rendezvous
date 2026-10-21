@@ -59,7 +59,7 @@ class AdditionalControllerTest {
     }
 
     // -------------------------------------------------------------------------
-    // 1. GlobalExceptionHandler — HTTP 500 generic exception path
+    // 1. GlobalExceptionHandler - HTTP 500 generic exception path
     // -------------------------------------------------------------------------
 
     @Test
@@ -87,7 +87,7 @@ class AdditionalControllerTest {
     }
 
     // -------------------------------------------------------------------------
-    // 2. GreedyMatcher — 16-thread claim contention on a single driver
+    // 2. GreedyMatcher - 16-thread claim contention on a single driver
     // -------------------------------------------------------------------------
 
     @Test
@@ -137,7 +137,7 @@ class AdditionalControllerTest {
     }
 
     // -------------------------------------------------------------------------
-    // 3. AUTO-mode concurrent registration fallback — same driver ID
+    // 3. AUTO-mode concurrent registration fallback - same driver ID
     // -------------------------------------------------------------------------
 
     @Test

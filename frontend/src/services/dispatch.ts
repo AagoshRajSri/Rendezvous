@@ -1,5 +1,5 @@
 /**
- * Phase 7D & Cloud Demo — Typed API client for the Rendezvous dispatch backend.
+ * Phase 7D & Cloud Demo - Typed API client for the Rendezvous dispatch backend.
  *
  * All requests go through the Vite dev proxy or Cloudflare at /api/*.
  * When deployed on static hosting without a connected backend (HTTP 405 / offline),

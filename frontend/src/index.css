@@ -1,11 +1,11 @@
 /* ============================================================
-   Global design tokens and resets — Rendezvous
+   Global design tokens and resets - Rendezvous
    ============================================================ */
 
 /* ---- Google Font already loaded via index.html link ---- */
 
 :root {
-  /* Palette — Cyber Emerald & Obsidian Titanium (bespoke luxury automotive aesthetic) */
+  /* Palette - Cyber Emerald & Obsidian Titanium (bespoke luxury automotive aesthetic) */
   --color-bg:          #070a0f;
   --color-surface:     #0d131c;
   --color-surface-alt: #121a26;

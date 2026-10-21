@@ -41,7 +41,7 @@ describe('DispatchPanel', () => {
     );
 
     expect(screen.getByText('London')).not.toBeNull();
-    expect(screen.getByText(/Demo infrastructure — unauthenticated/i)).not.toBeNull();
+    expect(screen.getByText(/Demo infrastructure - unauthenticated/i)).not.toBeNull();
     const btn = screen.getByRole('button', { name: /Request Real Dispatch/i });
     expect(btn).not.toBeNull();
 

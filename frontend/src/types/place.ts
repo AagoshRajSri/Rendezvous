@@ -1,5 +1,5 @@
 /**
- * Phase 7B — Geocoding domain types.
+ * Phase 7B - Geocoding domain types.
  *
  * PlaceSuggestion is the normalised internal representation used across the
  * application. GeocodingService is the provider interface; swap implementations
@@ -38,7 +38,7 @@ export interface PlaceSuggestion {
 
 /**
  * Result shape returned by GeocodingService.search.
- * A discriminated union — always check `status` before accessing `suggestions`
+ * A discriminated union - always check `status` before accessing `suggestions`
  * or `error`.
  */
 export type GeocodingResult =
@@ -51,7 +51,7 @@ export type GeocodingResult =
  *
  * Implementations must:
  * - Accept a query string and an AbortSignal.
- * - Return a GeocodingResult (never throw — internal errors are returned as
+ * - Return a GeocodingResult (never throw - internal errors are returned as
  *   { status: 'error' }).
  * - Respect the signal and return early without throwing on abort.
  */

@@ -26,19 +26,19 @@ import java.util.Optional;
  * Provides request-status queries and {@code /api/*} route aliases for dispatch operations.
  *
  * <h2>Request status endpoint</h2>
- * <p>{@code GET /api/requests/{requestId}} – returns the persisted dispatch status
+ * <p>{@code GET /api/requests/{requestId}} - returns the persisted dispatch status
  * for a ride request. The frontend polls this endpoint with bounded exponential
  * backoff after posting a ride request. Possible status values are:
  * <ul>
- *   <li>{@code PENDING}    – accepted and queued; matching in progress.</li>
- *   <li>{@code MATCHED}    – driver assigned; {@code driverId} is populated.</li>
- *   <li>{@code NO_DRIVERS} – terminal; no driver was available.</li>
+ *   <li>{@code PENDING} - accepted and queued; matching in progress.</li>
+ *   <li>{@code MATCHED} - driver assigned; {@code driverId} is populated.</li>
+ *   <li>{@code NO_DRIVERS} - terminal; no driver was available.</li>
  * </ul>
  * Returns HTTP 404 until the Kafka consumer persists the initial PENDING row.
  *
  * <h2>/api aliases</h2>
- * <p>{@code POST /api/request}  – thin alias for {@code POST /request} (RideController).
- * <p>{@code POST /api/register} – thin alias for {@code POST /register} (DriverController).
+ * <p>{@code POST /api/request} - thin alias for {@code POST /request} (RideController).
+ * <p>{@code POST /api/register} - thin alias for {@code POST /register} (DriverController).
  * Original routes are preserved; aliases do not replace them.
  *
  * <h2>Security disclaimer</h2>

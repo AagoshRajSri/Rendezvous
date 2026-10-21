@@ -32,7 +32,7 @@ public class RideRequestEntity {
 
     /**
      * The logical request identifier from the Kafka event.
-     * Must be unique across the table — used as the durable idempotency key.
+     * Must be unique across the table - used as the durable idempotency key.
      */
     @Column(name = "request_id", nullable = false, unique = true, length = 255)
     private String requestId;

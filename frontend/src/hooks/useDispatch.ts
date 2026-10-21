@@ -78,7 +78,7 @@ export interface UseDispatchReturn {
 }
 
 /**
- * Phase 11.3 — Frontend dispatch lifecycle hook with full trip progression.
+ * Phase 11.3 - Frontend dispatch lifecycle hook with full trip progression.
  *
  * Orchestrates:
  *   1. Register available drivers from visible fleet (POST /api/register).
@@ -649,7 +649,7 @@ async function runDispatchFlow(
     const status = statusResponse.status;
 
     if (status === 'MATCHED') {
-      // Phase 7E.2 — Extract and validate optional driver telemetry.
+      // Phase 7E.2 - Extract and validate optional driver telemetry.
       // Telemetry represents the last-known fresh fix at status-query time.
       // Null telemetry does not invalidate the match.
       const rawLat = statusResponse.driverLatitude;
@@ -743,7 +743,7 @@ function toMessage(err: unknown): string {
 }
 
 /**
- * Phase 7E.2 — Validates that raw latitude and longitude values from the
+ * Phase 7E.2 - Validates that raw latitude and longitude values from the
  * backend status response are safe to render on the map.
  *
  * Accepts:

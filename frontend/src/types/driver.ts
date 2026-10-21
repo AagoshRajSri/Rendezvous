@@ -1,5 +1,5 @@
 /**
- * Phase 7C — Simulated Driver domain types.
+ * Phase 7C - Simulated Driver domain types.
  *
  * Represents an ephemeral, locally generated simulated vehicle for map visualization.
  * No backend entity or dispatch state is associated with these simulated drivers.

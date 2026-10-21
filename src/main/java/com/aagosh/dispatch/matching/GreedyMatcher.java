@@ -408,7 +408,7 @@ public final class GreedyMatcher implements Matcher {
 
             // All candidates in this window were already claimed or unavailable.
             if (currentWindow >= totalLocations) {
-                // Exhaustive pass completed with no success — request unmatched.
+                // Exhaustive pass completed with no success - request unmatched.
                 if (tracing) {
                     try {
                         collector.recordNoDrivers(

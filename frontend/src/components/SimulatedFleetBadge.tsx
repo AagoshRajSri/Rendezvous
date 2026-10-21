@@ -64,7 +64,7 @@ export function SimulatedFleetBadge({ drivers, placeName }: SimulatedFleetBadgeP
       </div>
 
       <p className="simulated-fleet-badge__notice">
-        Synthetic data for display — not real dispatch supply
+        Synthetic data for display - not real dispatch supply
       </p>
     </aside>
   );

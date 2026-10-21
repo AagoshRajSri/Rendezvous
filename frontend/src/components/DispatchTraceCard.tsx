@@ -1,5 +1,5 @@
 /**
- * Phase 11.4E — Dispatch Trace Visualizer Component.
+ * Phase 11.4E - Dispatch Trace Visualizer Component.
  *
  * Renders an expandable accordion displaying:
  * - High-level execution summary (algorithm, timing, match outcome, fleet stats, decision).
@@ -27,7 +27,7 @@ export interface DispatchTraceCardProps {
 /** Formats nanoseconds into a human-readable duration (µs or ms). */
 export function formatTraceDuration(durationNanos: number): string {
   if (durationNanos == null || isNaN(durationNanos) || durationNanos < 0) {
-    return '—';
+    return '-';
   }
   if (durationNanos < 1_000) {
     return `${durationNanos} ns`;
@@ -41,7 +41,7 @@ export function formatTraceDuration(durationNanos: number): string {
 /** Formats a numeric cost safely. Never returns NaN. */
 export function formatTraceCost(cost: number | null | undefined): string {
   if (cost === null || cost === undefined || isNaN(cost)) {
-    return '—';
+    return '-';
   }
   return cost.toFixed(2);
 }
@@ -264,7 +264,7 @@ export function DispatchTraceCard({
                             <td>
                               <CandidateOutcomeBadge outcome={c.outcome} />
                             </td>
-                            <td className="dispatch-trace-card__cell-reason">{c.rejectionReason ?? '—'}</td>
+                            <td className="dispatch-trace-card__cell-reason">{c.rejectionReason ?? '-'}</td>
                           </tr>
                         ))}
                       </tbody>

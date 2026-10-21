@@ -174,7 +174,7 @@ public class QuadTreeBenchmark {
     // Baseline algorithms
     // -----------------------------------------------------------------------
 
-    // Baseline 1: compute every distance then sort — top-K variant.
+    // Baseline 1: compute every distance then sort - top-K variant.
     private List<GeoPoint> fullSort(GeoPoint query, int k) {
         List<Candidate> candidates = new ArrayList<>(points.size());
 
@@ -193,7 +193,7 @@ public class QuadTreeBenchmark {
                 .toList();
     }
 
-    // Baseline 2: compute every distance then sort — all points.
+    // Baseline 2: compute every distance then sort - all points.
     // Represents the cheapest correct algorithm when K = N.
     private List<GeoPoint> fullSortAll(GeoPoint query) {
         List<Candidate> candidates = new ArrayList<>(points.size());
@@ -289,7 +289,7 @@ public class QuadTreeBenchmark {
     }
 
     // -----------------------------------------------------------------------
-    // Retained original benchmarks (top-K = 10, fixed query) — unchanged
+    // Retained original benchmarks (top-K = 10, fixed query) - unchanged
     // -----------------------------------------------------------------------
 
     @Benchmark

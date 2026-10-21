@@ -143,7 +143,7 @@ export function deriveGenerationBounds(place: PlaceSuggestion): GenerationBounds
 }
 
 /**
- * Deterministically generates 12–18 stationary simulated drivers for a given place.
+ * Deterministically generates 12-18 stationary simulated drivers for a given place.
  *
  * Guarantees:
  * - Deterministic: Same place produces the exact same set of drivers every time.
@@ -161,7 +161,7 @@ export function generateDrivers(place: PlaceSuggestion | null | undefined): Simu
 
   const bounds = deriveGenerationBounds(place);
 
-  // Requirement: 12–18 simulated drivers
+  // Requirement: 12-18 simulated drivers
   const count = 12 + Math.floor(rand() * 7);
   const drivers: SimulatedDriver[] = [];
 

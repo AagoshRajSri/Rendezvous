@@ -61,7 +61,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("1. beginEnRoute: ASSIGNED → EN_ROUTE — TRANSITIONED, driver state advances to EN_ROUTE")
+    @DisplayName("1. beginEnRoute: ASSIGNED → EN_ROUTE - TRANSITIONED, driver state advances to EN_ROUTE")
     void beginEnRoute_happyPath() {
         driverState.tryClaim(REQUEST_ID);
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
@@ -79,7 +79,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("2. beginPickup: EN_ROUTE → IN_PROGRESS — TRANSITIONED, driver state advances to ON_TRIP")
+    @DisplayName("2. beginPickup: EN_ROUTE → IN_PROGRESS - TRANSITIONED, driver state advances to ON_TRIP")
     void beginPickup_happyPath() {
         driverState.tryClaim(REQUEST_ID);
         driverState.transitionToEnRoute(REQUEST_ID);
@@ -98,7 +98,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("3. completeTrip: IN_PROGRESS → COMPLETED — TRANSITIONED, driver state returns to AVAILABLE")
+    @DisplayName("3. completeTrip: IN_PROGRESS → COMPLETED - TRANSITIONED, driver state returns to AVAILABLE")
     void completeTrip_happyPath() {
         driverState.tryClaim(REQUEST_ID);
         driverState.transitionToEnRoute(REQUEST_ID);
@@ -118,7 +118,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("4. cancelTrip from ASSIGNED — TRANSITIONED, driver state returns to AVAILABLE")
+    @DisplayName("4. cancelTrip from ASSIGNED - TRANSITIONED, driver state returns to AVAILABLE")
     void cancelTrip_fromAssigned() {
         driverState.tryClaim(REQUEST_ID);
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
@@ -136,7 +136,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("5. cancelTrip from EN_ROUTE — TRANSITIONED, driver state returns to AVAILABLE")
+    @DisplayName("5. cancelTrip from EN_ROUTE - TRANSITIONED, driver state returns to AVAILABLE")
     void cancelTrip_fromEnRoute() {
         driverState.tryClaim(REQUEST_ID);
         driverState.transitionToEnRoute(REQUEST_ID);
@@ -155,7 +155,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("6. cancelTrip from IN_PROGRESS — INVALID_TRANSITION forwarded; DriverState not touched")
+    @DisplayName("6. cancelTrip from IN_PROGRESS - INVALID_TRANSITION forwarded; DriverState not touched")
     void cancelTrip_fromInProgress_rejected() {
         driverState.tryClaim(REQUEST_ID);
         driverState.transitionToEnRoute(REQUEST_ID);
@@ -176,7 +176,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("7. beginEnRoute when already EN_ROUTE — ALREADY_IN_TARGET_STATE; DriverState not re-transitioned")
+    @DisplayName("7. beginEnRoute when already EN_ROUTE - ALREADY_IN_TARGET_STATE; DriverState not re-transitioned")
     void beginEnRoute_alreadyEnRoute_idempotent() {
         driverState.tryClaim(REQUEST_ID);
         driverState.transitionToEnRoute(REQUEST_ID);
@@ -196,7 +196,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("8. cancelTrip when already CANCELLED — ALREADY_IN_TARGET_STATE; DriverState not touched")
+    @DisplayName("8. cancelTrip when already CANCELLED - ALREADY_IN_TARGET_STATE; DriverState not touched")
     void cancelTrip_alreadyCancelled_idempotent() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.CANCELLED))
@@ -212,7 +212,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("9. Trip not found — TRIP_NOT_FOUND; DriverState not touched")
+    @DisplayName("9. Trip not found - TRIP_NOT_FOUND; DriverState not touched")
     void beginEnRoute_tripNotFound() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.EN_ROUTE))
@@ -225,11 +225,11 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 10. Driver not in DriverRegistry — pre-flight guard
+    // 10. Driver not in DriverRegistry - pre-flight guard
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("10. Driver absent from DriverRegistry — DRIVER_NOT_FOUND; persistor never called")
+    @DisplayName("10. Driver absent from DriverRegistry - DRIVER_NOT_FOUND; persistor never called")
     void beginEnRoute_driverNotFound() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.empty());
 
@@ -244,7 +244,7 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("11. Ownership mismatch — OWNERSHIP_MISMATCH forwarded; DriverState not touched")
+    @DisplayName("11. Ownership mismatch - OWNERSHIP_MISMATCH forwarded; DriverState not touched")
     void beginEnRoute_ownershipMismatch() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.EN_ROUTE))
@@ -261,9 +261,9 @@ class TripLifecycleServiceTest {
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("12. DB commits EN_ROUTE but DriverState CAS fails (wrong state) — DRIVER_STATE_DIVERGED")
+    @DisplayName("12. DB commits EN_ROUTE but DriverState CAS fails (wrong state) - DRIVER_STATE_DIVERGED")
     void beginEnRoute_driverStateDiverged() {
-        // Driver is AVAILABLE — transitionToEnRoute requires CLAIMED, so CAS will fail.
+        // Driver is AVAILABLE - transitionToEnRoute requires CLAIMED, so CAS will fail.
         // driverState starts AVAILABLE (no tryClaim called).
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.EN_ROUTE))
@@ -277,11 +277,11 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 13. KEY TEST: DB commit fails (exception) — DriverState must NOT be mutated
+    // 13. KEY TEST: DB commit fails (exception) - DriverState must NOT be mutated
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("13. DB commit fails (exception from persistor) — DriverState is never mutated")
+    @DisplayName("13. DB commit fails (exception from persistor) - DriverState is never mutated")
     void beginEnRoute_dbCommitFails_driverStateNotMutated() {
         driverState.tryClaim(REQUEST_ID);
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
@@ -294,17 +294,17 @@ class TripLifecycleServiceTest {
             // expected
         }
 
-        // DriverState must remain CLAIMED — the exception fired before any DriverState update
+        // DriverState must remain CLAIMED - the exception fired before any DriverState update
         assertEquals(MatchStatus.CLAIMED, driverState.getStatus());
         assertEquals(REQUEST_ID, driverState.getClaimedByRequestId());
     }
 
     // -----------------------------------------------------------------------
-    // 14. beginPickup when skipping EN_ROUTE (ASSIGNED → IN_PROGRESS) — INVALID_TRANSITION
+    // 14. beginPickup when skipping EN_ROUTE (ASSIGNED → IN_PROGRESS) - INVALID_TRANSITION
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("14. beginPickup from ASSIGNED (skip EN_ROUTE) — INVALID_TRANSITION; DriverState not touched")
+    @DisplayName("14. beginPickup from ASSIGNED (skip EN_ROUTE) - INVALID_TRANSITION; DriverState not touched")
     void beginPickup_fromAssigned_invalid() {
         driverState.tryClaim(REQUEST_ID);
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
@@ -318,11 +318,11 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 15. completeTrip already COMPLETED — idempotent
+    // 15. completeTrip already COMPLETED - idempotent
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("15. completeTrip when already COMPLETED — ALREADY_IN_TARGET_STATE")
+    @DisplayName("15. completeTrip when already COMPLETED - ALREADY_IN_TARGET_STATE")
     void completeTrip_alreadyCompleted_idempotent() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.COMPLETED))
@@ -334,11 +334,11 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 16. cancelTrip from COMPLETED — INVALID_TRANSITION
+    // 16. cancelTrip from COMPLETED - INVALID_TRANSITION
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("16. cancelTrip from COMPLETED — INVALID_TRANSITION; DriverState not touched")
+    @DisplayName("16. cancelTrip from COMPLETED - INVALID_TRANSITION; DriverState not touched")
     void cancelTrip_fromCompleted_invalid() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.CANCELLED))
@@ -351,11 +351,11 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 17. beginEnRoute from COMPLETED — INVALID_TRANSITION
+    // 17. beginEnRoute from COMPLETED - INVALID_TRANSITION
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("17. beginEnRoute from COMPLETED — INVALID_TRANSITION")
+    @DisplayName("17. beginEnRoute from COMPLETED - INVALID_TRANSITION")
     void beginEnRoute_fromCompleted_invalid() {
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.EN_ROUTE))
@@ -367,13 +367,13 @@ class TripLifecycleServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // 18. Driver with wrong-owner claim — DRIVER_STATE_DIVERGED after DB commits
+    // 18. Driver with wrong-owner claim - DRIVER_STATE_DIVERGED after DB commits
     // -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("18. DB commits EN_ROUTE but driver CLAIMED by different request — DRIVER_STATE_DIVERGED")
+    @DisplayName("18. DB commits EN_ROUTE but driver CLAIMED by different request - DRIVER_STATE_DIVERGED")
     void beginEnRoute_driverClaimedByDifferentRequest_diverged() {
-        // Claim driver for a different request — transitionToEnRoute("REQ-UNIT-1") will fail
+        // Claim driver for a different request - transitionToEnRoute("REQ-UNIT-1") will fail
         driverState.tryClaim("DIFFERENT-REQUEST");
         when(driverRegistry.findById(DRIVER_ID)).thenReturn(Optional.of(driver));
         when(persistor.transition(REQUEST_ID, DRIVER_ID, TripStatus.EN_ROUTE))

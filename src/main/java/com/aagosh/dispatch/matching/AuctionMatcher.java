@@ -24,7 +24,7 @@ import java.util.function.Function;
 
 /**
  * Assignment optimizer implementing Bertsekas's Auction Algorithm for the
- * request–driver cost-minimization problem.
+ * request - driver cost-minimization problem.
  *
  * <h2>Objective</h2>
  * <p>Given a batch of requests and available drivers, find a feasible
@@ -59,7 +59,7 @@ import java.util.function.Function;
  * decreasing &epsilon; while carrying over object prices across phases.
  *
  * <h2>Commitment and concurrency</h2>
- * <p>The entire bidding phase operates on an in-memory index table — no
+ * <p>The entire bidding phase operates on an in-memory index table - no
  * actual claims are placed during the auction. Only after the auction
  * converges are tentative assignments committed via
  * {@link DriverState#tryClaim(String)}, which is the project's sole
@@ -227,13 +227,13 @@ public final class AuctionMatcher implements Matcher {
 
         // ------------------------------------------------------------------
         // 4. Commit tentative assignments via tryClaim().
-        //    Failures are silently dropped — the request remains unmatched.
+        //    Failures are silently dropped - the request remains unmatched.
         // ------------------------------------------------------------------
         return commitAssignments(requests, eligible, drivers, cost, costFunction, requestToDriver, R, collectorProvider, startNanos);
     }
 
     // -------------------------------------------------------------------------
-    // Phase 1 — eligibility filter
+    // Phase 1 - eligibility filter
     // -------------------------------------------------------------------------
 
     private static List<Driver> eligibleDrivers(List<Driver> drivers) {
@@ -248,7 +248,7 @@ public final class AuctionMatcher implements Matcher {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 — cost matrix construction
+    // Phase 2 - cost matrix construction
     // -------------------------------------------------------------------------
 
     private static double[][] buildCostMatrix(
@@ -279,7 +279,7 @@ public final class AuctionMatcher implements Matcher {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 3 — forward auction with epsilon-scaling
+    // Phase 3 - forward auction with epsilon-scaling
     // -------------------------------------------------------------------------
 
     private void runAuction(
@@ -383,7 +383,7 @@ public final class AuctionMatcher implements Matcher {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 4 — commitment via tryClaim
+    // Phase 4 - commitment via tryClaim
     // -------------------------------------------------------------------------
 
     private static List<Assignment> commitAssignments(
@@ -424,7 +424,7 @@ public final class AuctionMatcher implements Matcher {
                 winnerDriver = eligible.get(assignedDriverIdx);
                 winnerCost = cost[i][assignedDriverIdx];
 
-                // Atomic claim — the sole authoritative gate for concurrent safety.
+                // Atomic claim - the sole authoritative gate for concurrent safety.
                 claimSucceeded = winnerDriver.state().tryClaim(req.id());
                 if (claimSucceeded) {
                     assignments.add(new Assignment(req, winnerDriver, winnerCost));

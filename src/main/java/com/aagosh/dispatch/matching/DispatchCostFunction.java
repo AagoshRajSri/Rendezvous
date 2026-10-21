@@ -7,7 +7,7 @@ import com.aagosh.dispatch.domain.RideRequest;
 import java.util.Objects;
 
 /**
- * Weighted, normalized cost function for driver–ride-request pairings.
+ * Weighted, normalized cost function for driver - ride-request pairings.
  *
  * <h2>Formula</h2>
  * <pre>

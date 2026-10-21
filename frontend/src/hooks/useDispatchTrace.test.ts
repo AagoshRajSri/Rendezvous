@@ -1,5 +1,5 @@
 /**
- * Phase 11.4D — Unit tests for the useDispatchTrace hook.
+ * Phase 11.4D - Unit tests for the useDispatchTrace hook.
  *
  * Mocks getDispatchTrace from services/dispatch so no real HTTP requests
  * are made. Follows the same mock/renderHook/waitFor pattern as
@@ -165,7 +165,7 @@ describe('useDispatchTrace hook', () => {
       expect(result.current.state.status).toBe('ready');
     });
 
-    // Late-resolve REQ-A — must not overwrite REQ-B result
+    // Late-resolve REQ-A - must not overwrite REQ-B result
     resolveA(traceA);
 
     expect(result.current.state.trace?.requestId).toBe('REQ-B');

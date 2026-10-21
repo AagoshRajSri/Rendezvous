@@ -97,7 +97,7 @@ describe('usePlaceSearch', () => {
 
     // Trigger debounce with unique query
     act(() => { result.current.setQuery('Zz'); });
-    // Advance past debounce — fetch is now in-flight
+    // Advance past debounce - fetch is now in-flight
     await act(async () => { vi.advanceTimersByTime(300); });
 
     // Fetch is pending; state should be loading

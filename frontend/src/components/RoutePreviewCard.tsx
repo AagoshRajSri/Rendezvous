@@ -113,7 +113,7 @@ export function RoutePreviewCard({
         <div className="route-preview-card__metric">
           <span className="route-preview-card__metric-label">Fare Range</span>
           <span className="route-preview-card__metric-value">
-            {route.fares[0].currency}{route.fares[0].totalFare} – {route.fares[route.fares.length - 1].currency}{route.fares[route.fares.length - 1].totalFare}
+            {route.fares[0].currency}{route.fares[0].totalFare} - {route.fares[route.fares.length - 1].currency}{route.fares[route.fares.length - 1].totalFare}
           </span>
         </div>
       </div>

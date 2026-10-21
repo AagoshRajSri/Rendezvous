@@ -18,7 +18,7 @@ import java.util.Optional;
  * REST controller exposing read-only access to dispatch execution traces.
  *
  * <h2>Endpoint</h2>
- * <p>{@code GET /api/requests/{requestId}/trace} – returns the authentic {@link DispatchTrace}
+ * <p>{@code GET /api/requests/{requestId}/trace} - returns the authentic {@link DispatchTrace}
  * recorded during spatial search and candidate evaluation.
  *
  * <h2>Semantics & Guarantees</h2>

@@ -1,5 +1,5 @@
 /**
- * Phase 11.4E — Unit tests for DispatchTraceCard component.
+ * Phase 11.4E - Unit tests for DispatchTraceCard component.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -71,16 +71,16 @@ describe('DispatchTraceCard formatters', () => {
     expect(formatTraceDuration(500)).toBe('500 ns');
     expect(formatTraceDuration(25_000)).toBe('25.0 µs');
     expect(formatTraceDuration(2_500_000)).toBe('2.50 ms');
-    expect(formatTraceDuration(NaN)).toBe('—');
-    expect(formatTraceDuration(-10)).toBe('—');
+    expect(formatTraceDuration(NaN)).toBe('-');
+    expect(formatTraceDuration(-10)).toBe('-');
   });
 
   it('formats cost safely without ever outputting NaN', () => {
     expect(formatTraceCost(1.7)).toBe('1.70');
     expect(formatTraceCost(0)).toBe('0.00');
-    expect(formatTraceCost(null)).toBe('—');
-    expect(formatTraceCost(undefined)).toBe('—');
-    expect(formatTraceCost(NaN)).toBe('—');
+    expect(formatTraceCost(null)).toBe('-');
+    expect(formatTraceCost(undefined)).toBe('-');
+    expect(formatTraceCost(NaN)).toBe('-');
   });
 });
 
@@ -186,7 +186,7 @@ describe('DispatchTraceCard component', () => {
     // Candidate 2 with null costs
     expect(screen.getByText('DRV-2')).not.toBeNull();
     expect(screen.getByText('1.20 km')).not.toBeNull();
-    expect(screen.getByText('— / — / —')).not.toBeNull();
+    expect(screen.getByText('- / - / -')).not.toBeNull();
     expect(screen.getByText('OUTCOMPETED')).not.toBeNull();
     expect(screen.getByText('Higher total cost than winner')).not.toBeNull();
 

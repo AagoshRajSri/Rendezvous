@@ -681,7 +681,7 @@ public class AssignmentPersistenceService {
             log.info("Concurrent insert for ride request {} hit unique constraint; treating as duplicate", requestId);
             return PersistOutcome.DUPLICATE;
         }
-        log.error("DataIntegrityViolationException persisting ride request {} — genuine failure: {}",
+        log.error("DataIntegrityViolationException persisting ride request {} - genuine failure: {}",
                 requestId, ex.getMessage(), ex);
         return PersistOutcome.FAILURE;
     }
@@ -694,7 +694,7 @@ public class AssignmentPersistenceService {
             log.info("Concurrent insert for assignment {} hit unique constraint; treating as duplicate", requestId);
             return PersistOutcome.DUPLICATE;
         }
-        log.error("DataIntegrityViolationException persisting assignment for request {} — genuine failure: {}",
+        log.error("DataIntegrityViolationException persisting assignment for request {} - genuine failure: {}",
                 requestId, ex.getMessage(), ex);
         return PersistOutcome.FAILURE;
     }

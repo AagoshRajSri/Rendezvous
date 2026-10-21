@@ -7,9 +7,9 @@ import java.time.Instant;
  *
  * <h2>Status values</h2>
  * <ul>
- *   <li>{@code PENDING}    – the request has been received and is awaiting matching.</li>
- *   <li>{@code MATCHED}    – a driver was successfully assigned (see {@link #driverId}).</li>
- *   <li>{@code NO_DRIVERS} – no available driver was found at processing time (terminal).</li>
+ *   <li>{@code PENDING} - the request has been received and is awaiting matching.</li>
+ *   <li>{@code MATCHED} - a driver was successfully assigned (see {@link #driverId}).</li>
+ *   <li>{@code NO_DRIVERS} - no available driver was found at processing time (terminal).</li>
  * </ul>
  *
  * <p>{@code driverId} is populated only when {@code status} is {@code MATCHED}.

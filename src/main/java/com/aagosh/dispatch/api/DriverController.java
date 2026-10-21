@@ -167,9 +167,9 @@ public class DriverController {
      *
      * <p>HTTP status:
      * <ul>
-     *   <li>200 – driver known and location is fresh.</li>
-     *   <li>404 – driver not registered.</li>
-     *   <li>409 – driver registered but location is stale, absent, or unverified.</li>
+     *   <li>200 - driver known and location is fresh.</li>
+     *   <li>404 - driver not registered.</li>
+     *   <li>409 - driver registered but location is stale, absent, or unverified.</li>
      * </ul>
      *
      * <p>Compatible URL aliases:

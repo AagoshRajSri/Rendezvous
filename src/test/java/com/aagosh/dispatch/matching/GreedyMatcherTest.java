@@ -179,7 +179,7 @@ class GreedyMatcherTest {
             preClaimed.add(d);
         }
 
-        // 18th driver — just beyond the initial window — is available.
+        // 18th driver - just beyond the initial window - is available.
         Driver available = new Driver(
                 "D18",
                 new GeoPoint(17.018, 78.0),

@@ -52,7 +52,7 @@ class DispatchCostFunctionTest {
     }
 
     // =========================================================================
-    // DispatchCostConfig — validation
+    // DispatchCostConfig - validation
     // =========================================================================
 
     @Test
@@ -104,7 +104,7 @@ class DispatchCostFunctionTest {
 
     @Test
     void configAcceptsZeroDensityRadius() {
-        // Zero radius is valid — no nearby requests will ever be found.
+        // Zero radius is valid - no nearby requests will ever be found.
         assertDoesNotThrow(() ->
                 new DispatchCostConfig(1.0, 1.0, 1.0, 60.0, 0.5, 0.0, 10.0));
     }
@@ -174,7 +174,7 @@ class DispatchCostFunctionTest {
     void etaFormulaIsDistanceOverSpeedOverMaxEta() {
         // Construct a config where we can derive the expected value manually.
         // avgSpeedKmh = 100, maxEtaHours = 2.0, wEta = 1, wDensity = 0 (not
-        // possible — must be > 0), so use tiny density radius = 0 to zero out
+        // possible - must be > 0), so use tiny density radius = 0 to zero out
         // the density contribution. wOpportunity irrelevant (opportunity = 0).
         DispatchCostConfig config = new DispatchCostConfig(
                 2.0,   // wEta
@@ -360,7 +360,7 @@ class DispatchCostFunctionTest {
                 new RideRequest("R3", loc)
         ));
 
-        // All 3 should be counted — multiplicity is preserved.
+        // All 3 should be counted - multiplicity is preserved.
         int count = index.countNearby(loc, 0.0);
         assertEquals(3, count,
                 "multiple requests at the same location must all be counted");
@@ -532,7 +532,7 @@ class DispatchCostFunctionTest {
     }
 
     // =========================================================================
-    // RequestDensityIndex — contract validation
+    // RequestDensityIndex - contract validation
     // =========================================================================
 
     @Test
@@ -578,7 +578,7 @@ class DispatchCostFunctionTest {
     }
 
     // =========================================================================
-    // DispatchCostFunction — null input rejection
+    // DispatchCostFunction - null input rejection
     // =========================================================================
 
     @Test

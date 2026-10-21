@@ -1,5 +1,5 @@
 /**
- * Phase 7B — SearchBar component.
+ * Phase 7B - SearchBar component.
  *
  * Implements the WAI-ARIA 1.2 Combobox pattern (without select-only mode):
  * - role="combobox" on the input
@@ -9,10 +9,10 @@
  * - aria-expanded reflects open/closed state
  *
  * Keyboard bindings:
- *   ArrowDown / ArrowUp — navigate suggestions
- *   Enter               — select active suggestion (or first if none active)
- *   Escape              — first: dismiss dropdown; second: clear query
- *   Tab                 — dismiss without selecting
+ *   ArrowDown / ArrowUp - navigate suggestions
+ *   Enter - select active suggestion (or first if none active)
+ *   Escape - first: dismiss dropdown; second: clear query
+ *   Tab - dismiss without selecting
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
@@ -29,7 +29,7 @@ export interface SearchBarProps {
   onClear: () => void;
   onRetry: () => void;
   onSelect: (place: PlaceSuggestion, target?: SearchTarget) => void;
-  /** Whether the map is ready — hides the bar until the globe is interactive. */
+  /** Whether the map is ready - hides the bar until the globe is interactive. */
   mapReady: boolean;
   /** Phase 11.1: Active search target (defaults to 'pickup') */
   activeTarget?: SearchTarget;

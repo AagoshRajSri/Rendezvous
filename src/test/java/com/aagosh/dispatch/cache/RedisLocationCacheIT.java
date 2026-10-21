@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>Equal timestamp rejection</li>
  *   <li>Strictly newer update acceptance</li>
  *   <li>Key TTL expiry (30-second window verified with short actual TTL in a fast-path check)</li>
- *   <li>Concurrent writes — final value must be the one with the highest timestamp</li>
+ *   <li>Concurrent writes - final value must be the one with the highest timestamp</li>
  * </ul>
  *
  * <p>These tests are skipped when Docker is not available
@@ -185,11 +185,11 @@ class RedisLocationCacheIT {
         assertNotNull(drainedTtl);
         assertTrue(drainedTtl <= 10, "TTL must be <= 10 after manual drain");
 
-        redisLocationCache.updateLocation("D6", 18.0, 79.0, 2000L); // newer — accepted
+        redisLocationCache.updateLocation("D6", 18.0, 79.0, 2000L); // newer - accepted
 
         Long ttl = redisTemplate.getExpire(key, TimeUnit.SECONDS);
         assertNotNull(ttl);
-        // Should be reset close to 30 again — allow 2 seconds grace
+        // Should be reset close to 30 again - allow 2 seconds grace
         assertTrue(ttl > 27, "Accepted update must reset TTL close to 30s, was: " + ttl);
     }
 

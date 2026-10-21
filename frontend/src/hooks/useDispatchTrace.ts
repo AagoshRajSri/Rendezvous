@@ -1,5 +1,5 @@
 /**
- * Phase 11.4D — React hook for fetching the read-only dispatch execution trace.
+ * Phase 11.4D - React hook for fetching the read-only dispatch execution trace.
  *
  * Fetches GET /api/requests/{requestId}/trace and exposes the result through a
  * stable state contract that consumers can react to without managing cancellation
@@ -15,12 +15,12 @@ import { getDispatchTrace } from '../services/dispatch';
 /**
  * Loading and outcome status for the dispatch trace hook.
  *
- * idle       – No valid requestId supplied; no request has been sent.
- * loading    – Fetch is in flight.
- * ready      – Trace successfully retrieved; state.trace is populated.
- * not_found  – Backend returned HTTP 404 (trace not yet generated,
+ * idle - No valid requestId supplied; no request has been sent.
+ * loading - Fetch is in flight.
+ * ready - Trace successfully retrieved; state.trace is populated.
+ * not_found - Backend returned HTTP 404 (trace not yet generated,
  *              expired, or evicted from the in-memory cache).
- * error      – Network failure or non-404 server error; state.errorMessage is set.
+ * error - Network failure or non-404 server error; state.errorMessage is set.
  */
 export type DispatchTraceStatus = 'idle' | 'loading' | 'ready' | 'not_found' | 'error';
 

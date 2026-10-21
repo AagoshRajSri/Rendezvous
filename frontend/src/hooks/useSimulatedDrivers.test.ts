@@ -29,7 +29,7 @@ describe('useSimulatedDrivers', () => {
     expect(result.current).toEqual([]);
   });
 
-  it('generates 12–18 drivers when a place is selected', () => {
+  it('generates 12-18 drivers when a place is selected', () => {
     const { result } = renderHook(() => useSimulatedDrivers(PLACE_A));
     expect(result.current.length).toBeGreaterThanOrEqual(12);
     expect(result.current.length).toBeLessThanOrEqual(18);

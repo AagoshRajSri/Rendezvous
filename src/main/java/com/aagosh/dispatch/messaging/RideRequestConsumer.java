@@ -55,7 +55,7 @@ import java.util.function.Function;
  *   <li>Re-validate to guard against events published outside the REST layer.</li>
  *   <li>Check the in-memory idempotency set (fast path, avoids DB round-trip).</li>
  *   <li>Persist a {@code PENDING} ride-request row. A duplicate-key outcome means
- *       the request was previously committed — skip matching.</li>
+ *       the request was previously committed - skip matching.</li>
  *   <li>Build a {@link RideRequest} domain object and take a driver snapshot.</li>
  *   <li>Invoke the configured {@link Matcher} via its {@link Matcher#match} method.</li>
  *   <li>If an assignment is present, persist it. On database failure, release the

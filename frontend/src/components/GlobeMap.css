@@ -1,5 +1,5 @@
 /* ============================================================
-   GlobeMap — map container + overlay states
+   GlobeMap - map container + overlay states
    ============================================================ */
 
 /* ---- Map viewport: fills everything below the header ---- */
@@ -16,7 +16,7 @@
   background: var(--color-bg);
 }
 
-/* MapLibre attribution — keep visible but style to match dark theme */
+/* MapLibre attribution - keep visible but style to match dark theme */
 .globe-map__container .maplibregl-ctrl-attrib {
   background: rgba(8, 11, 18, 0.75) !important;
   color: var(--color-text-muted) !important;

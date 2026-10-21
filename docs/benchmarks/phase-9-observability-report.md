@@ -20,10 +20,10 @@ The primary objective was to measure the runtime and latency overhead introduced
 | :--- | :---: | :---: | :---: | :---: |
 | **Ingestion Latency (p99)** | $28\text{ ms}$ | **$26\text{ ms}$** | $< 80\text{ ms}$ | **PASS** |
 | **Ingestion Latency (p95)** | $24\text{ ms}$ | **$24\text{ ms}$** | $< 40\text{ ms}$ | **PASS** |
-| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | **$15.15\text{ ms}$** | — | **$+0.21\text{ ms}$ overhead** |
+| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | **$15.15\text{ ms}$** | - | **$+0.21\text{ ms}$ overhead** |
 | **Dispatch Latency (p99)** | $70\text{ ms}$ | **$66\text{ ms}$** | $< 250\text{ ms}$ | **PASS** |
 | **Dispatch Latency (p95)** | $64\text{ ms}$ | **$63\text{ ms}$** | $< 150\text{ ms}$ | **PASS** |
-| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | **$54.61\text{ ms}$** | — | **$+0.06\text{ ms}$ overhead** |
+| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | **$54.61\text{ ms}$** | - | **$+0.06\text{ ms}$ overhead** |
 | **Ingestion Availability** | $100.00\%$ | **$100.00\%$** (4,424 / 4,424) | $\ge 99.9\%$ | **PASS** |
 | **Dispatch Failures / Timeouts** | $0$ | **$0$** | $0$ | **PASS** |
 | **Durable Ingestion Persistence** | $100.00\%$ | **$100.00\%$** (+4,424 rows) | $100\%$ | **PASS** |
@@ -124,10 +124,10 @@ The table below contrasts the Phase 8 baseline (un-instrumented baseline) with P
 | Metric | Phase 8 Baseline | Phase 9.5 Observed | Delta | Operational SLA |
 | :--- | :---: | :---: | :---: | :---: |
 | **Ingestion Availability (202)** | 100.00% (4,424/4,424) | 100.00% (4,424/4,424) | $0.00\%$ | $\ge 99.9\%$ |
-| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | $15.15\text{ ms}$ | $+0.21\text{ ms}$ | — |
+| **Ingestion Latency (Mean)** | $14.94\text{ ms}$ | $15.15\text{ ms}$ | $+0.21\text{ ms}$ | - |
 | **Ingestion Latency (p95)** | $24\text{ ms}$ | $24\text{ ms}$ | $0\text{ ms}$ | $< 40\text{ ms}$ |
 | **Ingestion Latency (p99)** | $28\text{ ms}$ | $26\text{ ms}$ | $-2\text{ ms}$ | $< 80\text{ ms}$ |
-| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | $54.61\text{ ms}$ | $+0.06\text{ ms}$ | — |
+| **Dispatch Latency (Mean)** | $54.55\text{ ms}$ | $54.61\text{ ms}$ | $+0.06\text{ ms}$ | - |
 | **Dispatch Latency (p95)** | $64\text{ ms}$ | $63\text{ ms}$ | $-1\text{ ms}$ | $< 150\text{ ms}$ |
 | **Dispatch Latency (p99)** | $70\text{ ms}$ | $66\text{ ms}$ | $-4\text{ ms}$ | $< 250\text{ ms}$ |
 | **Dispatch Failures** | 0 | 0 | 0 | 0 |

@@ -55,7 +55,7 @@ interface DispatchPanelProps {
 }
 
 /**
- * Phase 11.3 — Real dispatch action & driver tracking panel with full trip lifecycle.
+ * Phase 11.3 - Real dispatch action & driver tracking panel with full trip lifecycle.
  */
 function formatValidTime(isoString: string | null | undefined): string | null {
   if (!isoString) return null;
@@ -118,7 +118,7 @@ export function DispatchPanel({
   const formattedFixTime = formatValidTime(matchedDriverLocationAt);
   const formattedUpdateTime = formatValidTime(updatedAt);
 
-  // Phase 11.4F — Single-fetch dispatch trace lifted to App, with fallback for backward compatibility
+  // Phase 11.4F - Single-fetch dispatch trace lifted to App, with fallback for backward compatibility
   const internalTrace = useDispatchTrace(propTraceState ? null : requestId);
   const traceState = propTraceState ?? internalTrace.state;
   const refreshTrace = onRefreshTrace ?? internalTrace.refresh;
@@ -158,10 +158,10 @@ export function DispatchPanel({
             : placeName}
         </div>
 
-        {/* Disclaimer — always visible unless completed */}
+        {/* Disclaimer - always visible unless completed */}
         {phase !== 'completed' && (
           <p className="dispatch-panel__disclaimer">
-            Demo infrastructure — unauthenticated. Driver IDs are not verified identities.
+            Demo infrastructure - unauthenticated. Driver IDs are not verified identities.
           </p>
         )}
 
