@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 64" fill="none">
+  <defs>
+    <radialGradient id="glowR" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f1f5f9" />
+    </linearGradient>
+    <filter id="vectorGlow" x="-20%" y="-20%" width="140%" height="140%" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="2.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Ambient Glow Behind Logo Mark -->
+  <circle cx="36" cy="34" r="26" fill="url(#glowR)" />
+
+  <!-- Mark Icon Group -->
+  <g transform="translate(10, 8) scale(1.5)">
+    <!-- Vertical Spine -->
+    <rect x="4" y="5" width="4" height="22" rx="2" fill="#ffffff" />
+    <!-- Loop -->
+    <path
+      d="M8 7 H19 C23.5 7 26.5 10 26.5 14 C26.5 18 23.5 21 19 21 H8"
+      stroke="#ffffff"
+      stroke-width="3.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <!-- Emerald Dispatch Diagonal Route -->
+    <path
+      d="M17 19 L26.5 27"
+      stroke="#10b981"
+      stroke-width="3.5"
+      stroke-linecap="round"
+      filter="url(#vectorGlow)"
+    />
+    <!-- Dispatch Nexus Point -->
+    <circle cx="26.5" cy="27" r="2.5" fill="#34d399" filter="url(#vectorGlow)" />
+  </g>
+
+  <!-- Typography: Wordmark -->
+  <text
+    x="74"
+    y="35"
+    fill="url(#textGrad)"
+    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif"
+    font-size="24"
+    font-weight="700"
+    letter-spacing="4px"
+  >
+    RENDEZVOUS
+  </text>
+
+  <!-- Typography: Tagline -->
+  <text
+    x="76"
+    y="49"
+    fill="#10b981"
+    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif"
+    font-size="9"
+    font-weight="600"
+    letter-spacing="3.5px"
+    opacity="0.95"
+  >
+    RIDE DISPATCH PLATFORM
+  </text>
+</svg>

@@ -1,0 +1,9 @@
+{
+  "name": "rendezvous",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rendezvous Ride Dispatch Platform",
+  "scripts": {
+    "build": "node -e \"const { execSync } = require('child_process'); execSync('npm install && npm run build', { cwd: 'frontend', stdio: 'inherit' }); const fs = require('fs'); fs.cpSync('frontend/dist', 'dist', { recursive: true });\""
+  }
+}

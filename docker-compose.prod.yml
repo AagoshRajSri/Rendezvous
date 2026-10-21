@@ -1,0 +1,112 @@
+# =============================================================================
+# Production Docker Compose for Rendezvous Dispatch Platform
+# =============================================================================
+# Suitable for deployment on any server/VM (e.g., Oracle Cloud Always Free 24GB ARM,
+# local homelab, or single Linux droplet).
+# =============================================================================
+
+services:
+  # ── Durable Data Store: PostgreSQL 16 ───────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rendezvous-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dispatch_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dispatch_password}
+      POSTGRES_DB: ${POSTGRES_DB:-dispatch_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dispatch_user} -d ${POSTGRES_DB:-dispatch_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rendezvous-net
+
+  # ── Location Cache: Redis 7 ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rendezvous-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rendezvous-net
+
+  # ── Event Streaming: Apache Kafka (KRaft mode, zero ZooKeeper) ───────────────
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: rendezvous-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+    networks:
+      - rendezvous-net
+
+  # ── Core Service: Spring Boot 4 / Java 17 Dispatch Backend ───────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rendezvous-backend
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-dispatch_db}?options=-c%20timezone=UTC
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-dispatch_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-dispatch_password}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: ""
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JAVA_OPTS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - rendezvous-net
+
+  # ── Edge / UI: Nginx + React 19 Frontend ─────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rendezvous-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - rendezvous-net
+
+networks:
+  rendezvous-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
