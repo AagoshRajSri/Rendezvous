@@ -1,0 +1,237 @@
+name: Performance Gate — Dispatch p99 Latency Contract
+
+# =============================================================================
+# This workflow enforces latency as a strict, measurable CI contract.
+# A PR that regresses the p99 dispatch latency beyond 100ms CANNOT merge.
+#
+# The gate:
+#   1. Starts infrastructure via docker-compose (Kafka, Postgres, Redis).
+#   2. Builds & launches the Spring Boot backend.
+#   3. Seeds 200 drivers and runs k6 at 60 req/s for 90 seconds.
+#   4. k6 exits with code 99 if p99 dispatch_latency > 100ms.
+#   5. The workflow step fails, blocking the PR.
+# =============================================================================
+
+on:
+  pull_request:
+    branches: ["main"]
+  # Allow manual trigger for on-demand benchmarking.
+  workflow_dispatch:
+    inputs:
+      dispatch_base_url:
+        description: "Override dispatch base URL (default: http://localhost:8080)"
+        required: false
+        default: "http://localhost:8080"
+
+jobs:
+  performance-gate:
+    name: "k6 Dispatch Performance Gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # -------------------------------------------------------------------------
+      # 1. Checkout repository
+      # -------------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # 2. Set up JDK 17 (Temurin) with Maven cache
+      # -------------------------------------------------------------------------
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+
+      # -------------------------------------------------------------------------
+      # 3. Install k6 load testing tool
+      # -------------------------------------------------------------------------
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+
+      # -------------------------------------------------------------------------
+      # 4. Start infrastructure (Kafka, PostgreSQL, Redis, Prometheus, Grafana)
+      # -------------------------------------------------------------------------
+      - name: Start infrastructure services
+        env:
+          GRAFANA_ADMIN_PASSWORD: "ci-grafana-secret"
+        run: |
+          docker compose up -d postgres redis kafka
+          echo "Waiting for services to be healthy..."
+          # Wait for Postgres
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U dispatch_user -d dispatch_db; then
+              echo "PostgreSQL is ready."
+              break
+            fi
+            echo "PostgreSQL not ready yet ($i/30)..."
+            sleep 2
+          done
+          # Wait for Kafka
+          for i in $(seq 1 30); do
+            if docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:9092 --list 2>/dev/null; then
+              echo "Kafka is ready."
+              break
+            fi
+            echo "Kafka not ready yet ($i/30)..."
+            sleep 2
+          done
+
+      # -------------------------------------------------------------------------
+      # 5. Build the Spring Boot application (skip tests for speed)
+      # -------------------------------------------------------------------------
+      - name: Build Spring Boot application
+        run: ./mvnw -B clean package -DskipTests -q
+
+      # -------------------------------------------------------------------------
+      # 6. Launch Spring Boot backend in background
+      # -------------------------------------------------------------------------
+      - name: Start Rendezvous backend
+        env:
+          SPRING_DATASOURCE_URL: "jdbc:postgresql://localhost:5434/dispatch_db?options=-c%20timezone=UTC"
+          SPRING_DATASOURCE_USERNAME: dispatch_user
+          SPRING_DATASOURCE_PASSWORD: dispatch_password
+          SPRING_REDIS_HOST: localhost
+          SPRING_REDIS_PORT: "6380"
+          SPRING_REDIS_PASSWORD: ""
+          SPRING_KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
+          GRAFANA_ADMIN_PASSWORD: "ci-grafana-secret"
+        run: |
+          java -jar target/dispatch-0.0.1-SNAPSHOT.jar \
+            --server.port=8080 \
+            --spring.kafka.listener.auto-startup=true &
+          echo "Backend PID: $!"
+          echo "BACKEND_PID=$!" >> $GITHUB_ENV
+
+          # Wait until actuator health reports UP.
+          echo "Waiting for Spring Boot to start..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend is healthy (HTTP 200)."
+              break
+            fi
+            echo "Backend not ready yet (attempt $i/60, HTTP $STATUS)..."
+            sleep 2
+          done
+
+          # Final health check — fail fast if the backend didn't start.
+          curl -f http://localhost:8080/actuator/health || \
+            (echo "ERROR: Backend failed to start." && exit 1)
+
+      # -------------------------------------------------------------------------
+      # 7. Run the k6 performance gate
+      # -------------------------------------------------------------------------
+      - name: Run k6 performance gate
+        id: k6_gate
+        env:
+          DISPATCH_BASE_URL: ${{ github.event.inputs.dispatch_base_url || 'http://localhost:8080' }}
+        run: |
+          echo "Starting k6 performance gate..."
+          echo "Target: p99 dispatch_latency <= 100ms"
+          echo "Load:   60 req/s sustained for 75s (~4,500 requests)"
+          echo "================================================"
+
+          # Run k6 and capture exit code.
+          k6 run \
+            --out json=k6-results.json \
+            -e DISPATCH_BASE_URL="${DISPATCH_BASE_URL}" \
+            tests/k6-dispatch-stress.js
+          K6_EXIT=$?
+
+          echo "k6 exit code: ${K6_EXIT}"
+          echo "K6_EXIT_CODE=${K6_EXIT}" >> $GITHUB_ENV
+
+          # k6 exits with 99 if any threshold (including the p99 gate) is violated.
+          if [ "${K6_EXIT}" -ne 0 ]; then
+            echo "::error::PERFORMANCE GATE FAILED: p99 dispatch latency exceeded 100ms."
+            echo "::error::Review k6-results.json for the exact percentile distribution."
+            exit 1
+          fi
+
+          echo "PERFORMANCE GATE PASSED: All dispatch latency thresholds within contract."
+
+      # -------------------------------------------------------------------------
+      # 8. Extract and summarize k6 results (runs even on failure)
+      # -------------------------------------------------------------------------
+      - name: Extract k6 summary metrics
+        if: always()
+        run: |
+          if [ -f k6-results.json ]; then
+            echo "## k6 Performance Gate Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Extract dispatch_latency p95 and p99 from the JSON summary.
+            P99=$(jq -r '
+              select(.type == "Point" and .metric == "dispatch_latency")
+              | .data.value
+            ' k6-results.json 2>/dev/null | \
+              awk 'BEGIN{n=0; s=0} {a[n++]=$1; s+=$1}
+                   END{
+                     if(n==0){print "N/A"; exit}
+                     asort(a);
+                     idx=int(n*0.99);
+                     print a[idx] " ms"
+                   }' || echo "N/A")
+
+            INGESTION_FAIL=$(jq -r '
+              select(.type == "Point" and .metric == "http_req_failed")
+              | .data.value
+            ' k6-results.json 2>/dev/null | awk '{s+=$1; n++} END{if(n>0) printf "%.4f", s/n; else print "N/A"}' || echo "N/A")
+
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Dispatch p99 Latency | ${P99} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Ingestion Failure Rate | ${INGESTION_FAIL} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Gate Status | ${{ steps.k6_gate.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::warning::k6-results.json not found. Was k6 run successfully?"
+          fi
+
+      # -------------------------------------------------------------------------
+      # 9. Upload k6 results as workflow artifact
+      # -------------------------------------------------------------------------
+      - name: Upload k6 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-performance-gate-results
+          path: k6-results.json
+          retention-days: 30
+
+      # -------------------------------------------------------------------------
+      # 10. Upload backend logs for debugging if gate failed
+      # -------------------------------------------------------------------------
+      - name: Collect backend logs on failure
+        if: failure()
+        run: |
+          echo "Backend logs (last 200 lines):"
+          kill -0 "${BACKEND_PID}" 2>/dev/null && \
+            journalctl --user -n 200 2>/dev/null || \
+            echo "(Backend process already stopped)"
+
+      # -------------------------------------------------------------------------
+      # 11. Cleanup
+      # -------------------------------------------------------------------------
+      - name: Stop backend and infrastructure
+        if: always()
+        run: |
+          # Stop the Spring Boot backend
+          if [ -n "${BACKEND_PID}" ]; then
+            kill "${BACKEND_PID}" 2>/dev/null || true
+          fi
+          # Stop Docker Compose services
+          docker compose down -v --remove-orphans 2>/dev/null || true

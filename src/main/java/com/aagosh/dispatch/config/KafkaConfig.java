@@ -6,8 +6,11 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,11 +23,12 @@ import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
-import org.springframework.util.backoff.FixedBackOff;
+import org.springframework.util.backoff.ExponentialBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -33,24 +37,53 @@ import java.util.Map;
  * Spring Kafka infrastructure configuration.
  *
  * <h2>Topics</h2>
- * <p>Declares {@link NewTopic} beans for {@value KafkaTopics#DRIVER_PINGS} and
- * {@value KafkaTopics#RIDE_REQUESTS}. {@link KafkaAdmin} creates these topics on startup
- * if absent (single partition, replication factor 1, appropriate for local development).
+ * <p>Declares {@link NewTopic} beans for {@value KafkaTopics#DRIVER_PINGS},
+ * {@value KafkaTopics#RIDE_REQUESTS}, and {@value KafkaTopics#DISPATCH_FAILURES_DLQ}.
+ * {@link KafkaAdmin} creates these topics on startup if absent.
  *
  * <h2>Acknowledgement mode</h2>
  * <p>Containers use {@link ContainerProperties.AckMode#MANUAL_IMMEDIATE} so that offset
  * commits happen only after the consumer method has returned successfully.
  *
- * <h2>Error handling</h2>
- * <p>A {@link DefaultErrorHandler} with a {@link FixedBackOff} of 2 retries at 1-second
- * intervals is installed.
+ * <h2>Error handling — Exponential Backoff + Dead Letter Queue</h2>
+ * <p>A {@link DefaultErrorHandler} is installed on both listener container factories with:
+ * <ul>
+ *   <li><strong>Exponential backoff:</strong> Retries up to {@value #DLQ_MAX_ATTEMPTS} times,
+ *       starting at {@value #DLQ_INITIAL_INTERVAL_MS} ms and doubling on each attempt (capped at
+ *       {@value #DLQ_MAX_INTERVAL_MS} ms). This gives the transient failure (e.g., a momentarily
+ *       unavailable DB or matching-engine exception) time to self-heal before being declared
+ *       unrecoverable.</li>
+ *   <li><strong>Dead Letter Queue:</strong> After all retries are exhausted, the
+ *       {@link DeadLetterPublishingRecoverer} routes the failing message to
+ *       {@value KafkaTopics#DISPATCH_FAILURES_DLQ}. The DLQ message preserves the original
+ *       record key, value bytes, and all headers (including the serialized exception cause),
+ *       enabling forensic analysis and deterministic replay.</li>
+ * </ul>
+ *
+ * <h2>DLQ routing strategy</h2>
+ * <p>The recoverer's destination resolver maps every failed record to partition 0 of the DLQ
+ * (single-partition, single-shard) regardless of the original topic. Driver-ping failures are
+ * typically non-critical (stale location update) and are intentionally also routed to the DLQ
+ * so that operators have a unified dead-letter inbox.
  */
 @Configuration
 @EnableKafka
 public class KafkaConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(KafkaConfig.class);
+
     private static final int TOPIC_PARTITIONS = 1;
     private static final short TOPIC_REPLICATION = 1;
+
+    // ---- Exponential Backoff + DLQ configuration ----
+    /** Maximum number of delivery attempts before routing to the DLQ. */
+    public static final int DLQ_MAX_ATTEMPTS = 3;
+    /** Initial backoff interval in milliseconds before the first retry. */
+    public static final long DLQ_INITIAL_INTERVAL_MS = 1_000L;
+    /** Backoff multiplier applied to each successive retry interval. */
+    public static final double DLQ_MULTIPLIER = 2.0;
+    /** Maximum backoff interval — caps exponential growth to 10 seconds. */
+    public static final long DLQ_MAX_INTERVAL_MS = 10_000L;
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
@@ -87,6 +120,16 @@ public class KafkaConfig {
     @Bean
     public NewTopic rideRequestsTopic() {
         return new NewTopic(KafkaTopics.RIDE_REQUESTS, TOPIC_PARTITIONS, TOPIC_REPLICATION);
+    }
+
+    /**
+     * Dead Letter Queue topic for failed ride-request dispatch events.
+     * Retention is set to 30 days (2,592,000,000 ms) to allow forensic replay.
+     */
+    @Bean
+    public NewTopic dispatchFailuresDlqTopic() {
+        return new NewTopic(KafkaTopics.DISPATCH_FAILURES_DLQ, TOPIC_PARTITIONS, TOPIC_REPLICATION)
+                .configs(Map.of("retention.ms", "2592000000"));
     }
 
     // -------------------------------------------------------------------------
@@ -143,9 +186,57 @@ public class KafkaConfig {
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
+    /**
+     * Builds the exponential-backoff error handler with DLQ routing.
+     *
+     * <p>On the first failure, waits {@value #DLQ_INITIAL_INTERVAL_MS} ms before retry 1.
+     * On the second failure, waits {@code 1000 × 2.0 = 2000} ms. After
+     * {@value #DLQ_MAX_ATTEMPTS} total attempts, the message is published to
+     * {@value KafkaTopics#DISPATCH_FAILURES_DLQ} via the
+     * {@link DeadLetterPublishingRecoverer}.
+     *
+     * @param kafkaTemplate the shared producer template used by the recoverer to publish
+     *                      failed records to the DLQ
+     * @return a fully configured {@link DefaultErrorHandler}
+     */
+    @Bean
+    public DefaultErrorHandler dlqErrorHandler(KafkaTemplate<String, Object> kafkaTemplate) {
+        // Route every exhausted failure to partition 0 of the DLQ, regardless of source topic.
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                kafkaTemplate,
+                (record, exception) -> {
+                    log.error(
+                            "[DLQ] Routing failed record to '{}'. topic={}, partition={}, offset={}, key={}, cause={}",
+                            KafkaTopics.DISPATCH_FAILURES_DLQ,
+                            record.topic(), record.partition(), record.offset(), record.key(),
+                            exception.getClass().getSimpleName() + ": " + exception.getMessage()
+                    );
+                    return new TopicPartition(KafkaTopics.DISPATCH_FAILURES_DLQ, 0);
+                });
+
+        // Exponential backoff: 1s → 2s → 4s (3 attempts total, max 10s cap).
+        ExponentialBackOff backOff = new ExponentialBackOff(DLQ_INITIAL_INTERVAL_MS, DLQ_MULTIPLIER);
+        backOff.setMaxAttempts(DLQ_MAX_ATTEMPTS);
+        backOff.setMaxInterval(DLQ_MAX_INTERVAL_MS);
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+
+        // Log the retry attempt at WARN level so Prometheus alert rules can detect
+        // elevated retry rates without waiting for the DLQ to be populated.
+        errorHandler.setRetryListeners((record, ex, deliveryAttempt) ->
+                log.warn("[RetryListener] Retry attempt {}/{} for record topic={}, offset={}, cause={}",
+                        deliveryAttempt, DLQ_MAX_ATTEMPTS,
+                        record.topic(), record.offset(),
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage())
+        );
+
+        return errorHandler;
+    }
+
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
-            ConsumerFactory<String, Object> consumerFactory) {
+            ConsumerFactory<String, Object> consumerFactory,
+            DefaultErrorHandler dlqErrorHandler) {
 
         ConcurrentKafkaListenerContainerFactory<String, Object> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
@@ -155,16 +246,16 @@ public class KafkaConfig {
         // Commit offsets only after successful processing.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
-        // Retry twice at 1-second intervals; then log and skip.
-        factory.setCommonErrorHandler(
-                new DefaultErrorHandler(new FixedBackOff(1_000L, 2L)));
+        // Exponential backoff with DLQ routing after exhaustion.
+        factory.setCommonErrorHandler(dlqErrorHandler);
 
         return factory;
     }
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> batchKafkaListenerContainerFactory(
-            ConsumerFactory<String, Object> consumerFactory) {
+            ConsumerFactory<String, Object> consumerFactory,
+            DefaultErrorHandler dlqErrorHandler) {
 
         ConcurrentKafkaListenerContainerFactory<String, Object> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
@@ -176,9 +267,8 @@ public class KafkaConfig {
         // Commit offsets only after successful processing.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
-        // Retry twice at 1-second intervals; then log and skip.
-        factory.setCommonErrorHandler(
-                new DefaultErrorHandler(new FixedBackOff(1_000L, 2L)));
+        // Exponential backoff with DLQ routing after exhaustion.
+        factory.setCommonErrorHandler(dlqErrorHandler);
 
         return factory;
     }

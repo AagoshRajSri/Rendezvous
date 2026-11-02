@@ -1,0 +1,144 @@
+# =============================================================================
+# PostgreSQL 16 — StatefulSet + PVC + ClusterIP Service
+# =============================================================================
+# State persists across pod restarts via a 10 Gi PVC backed by the cluster's
+# default StorageClass (hostPath on Minikube, gp3 on EKS, etc.)
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: rendezvous
+  labels:
+    app: postgres
+    tier: datastore
+data:
+  POSTGRES_DB: dispatch_db
+  POSTGRES_USER: dispatch_user
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: rendezvous
+  labels:
+    app: postgres
+    tier: datastore
+type: Opaque
+stringData:
+  # Override in production with sealed-secrets or external secrets operator.
+  POSTGRES_PASSWORD: "dispatch_password"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: rendezvous
+  labels:
+    app: postgres
+    tier: datastore
+    version: "16"
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: datastore
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgres
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - secretRef:
+                name: postgres-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dispatch_user
+                - -d
+                - dispatch_db
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dispatch_user
+                - -d
+                - dispatch_db
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+        labels:
+          app: postgres
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+# Headless service for StatefulSet DNS resolution (postgres-0.postgres-headless)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: rendezvous
+  labels:
+    app: postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+---
+# ClusterIP service — backend connects to postgres:5432 inside the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: rendezvous
+  labels:
+    app: postgres
+    tier: datastore
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres

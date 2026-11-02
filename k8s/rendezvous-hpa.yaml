@@ -1,0 +1,73 @@
+# =============================================================================
+# HorizontalPodAutoscaler — Rendezvous Dispatch Backend
+# =============================================================================
+# Scales between 2 (base for redundancy) and 5 replicas based on CPU.
+# - Target CPU: 70% — matches the p95 dispatch latency constraint.
+#   At 70% CPU across all pods, Kafka consumers still have headroom to absorb
+#   burst batches without latency spikes.
+# - ScaleUp: rapid — a 60-second burst window with 2-pod max increment allows
+#   quick response to sudden request spikes.
+# - ScaleDown: conservative — 5-minute stabilization window prevents flapping
+#   caused by the bursty nature of Kafka consumer batch processing.
+#
+# Prerequisites: Metrics Server must be running in the cluster.
+#   minikube addons enable metrics-server
+#   or: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# =============================================================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rendezvous-hpa
+  namespace: rendezvous
+  labels:
+    app: rendezvous
+    tier: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rendezvous
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    # Primary scaling signal: CPU utilization across all pods.
+    # The Bertsekas auction algorithm and QuadTree spatial search are CPU-bound;
+    # CPU is the most meaningful proxy for dispatch throughput saturation.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Secondary signal: Memory utilization.
+    # The in-memory DriverRegistry grows with fleet size; prevent OOM evictions.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      # Stabilize over 60 seconds to avoid over-provisioning on short bursts.
+      stabilizationWindowSeconds: 60
+      policies:
+        # Allow adding up to 2 replicas per 60-second window.
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+        # Or a 50% increase, whichever is larger — for rapid scale from 2→4.
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+      # Use the most aggressive (Max) policy during scale-up.
+      selectPolicy: Max
+    scaleDown:
+      # 5-minute stabilization prevents replica thrashing during Kafka batch lulls.
+      stabilizationWindowSeconds: 300
+      policies:
+        # Remove at most 1 replica per 120 seconds on scale-down.
+        - type: Pods
+          value: 1
+          periodSeconds: 120

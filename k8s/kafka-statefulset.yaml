@@ -1,0 +1,247 @@
+# =============================================================================
+# Apache Kafka 3.7.0 (KRaft, zero ZooKeeper) — StatefulSet + PVC + Service
+# =============================================================================
+# Runs as a combined broker+controller node (KRaft mode).
+# Topics are auto-created by Spring Boot KafkaAdmin on app startup.
+# Includes the dispatch-failures-dlq topic creation in a separate config job.
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+  namespace: rendezvous
+  labels:
+    app: kafka
+    tier: streaming
+data:
+  KAFKA_NODE_ID: "1"
+  KAFKA_PROCESS_ROLES: "broker,controller"
+  KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+  KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+  KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-0.kafka-headless.rendezvous.svc.cluster.local:9093"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+  # Retention: 7 days for operational topics
+  KAFKA_LOG_RETENTION_HOURS: "168"
+  # DLQ messages are smaller and less frequent — retain for 30 days for forensics
+  KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "300000"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: rendezvous
+  labels:
+    app: kafka
+    tier: streaming
+    version: "3.7.0"
+spec:
+  serviceName: kafka-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+        tier: streaming
+    spec:
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        # KRaft requires a cluster ID formatted into the storage before first boot.
+        - name: kafka-init
+          image: apache/kafka:3.7.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              CLUSTER_ID_FILE=/var/kafka-data/cluster-id
+              if [ ! -f "${CLUSTER_ID_FILE}" ]; then
+                echo "Initializing KRaft storage..."
+                # Generate a stable cluster ID and persist it so restarts reuse it
+                CLUSTER_ID=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | head -c 22 | base64 | tr '+/' '-_' | tr -d '=')
+                /opt/kafka/bin/kafka-storage.sh format \
+                  --config /opt/kafka/config/kraft/server.properties \
+                  --cluster-id "${CLUSTER_ID}" \
+                  --ignore-formatted
+                echo "${CLUSTER_ID}" > "${CLUSTER_ID_FILE}"
+                echo "KRaft storage initialized with cluster ID: ${CLUSTER_ID}"
+              else
+                echo "KRaft storage already initialized. Skipping format."
+              fi
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/kafka-data
+      containers:
+        - name: kafka
+          image: apache/kafka:3.7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9092
+              name: kafka-client
+            - containerPort: 9093
+              name: kafka-control
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/kafka-data
+            - name: kafka-logs
+              mountPath: /tmp/kraft-combined-logs
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+        labels:
+          app: kafka
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+    - metadata:
+        name: kafka-logs
+        labels:
+          app: kafka
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+# Headless service required for StatefulSet stable DNS (kafka-0.kafka-headless...)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: rendezvous
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+      name: kafka-client
+    - port: 9093
+      targetPort: 9093
+      name: kafka-controller
+---
+# ClusterIP service for in-cluster bootstrap address (kafka:9092)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: rendezvous
+  labels:
+    app: kafka
+    tier: streaming
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+      name: kafka-client
+---
+# =============================================================================
+# Job: Ensure DLQ topic exists after Kafka is live.
+# Spring KafkaAdmin will create driver-pings and ride-requests on startup,
+# but the DLQ is created here explicitly so it persists with correct retention.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: rendezvous
+  labels:
+    app: kafka-init
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: kafka-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-topic-init
+          image: apache/kafka:3.7.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Kafka to be ready..."
+              until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list; do
+                echo "Kafka not ready yet, retrying in 5s..."
+                sleep 5
+              done
+
+              echo "Creating dispatch-failures-dlq topic..."
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --create \
+                --if-not-exists \
+                --topic dispatch-failures-dlq \
+                --partitions 1 \
+                --replication-factor 1 \
+                --config retention.ms=2592000000
+
+              echo "Creating driver-pings topic..."
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --create \
+                --if-not-exists \
+                --topic driver-pings \
+                --partitions 1 \
+                --replication-factor 1
+
+              echo "Creating ride-requests topic..."
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --create \
+                --if-not-exists \
+                --topic ride-requests \
+                --partitions 1 \
+                --replication-factor 1
+
+              echo "Topic initialization complete. Listing all topics:"
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list

@@ -1,0 +1,303 @@
+# =============================================================================
+# Prometheus Alerting Rules — Rendezvous Dispatch Platform
+# =============================================================================
+# These rules are loaded by Prometheus from the alert_rules_files entry in
+# prometheus.yml. Add this file path to prometheus.yml:
+#
+#   rule_files:
+#     - "/etc/prometheus/alert.rules.yml"
+#
+# Severity levels follow the PagerDuty/OpsGenie convention:
+#   critical  — page the on-call engineer immediately
+#   warning   — alert the team channel; investigate within 15 minutes
+#   info      — informational; no human action required
+#
+# All alerts carry a `runbook_url` annotation pointing to ops/RUNBOOK.md.
+# =============================================================================
+
+groups:
+
+  # ===========================================================================
+  # Group 1: Kafka Consumer Lag
+  # ===========================================================================
+  # Consumer lag is the most important operational metric for this platform.
+  # A growing lag means the matching engine is falling behind ingest rate,
+  # which will translate to increased dispatch latency for end users.
+  # ===========================================================================
+  - name: kafka_consumer_lag
+    interval: 30s
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Alert: KafkaConsumerLagHigh
+      # Fires when the dispatch consumer group is more than 1,000 messages
+      # behind the producer (ride-requests topic). At 60 req/s ingestion this
+      # represents ~16 seconds of backlog — a user-visible latency impact.
+      # -----------------------------------------------------------------------
+      - alert: KafkaConsumerLagHigh
+        expr: |
+          sum(kafka_consumer_group_lag{
+            consumergroup="dispatch-service",
+            topic="ride-requests"
+          }) by (consumergroup, topic) > 1000
+        for: 2m
+        labels:
+          severity: critical
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "Kafka consumer lag critical: {{ $value }} messages behind"
+          description: |
+            Consumer group 'dispatch-service' on topic 'ride-requests' is
+            {{ $value | humanize }} messages behind the latest offset.
+            At 60 req/s this represents backlog beyond normal processing tolerance.
+            Dispatch latency for riders is increasing.
+            
+            Immediate action required. See runbook:
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#kafkaconsumerlaghigh"
+
+      # -----------------------------------------------------------------------
+      # Alert: KafkaConsumerLagWarning
+      # Early warning at 300 messages — investigate before it becomes critical.
+      # -----------------------------------------------------------------------
+      - alert: KafkaConsumerLagWarning
+        expr: |
+          sum(kafka_consumer_group_lag{
+            consumergroup="dispatch-service",
+            topic="ride-requests"
+          }) by (consumergroup, topic) > 300
+        for: 3m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "Kafka consumer lag elevated: {{ $value }} messages behind"
+          description: |
+            Consumer group 'dispatch-service' on topic 'ride-requests' lag is
+            {{ $value | humanize }}. This is an early warning — investigate before
+            the lag exceeds 1,000 (critical threshold).
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#kafkaconsumerlaghigh"
+
+      # -----------------------------------------------------------------------
+      # Alert: KafkaDlqMessagesGrowing
+      # DLQ messages should be rare. A sustained rate of >1 msg/min means
+      # the matching engine is experiencing systematic failures.
+      # -----------------------------------------------------------------------
+      - alert: KafkaDlqMessagesGrowing
+        expr: |
+          rate(kafka_topic_messages_in_per_sec{
+            topic="dispatch-failures-dlq"
+          }[5m]) * 60 > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "DLQ receiving messages at {{ $value | humanizeDuration }}/min"
+          description: |
+            The dispatch-failures-dlq is receiving more than 1 message/minute.
+            This indicates persistent matching engine failures that are exhausting
+            the exponential-backoff retry policy (3 attempts, 1s→2s→4s).
+            Investigate: DB connectivity, Matcher logic exceptions, OOM conditions.
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#kafkadlqmessagesgrowing"
+
+  # ===========================================================================
+  # Group 2: API Error Rates
+  # ===========================================================================
+  - name: api_error_rates
+    interval: 30s
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Alert: HighApiErrorRate
+      # Fires when 5xx errors exceed 1% of all HTTP requests over a 2-minute
+      # window. Spring Boot's Micrometer automatically records
+      # http_server_requests_seconds_count with an outcome label.
+      # -----------------------------------------------------------------------
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{
+              application="dispatch",
+              outcome="SERVER_ERROR"
+            }[2m])) by (application)
+          ) /
+          (
+            sum(rate(http_server_requests_seconds_count{
+              application="dispatch"
+            }[2m])) by (application)
+          ) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "API 5xx error rate {{ $value | humanizePercentage }} over last 2 minutes"
+          description: |
+            The Rendezvous dispatch API is returning 5xx errors at
+            {{ $value | humanizePercentage }} of requests (threshold: 1%).
+            
+            Common causes:
+              - Kafka broker unreachable (KafkaPublishException → 503)
+              - PostgreSQL pool exhausted or connection timeout
+              - Unhandled exception in the matching engine
+            
+            Check /actuator/health and application logs immediately.
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#highapierrorrate"
+
+      # -----------------------------------------------------------------------
+      # Alert: DispatchLatencyP99Degraded
+      # Fires when Micrometer-measured p99 for POST /request exceeds 80ms.
+      # This is a leading indicator of consumer lag or DB pressure.
+      # -----------------------------------------------------------------------
+      - alert: DispatchLatencyP99Degraded
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_server_requests_seconds_bucket{
+              application="dispatch",
+              uri=~"^/request|/api/request$",
+              method="POST"
+            }[5m])) by (le)
+          ) * 1000 > 80
+        for: 3m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "POST /request p99 latency degraded: {{ $value | humanize }}ms"
+          description: |
+            Ingestion endpoint p99 latency is {{ $value | humanize }}ms (threshold: 80ms).
+            This measures only the HTTP→Kafka path (should be <40ms at baseline).
+            A high value indicates Kafka producer backpressure or broker I/O saturation.
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#highapierrorrate"
+
+  # ===========================================================================
+  # Group 3: Database Health
+  # ===========================================================================
+  - name: database_health
+    interval: 60s
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Alert: PostgresConnectionExhaustion
+      # Spring Boot Actuator exposes HikariCP pool metrics via Micrometer.
+      # Fires when active connections reach 90% of the max pool size, giving
+      # the on-call engineer a window to act before threads start blocking.
+      #
+      # The default HikariCP max pool size is 10 in Spring Boot.
+      # Adjust `dispatch_postgres_pool_max` if you override the pool size.
+      # -----------------------------------------------------------------------
+      - alert: PostgresConnectionExhaustion
+        expr: |
+          (
+            hikaricp_connections_active{application="dispatch"}
+          ) /
+          (
+            hikaricp_connections_max{application="dispatch"}
+          ) > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "PostgreSQL connection pool at {{ $value | humanizePercentage }} utilization"
+          description: |
+            HikariCP active connections are {{ $value | humanizePercentage }} of max capacity.
+            
+            At 100% utilization, new requests requiring DB access will block until a
+            connection is returned, causing cascading latency spikes across the dispatch pipeline.
+            
+            Immediate actions:
+              1. Check for slow queries or lock contention: SELECT * FROM pg_stat_activity;
+              2. Verify no long-running transactions are holding connections.
+              3. Consider increasing spring.datasource.hikari.maximum-pool-size (default: 10).
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#postgresconnectionexhaustion"
+
+      # -----------------------------------------------------------------------
+      # Alert: PostgresConnectionPoolWarning
+      # Early warning at 70% utilization. Investigate before reaching critical.
+      # -----------------------------------------------------------------------
+      - alert: PostgresConnectionPoolWarning
+        expr: |
+          (
+            hikaricp_connections_active{application="dispatch"}
+          ) /
+          (
+            hikaricp_connections_max{application="dispatch"}
+          ) > 0.70
+        for: 5m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "PostgreSQL connection pool at {{ $value | humanizePercentage }} (70% threshold)"
+          description: |
+            HikariCP connection utilization is elevated at {{ $value | humanizePercentage }}.
+            Review query performance and connection lifecycle before saturation.
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#postgresconnectionexhaustion"
+
+      # -----------------------------------------------------------------------
+      # Alert: PostgresFlywaySchemaDrift
+      # Fires if Flyway migration count differs from the expected baseline (3).
+      # Unexpected schema changes could indicate unauthorized DDL operations.
+      # -----------------------------------------------------------------------
+      - alert: PostgresFlywaySchemaDrift
+        expr: |
+          flyway_migrations_count{state="success", application="dispatch"} != 3
+        for: 5m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "Flyway migration count unexpected: {{ $value }} (expected 3)"
+          description: |
+            The number of successful Flyway migrations has changed from the expected
+            baseline of 3 (V1: ride_requests, V2: assignments, V3: trips).
+            
+            A count of 4+ indicates a new migration was applied. A count of <3 or
+            pending migrations indicates a failed or rolled-back migration.
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md#postgresconnectionexhaustion"
+
+  # ===========================================================================
+  # Group 4: JVM & System Health
+  # ===========================================================================
+  - name: jvm_health
+    interval: 60s
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Alert: JvmHeapPressureHigh
+      # Fires when JVM heap used / committed exceeds 85% for 5 minutes.
+      # The in-memory DriverRegistry can grow unboundedly under fleet expansion.
+      # -----------------------------------------------------------------------
+      - alert: JvmHeapPressureHigh
+        expr: |
+          (
+            jvm_memory_used_bytes{application="dispatch", area="heap"}
+          ) /
+          (
+            jvm_memory_committed_bytes{application="dispatch", area="heap"}
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform-sre
+          service: rendezvous-dispatch
+        annotations:
+          summary: "JVM heap pressure at {{ $value | humanizePercentage }}"
+          description: |
+            JVM heap utilization exceeds 85%. This may be caused by:
+              - DriverRegistry growth (large fleet size)
+              - In-memory idempotency LRU cache at capacity (10,000 entries)
+              - Memory leak in QuadTree or matching cost matrix allocation
+            
+            If GC pause times are increasing, consider increasing -Xmx or
+            deploying an additional replica (HPA should handle this automatically).
+          runbook_url: "https://github.com/AagoshRajSri/Rendezvous/blob/main/ops/RUNBOOK.md"

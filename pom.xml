@@ -204,8 +204,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
                 <configuration>
-                    <classifier>exec</classifier>
                     <jvmArguments>-Duser.timezone=UTC</jvmArguments>
                 </configuration>
             </plugin>

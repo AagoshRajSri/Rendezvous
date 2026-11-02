@@ -45,3 +45,8 @@ frontend/.env.*.local
 .env
 *.env
 !.env.example
+
+### Logs & Test Outputs ###
+*.log
+k6-results*.json
+
