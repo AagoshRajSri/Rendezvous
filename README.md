@@ -133,7 +133,7 @@ graph TD
     SVC_NODE --> POD2
     POD1 <--> T_PING
     POD1 <--> T_RIDE
-    POD1 -.->|Exhausted Failures (3 Retries)| T_DLQ
+    POD1 -.->|Exhausted Failures after 3 Retries| T_DLQ
     POD1 <--> PG_STS
     POD1 <--> REDIS_STS
     PROM -->|Pull Metrics| POD1
