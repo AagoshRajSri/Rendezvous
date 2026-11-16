@@ -1,7 +1,6 @@
 package com.aagosh.dispatch.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -12,16 +11,18 @@ import java.util.Optional;
 /**
  * Spring Data repository for {@link RideRequestEntity}.
  *
- * <p>The {@link #existsByRequestId(String)} query is used by
- * {@link AssignmentPersistenceService} to distinguish a duplicate-key violation
- * (already persisted) from a genuine database failure after a
- * {@link org.springframework.dao.DataIntegrityViolationException}.
+ * <p>Supports lookups by {@code requestId} and durable idempotency lookups
+ * by {@code idempotencyKey}.
  */
 public interface RideRequestRepository extends JpaRepository<RideRequestEntity, Long> {
 
     Optional<RideRequestEntity> findByRequestId(String requestId);
 
+    Optional<RideRequestEntity> findByIdempotencyKey(String idempotencyKey);
+
     boolean existsByRequestId(String requestId);
+
+    boolean existsByIdempotencyKey(String idempotencyKey);
 
     @Query("SELECT r.requestId FROM RideRequestEntity r WHERE r.requestId IN :requestIds AND r.status IN :statuses")
     List<String> findRequestIdsByRequestIdInAndStatusIn(

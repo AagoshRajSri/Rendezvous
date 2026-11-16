@@ -209,4 +209,67 @@ class RideControllerTest {
                 .andExpect(jsonPath("$.message").value(
                         "Event could not be published; the message broker is temporarily unavailable"));
     }
+
+    @Test
+    @DisplayName("6. Blank Idempotency-Key header returns HTTP 400 Bad Request")
+    void blankIdempotencyKeyReturnsBadRequest() throws Exception {
+        String requestJson = """
+                {
+                    "requestId": "REQ-BLANK",
+                    "latitude": 17.3860,
+                    "longitude": 78.4870
+                }
+                """;
+
+        mockMvc.perform(post("/request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", "   ")
+                        .content(requestJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Idempotency-Key header must not be blank"));
+    }
+
+    @Test
+    @DisplayName("7. Oversized Idempotency-Key header (>128 chars) returns HTTP 400 Bad Request")
+    void oversizedIdempotencyKeyReturnsBadRequest() throws Exception {
+        String requestJson = """
+                {
+                    "requestId": "REQ-OVER",
+                    "latitude": 17.3860,
+                    "longitude": 78.4870
+                }
+                """;
+
+        String oversizedKey = "K".repeat(129);
+
+        mockMvc.perform(post("/request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", oversizedKey)
+                        .content(requestJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Idempotency-Key header must not exceed 128 characters"));
+    }
+
+    @Test
+    @DisplayName("8. Valid Idempotency-Key header publishes to Kafka and returns HTTP 202")
+    void validIdempotencyKeyHeaderAccepted() throws Exception {
+        setupSuccessfulSend();
+
+        String requestJson = """
+                {
+                    "requestId": "REQ-VALID-IDEM",
+                    "latitude": 17.3860,
+                    "longitude": 78.4870
+                }
+                """;
+
+        mockMvc.perform(post("/request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", "unique-key-12345")
+                        .content(requestJson))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.requestId").value("REQ-VALID-IDEM"));
+    }
 }

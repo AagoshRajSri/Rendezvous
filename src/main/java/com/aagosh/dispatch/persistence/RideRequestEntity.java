@@ -12,15 +12,15 @@ import java.time.Instant;
 /**
  * JPA entity mirroring the {@code ride_requests} table.
  *
- * <p>One row is inserted for every ride-request event consumed from Kafka.
+ * <p>One row is inserted for every ride-request event consumed from Kafka or
+ * accepted at the API boundary with an {@code Idempotency-Key}.
  * The {@code requestId} column carries a {@code UNIQUE} database constraint,
- * which acts as the durable idempotency guard: a re-insert of an already-seen
- * request surfaces as a {@link org.springframework.dao.DataIntegrityViolationException}
- * that the persistence service distinguishes from a genuine write failure.
+ * and {@code idempotencyKey} carries a {@code UNIQUE} constraint across non-null
+ * values, which acts as the durable API-level idempotency guard.
  *
  * <p>Status values: {@code PENDING} (no driver matched yet), {@code MATCHED}
- * (an assignment row exists), {@code NO_DRIVER} (no available driver at the
- * time of processing).
+ * (an assignment row exists), {@code NO_DRIVER} / {@code NO_DRIVERS} (no available
+ * driver at the time of processing).
  */
 @Entity
 @Table(name = "ride_requests")
@@ -49,6 +49,13 @@ public class RideRequestEntity {
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
+    /**
+     * Client-supplied idempotency key (header {@code Idempotency-Key}).
+     * Unique across all non-null rows in PostgreSQL.
+     */
+    @Column(name = "idempotency_key", unique = true, length = 128)
+    private String idempotencyKey;
+
     @Column(name = "received_at", nullable = false, updatable = false)
     private Instant receivedAt;
 
@@ -59,12 +66,17 @@ public class RideRequestEntity {
     protected RideRequestEntity() {}
 
     public RideRequestEntity(String requestId, double pickupLat, double pickupLon, String status) {
-        this.requestId  = requestId;
-        this.pickupLat  = pickupLat;
-        this.pickupLon  = pickupLon;
-        this.status     = status;
-        this.receivedAt = Instant.now();
-        this.updatedAt  = this.receivedAt;
+        this(requestId, pickupLat, pickupLon, status, null);
+    }
+
+    public RideRequestEntity(String requestId, double pickupLat, double pickupLon, String status, String idempotencyKey) {
+        this.requestId      = requestId;
+        this.pickupLat      = pickupLat;
+        this.pickupLon      = pickupLon;
+        this.status         = status;
+        this.idempotencyKey = idempotencyKey;
+        this.receivedAt     = Instant.now();
+        this.updatedAt      = this.receivedAt;
     }
 
     // ---- Accessors ----
@@ -74,11 +86,17 @@ public class RideRequestEntity {
     public double getPickupLat() { return pickupLat; }
     public double getPickupLon() { return pickupLon; }
     public String getStatus() { return status; }
+    public String getIdempotencyKey() { return idempotencyKey; }
     public Instant getReceivedAt() { return receivedAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
     public void setStatus(String status) {
         this.status    = status;
         this.updatedAt = Instant.now();
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+        this.updatedAt      = Instant.now();
     }
 }
