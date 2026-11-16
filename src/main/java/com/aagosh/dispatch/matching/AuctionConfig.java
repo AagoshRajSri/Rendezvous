@@ -27,6 +27,11 @@ package com.aagosh.dispatch.matching;
  * algorithm converges, remaining unassigned requests are left unmatched.
  * The default of {@code 100_000} is conservative for batches up to a few
  * thousand requests.
+ *
+ * <h2>Spatial candidate pruning</h2>
+ * <p>To prevent O(R × D) compute and memory explosion, candidate drivers for
+ * each request can be spatially bounded to {@code maxDispatchRadiusKm} and
+ * capped at {@code maxCandidatesPerRequest}.
  */
 public record AuctionConfig(
         /**
@@ -42,12 +47,38 @@ public record AuctionConfig(
          * algorithm does not converge within this many rounds, unassigned
          * requests are left unmatched.
          */
-        int maxRounds
+        int maxRounds,
+
+        /**
+         * Maximum spatial dispatch radius in kilometres for candidate driver
+         * pruning. Can be {@link Double#POSITIVE_INFINITY} for dense matching.
+         * Must be strictly positive.
+         */
+        double maxDispatchRadiusKm,
+
+        /**
+         * Maximum number of candidate drivers considered per ride request.
+         * Must be a strictly positive integer.
+         */
+        int maxCandidatesPerRequest
 ) {
 
-    /** Conservative defaults: epsilon=1e-6, maxRounds=100_000. */
+    /** Default: dense baseline with unbounded radius and unlimited candidates. */
     public static final AuctionConfig DEFAULT =
-            new AuctionConfig(1e-6, 100_000);
+            new AuctionConfig(1e-6, 100_000, Double.POSITIVE_INFINITY, Integer.MAX_VALUE);
+
+    /** Dense baseline: infinite radius and unlimited candidates. */
+    public static final AuctionConfig DENSE =
+            new AuctionConfig(1e-6, 100_000, Double.POSITIVE_INFINITY, Integer.MAX_VALUE);
+
+    /** Spatially-pruned configuration: strict 10.0 km radius and max 50 candidates per request. */
+    public static final AuctionConfig SPARSE =
+            new AuctionConfig(1e-6, 100_000, 10.0, 50);
+
+    /** Backwards-compatible 2-argument constructor defaulting to unbounded radius and candidates. */
+    public AuctionConfig(double epsilon, int maxRounds) {
+        this(epsilon, maxRounds, Double.POSITIVE_INFINITY, Integer.MAX_VALUE);
+    }
 
     public AuctionConfig {
         if (!Double.isFinite(epsilon) || epsilon <= 0) {
@@ -58,6 +89,16 @@ public record AuctionConfig(
         if (maxRounds <= 0) {
             throw new IllegalArgumentException(
                     "maxRounds must be strictly positive, got: " + maxRounds
+            );
+        }
+        if (Double.isNaN(maxDispatchRadiusKm) || maxDispatchRadiusKm <= 0.0) {
+            throw new IllegalArgumentException(
+                    "maxDispatchRadiusKm must be strictly positive (or POSITIVE_INFINITY), got: " + maxDispatchRadiusKm
+            );
+        }
+        if (maxCandidatesPerRequest <= 0) {
+            throw new IllegalArgumentException(
+                    "maxCandidatesPerRequest must be strictly positive, got: " + maxCandidatesPerRequest
             );
         }
     }

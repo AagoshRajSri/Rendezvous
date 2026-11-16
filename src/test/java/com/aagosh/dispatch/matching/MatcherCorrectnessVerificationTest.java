@@ -93,6 +93,88 @@ public class MatcherCorrectnessVerificationTest {
         }
     }
 
+    @Test
+    @DisplayName("Verify sparse candidate-pruned auction satisfies all invariants and spatial radius bounds")
+    void verifySparseAuctionCorrectnessAndInvariants() {
+        int[] requestCounts = {1, 5, 20, 50};
+        int[] driverCounts = {50, 200, 1000};
+
+        AuctionMatcher sparseMatcher = new AuctionMatcher(AuctionConfig.SPARSE);
+
+        for (int R : requestCounts) {
+            for (int D : driverCounts) {
+                Random random = new Random(42 + R * 31 + D);
+                double centerLat = 40.7128;
+                double centerLon = -74.0060;
+
+                List<Driver> drivers = new ArrayList<>(D);
+                for (int i = 0; i < D; i++) {
+                    double lat = centerLat + (random.nextGaussian() * 0.05);
+                    double lon = centerLon + (random.nextGaussian() * 0.05);
+                    drivers.add(new Driver("d-" + i, new GeoPoint(lat, lon), new DriverState()));
+                }
+
+                List<RideRequest> requests = new ArrayList<>(R);
+                for (int i = 0; i < R; i++) {
+                    double lat = centerLat + (random.nextGaussian() * 0.05);
+                    double lon = centerLon + (random.nextGaussian() * 0.05);
+                    requests.add(new RideRequest("req-" + i, new GeoPoint(lat, lon)));
+                }
+
+                DispatchCostFunction costFn = new DispatchCostFunction(DispatchCostConfig.DEFAULT, requests);
+
+                List<Assignment> sparseAssignments = sparseMatcher.match(requests, drivers, costFn);
+
+                // Verify core invariants
+                Set<String> assignedRequests = new HashSet<>();
+                Set<String> assignedDrivers = new HashSet<>();
+
+                for (Assignment a : sparseAssignments) {
+                    // Uniqueness
+                    assertTrue(assignedRequests.add(a.request().id()), "Request assigned twice: " + a.request().id());
+                    assertTrue(assignedDrivers.add(a.driver().id()), "Driver assigned twice: " + a.driver().id());
+
+                    // Claim invariant
+                    assertEquals(MatchStatus.CLAIMED, a.driver().state().getStatus(), "Driver must be in CLAIMED status");
+                    assertEquals(a.request().id(), a.driver().state().getClaimedByRequestId(), "Driver must be claimed by request ID");
+
+                    // Cost validity
+                    assertTrue(Double.isFinite(a.cost()), "Cost must be finite");
+                    assertTrue(a.cost() >= 0.0, "Cost must be non-negative");
+
+                    // Spatial distance bound: driver must be within dispatch radius
+                    double distKm = a.driver().location().distanceToKm(a.request().pickupLocation());
+                    assertTrue(distKm <= AuctionConfig.SPARSE.maxDispatchRadiusKm() + 1e-4,
+                            String.format("Assigned driver %s is %.2f km away, exceeding max radius %.2f km",
+                                    a.driver().id(), distKm, AuctionConfig.SPARSE.maxDispatchRadiusKm()));
+
+                    // Release claim
+                    assertTrue(a.driver().state().releaseClaim(a.request().id()));
+                }
+
+                System.out.printf("[SPARSE VERIFIED R=%2d, D=%4d] Matched=%2d/%d requests within 10.0km radius%n",
+                        R, D, sparseAssignments.size(), R);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Verify requests outside dispatch radius are safely unmatched without errors")
+    void verifyRequestsOutsideRadiusRemainSafelyUnassigned() {
+        AuctionMatcher sparseMatcher = new AuctionMatcher(AuctionConfig.SPARSE);
+
+        // Driver in NYC
+        Driver d1 = new Driver("d-nyc", new GeoPoint(40.7128, -74.0060), new DriverState());
+        // Rider in Philadelphia (approx 130 km away, far beyond 10 km radius)
+        RideRequest r1 = new RideRequest("r-philly", new GeoPoint(39.9526, -75.1652));
+
+        DispatchCostFunction costFn = new DispatchCostFunction(DispatchCostConfig.DEFAULT, List.of(r1));
+        List<Assignment> assignments = sparseMatcher.match(List.of(r1), List.of(d1), costFn);
+
+        assertTrue(assignments.isEmpty(), "Out-of-range request must not be matched to distant driver");
+        assertEquals(MatchStatus.AVAILABLE, d1.state().getStatus(), "Driver must remain AVAILABLE");
+    }
+
     private void assertValidAssignments(
             String algorithm,
             List<Assignment> assignments,

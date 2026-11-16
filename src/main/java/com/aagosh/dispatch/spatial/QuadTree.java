@@ -372,6 +372,44 @@ public final class QuadTree {
      * @throws IllegalArgumentException if {@code radiusKm} is negative or
      *                                  non-finite
      */
+    public List<GeoPoint> findWithinRadius(GeoPoint center, double radiusKm) {
+        Objects.requireNonNull(center, "center");
+
+        if (!Double.isFinite(radiusKm) || radiusKm < 0) {
+            throw new IllegalArgumentException(
+                    "radiusKm must be finite and non-negative, got: " + radiusKm
+            );
+        }
+
+        List<GeoPoint> result = new ArrayList<>();
+        collectWithinRadius(center, radiusKm, result);
+        return result;
+    }
+
+    private void collectWithinRadius(
+            GeoPoint center,
+            double radiusKm,
+            List<GeoPoint> result
+    ) {
+        if (minimumPossibleDistanceKm(center) > radiusKm) {
+            return;
+        }
+
+        if (northWest == null) {
+            for (GeoPoint point : this.points) {
+                if (center.distanceToKm(point) <= radiusKm) {
+                    result.add(point);
+                }
+            }
+            return;
+        }
+
+        northWest.collectWithinRadius(center, radiusKm, result);
+        northEast.collectWithinRadius(center, radiusKm, result);
+        southWest.collectWithinRadius(center, radiusKm, result);
+        southEast.collectWithinRadius(center, radiusKm, result);
+    }
+
     public int countWithinRadius(GeoPoint center, double radiusKm) {
         Objects.requireNonNull(center, "center");
 

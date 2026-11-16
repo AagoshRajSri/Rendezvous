@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Microbenchmark for measuring pure dispatch matching execution latency across
- * {@link AuctionMatcher} (Bertsekas Auction Algorithm) and {@link GreedyMatcher}
- * (Spatial QuadTree Greedy Matcher) with {@link DispatchCostFunction}.
+ * {@link AuctionMatcher} (Dense Baseline vs. Spatially-Pruned Sparse Auction)
+ * and {@link GreedyMatcher} (Spatial QuadTree Greedy Matcher) with {@link DispatchCostFunction}.
  *
  * <p>Can be executed via JMH:
  * <pre>
@@ -29,9 +29,9 @@ import java.util.concurrent.TimeUnit;
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-@Warmup(iterations = 2, time = 1)
-@Measurement(iterations = 3, time = 1)
-@Fork(1)
+@Warmup(iterations = 1, time = 1)
+@Measurement(iterations = 2, time = 1)
+@Fork(0)
 @State(Scope.Thread)
 public class MatcherBenchmark {
 
@@ -44,12 +44,14 @@ public class MatcherBenchmark {
     private List<RideRequest> requests;
     private List<Driver> drivers;
     private DispatchCostFunction costFunction;
-    private AuctionMatcher auctionMatcher;
+    private AuctionMatcher denseAuctionMatcher;
+    private AuctionMatcher sparseAuctionMatcher;
     private GreedyMatcher greedyMatcher;
 
     @Setup(Level.Trial)
     public void setUp() {
-        auctionMatcher = new AuctionMatcher();
+        denseAuctionMatcher = new AuctionMatcher(AuctionConfig.DENSE);
+        sparseAuctionMatcher = new AuctionMatcher(AuctionConfig.SPARSE);
         greedyMatcher = new GreedyMatcher();
 
         Random random = new Random(42);
@@ -76,8 +78,8 @@ public class MatcherBenchmark {
     }
 
     @Benchmark
-    public List<Assignment> auctionMatch() {
-        List<Assignment> assignments = auctionMatcher.match(requests, drivers, costFunction);
+    public List<Assignment> benchmarkDenseMatcher() {
+        List<Assignment> assignments = denseAuctionMatcher.match(requests, drivers, costFunction);
         for (Assignment a : assignments) {
             a.driver().state().releaseClaim(a.request().id());
         }
@@ -85,12 +87,31 @@ public class MatcherBenchmark {
     }
 
     @Benchmark
-    public List<Assignment> greedyMatch() {
+    public List<Assignment> benchmarkSparseMatcher() {
+        List<Assignment> assignments = sparseAuctionMatcher.match(requests, drivers, costFunction);
+        for (Assignment a : assignments) {
+            a.driver().state().releaseClaim(a.request().id());
+        }
+        return assignments;
+    }
+
+    @Benchmark
+    public List<Assignment> benchmarkGreedyMatcher() {
         List<Assignment> assignments = greedyMatcher.match(requests, drivers, costFunction);
         for (Assignment a : assignments) {
             a.driver().state().releaseClaim(a.request().id());
         }
         return assignments;
+    }
+
+    @Benchmark
+    public List<Assignment> auctionMatch() {
+        return benchmarkDenseMatcher();
+    }
+
+    @Benchmark
+    public List<Assignment> greedyMatch() {
+        return benchmarkGreedyMatcher();
     }
 
     // =========================================================================
@@ -116,12 +137,13 @@ public class MatcherBenchmark {
         System.out.println("=== Rendezvous Matcher Latency Benchmark Harness ===");
         System.out.println("JVM: " + System.getProperty("java.version") + " (" + System.getProperty("java.vm.name") + ")");
         System.out.println("Cores: " + Runtime.getRuntime().availableProcessors());
-        System.out.println("Warmup: 500 iterations per scenario | Measurement: 1,000 iterations per scenario\n");
+        System.out.println("Warmup: 200 iterations per scenario | Measurement: 500 iterations per scenario\n");
 
         int[] requestCounts = {1, 5, 20, 50};
         int[] driverCounts = {50, 200, 1000};
 
-        AuctionMatcher auctionMatcher = new AuctionMatcher();
+        AuctionMatcher denseMatcher = new AuctionMatcher(AuctionConfig.DENSE);
+        AuctionMatcher sparseMatcher = new AuctionMatcher(AuctionConfig.SPARSE);
         GreedyMatcher greedyMatcher = new GreedyMatcher();
 
         List<BenchmarkResult> results = new ArrayList<>();
@@ -151,32 +173,45 @@ public class MatcherBenchmark {
 
                 DispatchCostFunction costFn = new DispatchCostFunction(DispatchCostConfig.DEFAULT, requests);
 
-                // Benchmark AuctionMatcher
-                BenchmarkResult auctionRes = runMeasurement(
-                        "AuctionMatcher (Bertsekas)",
-                        auctionMatcher,
+                // Benchmark Dense AuctionMatcher
+                BenchmarkResult denseRes = runMeasurement(
+                        "Auction (Dense Baseline)",
+                        denseMatcher,
                         requests,
                         drivers,
                         costFn,
-                        500,
-                        1000
+                        200,
+                        500
                 );
-                results.add(auctionRes);
+                results.add(denseRes);
+
+                // Benchmark Sparse AuctionMatcher
+                BenchmarkResult sparseRes = runMeasurement(
+                        "Auction (Sparse Pruned)",
+                        sparseMatcher,
+                        requests,
+                        drivers,
+                        costFn,
+                        200,
+                        500
+                );
+                results.add(sparseRes);
 
                 // Benchmark GreedyMatcher
                 BenchmarkResult greedyRes = runMeasurement(
-                        "GreedyMatcher (Spatial QuadTree)",
+                        "Greedy (Spatial QuadTree)",
                         greedyMatcher,
                         requests,
                         drivers,
                         costFn,
-                        500,
-                        1000
+                        200,
+                        500
                 );
                 results.add(greedyRes);
 
-                System.out.printf("Completed: R=%d, D=%d -> Auction p50=%.2f us, Greedy p50=%.2f us%n",
-                        R, D, auctionRes.p50Us(), greedyRes.p50Us());
+                double speedup = denseRes.p50Us() / Math.max(1e-6, sparseRes.p50Us());
+                System.out.printf("Completed: R=%2d, D=%4d -> Dense p50=%8.2f us | Sparse p50=%8.2f us (%.2fx speedup) | Greedy p50=%8.2f us%n",
+                        R, D, denseRes.p50Us(), sparseRes.p50Us(), speedup, greedyRes.p50Us());
             }
         }
 
