@@ -154,7 +154,7 @@ sequenceDiagram
     participant API as Spring Boot Ingestion Layer
     participant Kafka as Apache Kafka Broker
     participant Consumer as Batch RideRequestConsumer
-    participant Matching as QuadTree & Bertsekas Auction
+    participant Matching as QuadTree and Bertsekas Auction
     participant Domain as DriverRegistry CAS State
     participant DB as PostgreSQL 16 ACID
     participant DLQ as Dead Letter Queue DLQ

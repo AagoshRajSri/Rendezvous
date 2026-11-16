@@ -226,3 +226,4 @@ Execution of `mvn test "-Duser.timezone=UTC"` confirmed zero regressions across 
 ## 8. Conclusion
 
 Phase 3 is complete and production-ready. The candidate-pruned sparse Bertsekas Auction algorithm delivers up to an **$81.1\%$ latency reduction** ($5.29\times$ speedup) under bursty city-scale workloads while strictly maintaining mathematical $\varepsilon$-optimality and all 12+ assignment correctness invariants.
+
