@@ -85,16 +85,16 @@ graph TD
             SVC_REDIS["Headless Service<br/>redis-headless:6379"]
         end
 
-        subgraph DispatchDeploy["2. Stateless Dispatch Engine (HPA Managed)"]
-            HPA["HorizontalPodAutoscaler<br/>rendezvous-hpa (Min: 2, Max: 5)<br/>Targets: 70% CPU, 80% RAM"]
-            POD1["Pod: rendezvous-1<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness & Readiness Probes"]
-            POD2["Pod: rendezvous-2<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness & Readiness Probes"]
+        subgraph DispatchDeploy["2. Stateless Dispatch Engine — HPA Managed"]
+            HPA["HorizontalPodAutoscaler<br/>rendezvous-hpa — Min 2, Max 5 Pods<br/>Targets: 70% CPU, 80% RAM"]
+            POD1["Pod: rendezvous-1<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness and Readiness Probes"]
+            POD2["Pod: rendezvous-2<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness and Readiness Probes"]
             HPA -.->|Autoscale 2-5 Replicas| POD1
             HPA -.->|Autoscale 2-5 Replicas| POD2
         end
 
-        subgraph StatefulDataTier["3. Stateful Storage Tier (PersistentVolumeClaims)"]
-            KAFKA_STS["StatefulSet: kafka<br/>apache/kafka:3.7.0 (KRaft)"]
+        subgraph StatefulDataTier["3. Stateful Storage Tier — PersistentVolumeClaims"]
+            KAFKA_STS["StatefulSet: kafka<br/>apache/kafka:3.7.0 KRaft Mode"]
             PVC_KAFKA[("PVC: kafka-data<br/>20Gi ReadWriteOnce")]
             KAFKA_STS --- PVC_KAFKA
 
@@ -102,7 +102,7 @@ graph TD
             PVC_PG[("PVC: postgres-data<br/>10Gi ReadWriteOnce")]
             PG_STS --- PVC_PG
 
-            REDIS_STS["StatefulSet: redis<br/>redis:7 Spatial Cache (LRU)"]
+            REDIS_STS["StatefulSet: redis<br/>redis:7 Spatial Cache LRU"]
             PVC_REDIS[("PVC: redis-data<br/>5Gi ReadWriteOnce")]
             REDIS_STS --- PVC_REDIS
         end
@@ -110,7 +110,7 @@ graph TD
         subgraph MessagingStreams["4. Kafka Streaming & Dead Letter Queues"]
             T_PING["Topic: driver-pings<br/>Telemetry GPS Stream"]
             T_RIDE["Topic: ride-requests<br/>Ride Dispatch Requests"]
-            T_DLQ["Topic: dispatch-failures-dlq<br/>Exponential Backoff Quarantine (30d Retention)"]
+            T_DLQ["Topic: dispatch-failures-dlq<br/>Exponential Backoff Quarantine — 30d Retention"]
             KAFKA_STS --> T_PING
             KAFKA_STS --> T_RIDE
             KAFKA_STS --> T_DLQ
@@ -119,7 +119,7 @@ graph TD
         subgraph ObservabilityMesh["5. Tier-1 SRE Observability Mesh"]
             PROM["Prometheus Operator / Scraper<br/>Scrapes /actuator/prometheus (5s)"]
             ALERT["Prometheus Alert Rules<br/>9 Rules Verified via promtool"]
-            RUNBOOK["SRE Runbook<br/>ops/RUNBOOK.md (D.I.A. Procedures)"]
+            RUNBOOK["SRE Runbook<br/>ops/RUNBOOK.md — D.I.A. Procedures"]
             GRAF["Grafana Dashboards<br/>21 Live Telemetry Panels"]
             PROM --> ALERT
             ALERT -.->|Alert Runbook URL| RUNBOOK
@@ -179,10 +179,10 @@ sequenceDiagram
         Consumer->>Kafka: Acknowledge offset strictly post-commit
         Rider->>API: GET /api/requests/REQ-123
         API-->>Rider: 200 OK (MATCHED, Driver details, Execution trace)
-    else Unrecoverable / Persistent Fault (e.g. DB Down, Algorithmic Failure)
+    else Unrecoverable Persistent Fault — DB Down or Algorithmic Failure
         Consumer-->>Consumer: Retry 1: Wait 1,000ms
         Consumer-->>Consumer: Retry 2: Wait 2,000ms
-        Consumer-->>Consumer: Retry 3: Wait 4,000ms (Max Retries Exhausted)
+        Consumer-->>Consumer: Retry 3: Wait 4,000ms — Max Retries Exhausted
         Consumer->>DLQ: DeadLetterPublishingRecoverer routes to dispatch-failures-dlq
         Consumer->>Kafka: Acknowledge source offset to unblock queue
     end
