@@ -189,6 +189,27 @@
                 </configuration>
             </plugin>
 
+            <!-- Add JMH generated test sources so IDEs and compiler recognize them as test sources -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>add-test-source</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.build.directory}/generated-test-sources/test-annotations</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Exec plugin for running JMH benchmarks from test-classes -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

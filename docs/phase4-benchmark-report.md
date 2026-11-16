@@ -175,3 +175,4 @@ The following bullet points are 100% verified by actual test execution output fr
 
 3. **End-to-End Collision-Free Dispatch:**
    > *Architected an end-to-end distributed dispatch pipeline across Kafka, PostgreSQL, and Redis that processed 1,000 city-scale ride events with zero driver double-bookings (816/816 distinct assignments) using candidate-pruned sparse Bertsekas auction matching.*
+

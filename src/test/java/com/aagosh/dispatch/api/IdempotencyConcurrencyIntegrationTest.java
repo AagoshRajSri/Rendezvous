@@ -22,7 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
@@ -74,8 +74,8 @@ class IdempotencyConcurrencyIntegrationTest {
             new KafkaContainer("apache/kafka:3.7.0");
 
     @Container
-    static PostgreSQLContainer<?> postgresContainer =
-            new PostgreSQLContainer<>("postgres:16")
+    static PostgreSQLContainer postgresContainer =
+            new PostgreSQLContainer("postgres:16")
                     .withDatabaseName("dispatch_idempotency_test")
                     .withUsername("test_user")
                     .withPassword("test_pass")

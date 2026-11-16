@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Unit tests for {@link RedisLocationCache}: validates key naming, script argument
  * construction, staleness guard, and failure isolation - all without a real Redis instance.
  */
+@SuppressWarnings("unchecked")
 class RedisLocationCacheTest {
 
     @SuppressWarnings("unchecked")

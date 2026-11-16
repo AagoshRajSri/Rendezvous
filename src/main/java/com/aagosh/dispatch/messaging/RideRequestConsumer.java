@@ -24,7 +24,6 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import org.apache.kafka.common.header.Header;
-import org.springframework.kafka.support.serializer.SerializationUtils;
 
 import com.aagosh.dispatch.tracing.DispatchTrace;
 import com.aagosh.dispatch.tracing.DispatchTraceCollector;
@@ -112,6 +111,7 @@ public class RideRequestConsumer {
      * continuously, maintaining deduplication protection for all recent entries.
      */
     static final int MAX_IDEMPOTENCY_ENTRIES = 10_000;
+    private static final String VALUE_DESERIALIZER_EXCEPTION_HEADER = "springDeserializerExceptionValue";
 
     private final Matcher matcher;
     private final DriverRegistry driverRegistry;
@@ -603,7 +603,7 @@ public class RideRequestConsumer {
         if (record.headers() == null) {
             return null;
         }
-        Header header = record.headers().lastHeader(SerializationUtils.VALUE_DESERIALIZER_EXCEPTION_HEADER);
+        Header header = record.headers().lastHeader(VALUE_DESERIALIZER_EXCEPTION_HEADER);
         return header != null ? "deserialization failed in ErrorHandlingDeserializer" : null;
     }
 }

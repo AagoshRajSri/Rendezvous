@@ -15,7 +15,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -27,8 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Integration tests for {@link AssignmentPersistenceService} against a real
  * PostgreSQL instance managed by Testcontainers.
  *
- * <p>The test uses {@link DataJpaTest} to load only the JPA slice (repositories,
- * entities, Flyway, DataSource) without starting the full Spring Boot application
+ * <p>
+ * The test uses {@link DataJpaTest} to load only the JPA slice (repositories,
+ * entities, Flyway, DataSource) without starting the full Spring Boot
+ * application
  * context (no Kafka beans, no REST controllers). This keeps each test fast and
  * focused on the persistence contract.
  */
@@ -43,23 +45,23 @@ class AssignmentPersistenceServiceIT {
     }
 
     @Container
-    static PostgreSQLContainer<?> postgres =
-            new PostgreSQLContainer<>("postgres:16")
-                    .withDatabaseName("dispatch_test")
-                    .withUsername("test_user")
-                    .withPassword("test_pass")
-                    .withEnv("TZ", "UTC");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16")
+            .withDatabaseName("dispatch_test")
+            .withUsername("test_user")
+            .withPassword("test_pass")
+            .withEnv("TZ", "UTC");
 
     @DynamicPropertySource
     static void configureDataSource(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", () -> {
             String url = postgres.getJdbcUrl();
-            return url.contains("options=") ? url : (url.contains("?") ? url + "&options=-c%20timezone%3DUTC" : url + "?options=-c%20timezone%3DUTC");
+            return url.contains("options=") ? url
+                    : (url.contains("?") ? url + "&options=-c%20timezone%3DUTC" : url + "?options=-c%20timezone%3DUTC");
         });
-        registry.add("spring.datasource.username",  postgres::getUsername);
-        registry.add("spring.datasource.password",  postgres::getPassword);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
         // Ensure Flyway and JPA are enabled for this slice (overrides test exclusions)
-        registry.add("spring.flyway.enabled",       () -> "true");
+        registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
     }
 
@@ -88,7 +90,7 @@ class AssignmentPersistenceServiceIT {
 
     private Assignment makeAssignment(String requestId, String driverId, double cost) {
         RideRequest request = makeRequest(requestId);
-        DriverState state   = new DriverState();
+        DriverState state = new DriverState();
         state.tryClaim(requestId);
         Driver driver = new Driver(driverId, new GeoPoint(17.3860, 78.4870), state);
         return new Assignment(request, driver, cost);
@@ -118,7 +120,7 @@ class AssignmentPersistenceServiceIT {
     void persistRequest_secondCall_returnsDuplicate() {
         RideRequest request = makeRequest("REQ-IT-002");
 
-        service.persistRequest(request);                // first: PERSISTED
+        service.persistRequest(request); // first: PERSISTED
         PersistOutcome duplicate = service.persistRequest(request); // second: DUPLICATE
 
         assertEquals(PersistOutcome.DUPLICATE, duplicate);
@@ -131,7 +133,7 @@ class AssignmentPersistenceServiceIT {
     @Test
     @DisplayName("3. persistAssignment creates assignment row and updates request status to MATCHED")
     void persistAssignment_success_createsRowAndUpdatesStatus() {
-        RideRequest request  = makeRequest("REQ-IT-003");
+        RideRequest request = makeRequest("REQ-IT-003");
         service.persistRequest(request);
 
         Assignment assignment = makeAssignment("REQ-IT-003", "D-IT-001", 1.23);
@@ -156,7 +158,7 @@ class AssignmentPersistenceServiceIT {
         service.persistRequest(request);
         Assignment assignment = makeAssignment("REQ-IT-004", "D-IT-002", 0.5);
 
-        service.persistAssignment(assignment);                  // first: PERSISTED
+        service.persistAssignment(assignment); // first: PERSISTED
         PersistOutcome duplicate = service.persistAssignment(assignment); // second: DUPLICATE
 
         assertEquals(PersistOutcome.DUPLICATE, duplicate);
@@ -248,11 +250,14 @@ class AssignmentPersistenceServiceIT {
         service.persistRequest(req1);
         service.persistRequest(req2);
 
-        TripEntity trip1 = new TripEntity("REQ-IT-ACTIVE-1", "D-COMMON", com.aagosh.dispatch.domain.TripStatus.ASSIGNED);
+        TripEntity trip1 = new TripEntity("REQ-IT-ACTIVE-1", "D-COMMON",
+                com.aagosh.dispatch.domain.TripStatus.ASSIGNED);
         tripRepository.saveAndFlush(trip1);
 
-        // Attempting to save a second active trip for D-COMMON must violate the partial unique index
-        TripEntity trip2 = new TripEntity("REQ-IT-ACTIVE-2", "D-COMMON", com.aagosh.dispatch.domain.TripStatus.EN_ROUTE);
+        // Attempting to save a second active trip for D-COMMON must violate the partial
+        // unique index
+        TripEntity trip2 = new TripEntity("REQ-IT-ACTIVE-2", "D-COMMON",
+                com.aagosh.dispatch.domain.TripStatus.EN_ROUTE);
         org.junit.jupiter.api.Assertions.assertThrows(
                 org.springframework.dao.DataIntegrityViolationException.class,
                 () -> tripRepository.saveAndFlush(trip2));
@@ -277,7 +282,8 @@ class AssignmentPersistenceServiceIT {
         TripEntity activeTrip = new TripEntity("REQ-IT-TX-1", "D-BUSY", com.aagosh.dispatch.domain.TripStatus.ASSIGNED);
         tripRepository.saveAndFlush(activeTrip);
 
-        // Now attempt to persist a matched assignment for a NEW request claiming the same driver D-BUSY
+        // Now attempt to persist a matched assignment for a NEW request claiming the
+        // same driver D-BUSY
         RideRequest req2 = makeRequest("REQ-IT-TX-2");
         service.persistRequest(req2);
         assertEquals(AssignmentPersistenceService.STATUS_PENDING,
@@ -285,12 +291,14 @@ class AssignmentPersistenceServiceIT {
 
         Assignment assignment2 = makeAssignment("REQ-IT-TX-2", "D-BUSY", 4.50);
 
-        // persistMatchedAssignment must fail on uq_trips_active_driver and trigger rollback
+        // persistMatchedAssignment must fail on uq_trips_active_driver and trigger
+        // rollback
         org.junit.jupiter.api.Assertions.assertThrows(
                 org.springframework.dao.DataIntegrityViolationException.class,
                 () -> service.persistMatchedAssignment(req2, assignment2));
 
-        // Verify transaction boundary: NO assignment entity was committed for REQ-IT-TX-2
+        // Verify transaction boundary: NO assignment entity was committed for
+        // REQ-IT-TX-2
         assertFalse(assignmentRepository.existsByRequestId("REQ-IT-TX-2"),
                 "Assignment must be rolled back");
         assertFalse(tripRepository.existsByRequestId("REQ-IT-TX-2"),
@@ -322,7 +330,8 @@ class AssignmentPersistenceServiceIT {
                 org.springframework.dao.DataIntegrityViolationException.class,
                 () -> service.persistMatchedAssignment(loseReq, loseAssignment));
 
-        // Winning assignment and trip in PostgreSQL are completely intact and undisturbed
+        // Winning assignment and trip in PostgreSQL are completely intact and
+        // undisturbed
         AssignmentEntity winningAssignment = assignmentRepository.findByRequestId("REQ-WIN").orElseThrow();
         assertEquals("D-SHARED", winningAssignment.getDriverId());
         assertEquals(1.50, winningAssignment.getCost(), 1e-6);
@@ -344,14 +353,16 @@ class AssignmentPersistenceServiceIT {
             // Pre-existing active trip for driver D-BATCH-BUSY
             RideRequest busyReq = makeRequest("REQ-IT-BATCH-BUSY");
             service.persistRequest(busyReq);
-            tripRepository.saveAndFlush(new TripEntity("REQ-IT-BATCH-BUSY", "D-BATCH-BUSY", com.aagosh.dispatch.domain.TripStatus.ASSIGNED));
+            tripRepository.saveAndFlush(new TripEntity("REQ-IT-BATCH-BUSY", "D-BATCH-BUSY",
+                    com.aagosh.dispatch.domain.TripStatus.ASSIGNED));
 
             // Prepare a batch of 3 requests:
             // Req 1: Valid match with available driver D-BATCH-AVAIL
             RideRequest req1 = makeRequest("REQ-IT-BATCH-1");
             Assignment assignment1 = makeAssignment("REQ-IT-BATCH-1", "D-BATCH-AVAIL", 3.00);
 
-            // Req 2: Conflicting match attempting to assign D-BATCH-BUSY (will violate uq_trips_active_driver)
+            // Req 2: Conflicting match attempting to assign D-BATCH-BUSY (will violate
+            // uq_trips_active_driver)
             RideRequest req2 = makeRequest("REQ-IT-BATCH-2");
             Assignment assignment2 = makeAssignment("REQ-IT-BATCH-2", "D-BATCH-BUSY", 4.00);
 
@@ -361,7 +372,8 @@ class AssignmentPersistenceServiceIT {
             List<RideRequest> batchRequests = List.of(req1, req2, req3);
             List<Assignment> batchAssignments = List.of(assignment1, assignment2);
 
-            // Persist batch must fail on assignment2's trip constraint and roll back entirely
+            // Persist batch must fail on assignment2's trip constraint and roll back
+            // entirely
             org.junit.jupiter.api.Assertions.assertThrows(
                     org.springframework.dao.DataIntegrityViolationException.class,
                     () -> service.persistBatch(batchRequests, batchAssignments));
@@ -390,7 +402,8 @@ class AssignmentPersistenceServiceIT {
 
             service.reconcileAndCompensateClaims(batchAssignments);
 
-            // Since DB lookup confirmed no assignments committed, claims are safely released to AVAILABLE
+            // Since DB lookup confirmed no assignments committed, claims are safely
+            // released to AVAILABLE
             assertEquals(MatchStatus.AVAILABLE, assignment1.driver().state().getStatus(),
                     "Driver 1 claim must be released");
             assertEquals(MatchStatus.AVAILABLE, assignment2.driver().state().getStatus(),

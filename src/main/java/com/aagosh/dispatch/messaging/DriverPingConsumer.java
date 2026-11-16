@@ -18,7 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.kafka.support.serializer.SerializationUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -104,6 +103,7 @@ import java.util.Optional;
 public class DriverPingConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DriverPingConsumer.class);
+    private static final String VALUE_DESERIALIZER_EXCEPTION_HEADER = "springDeserializerExceptionValue";
 
     private static final List<TripStatus> ACTIVE_TRIP_STATUSES =
             List.of(TripStatus.ASSIGNED, TripStatus.EN_ROUTE, TripStatus.IN_PROGRESS);
@@ -345,7 +345,7 @@ public class DriverPingConsumer {
         if (record.headers() == null) {
             return null;
         }
-        Header header = record.headers().lastHeader(SerializationUtils.VALUE_DESERIALIZER_EXCEPTION_HEADER);
+        Header header = record.headers().lastHeader(VALUE_DESERIALIZER_EXCEPTION_HEADER);
         return header != null ? "deserialization failed in ErrorHandlingDeserializer" : null;
     }
 }

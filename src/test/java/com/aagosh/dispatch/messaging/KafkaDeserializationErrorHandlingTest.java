@@ -20,8 +20,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
-import org.springframework.kafka.support.serializer.JsonDeserializer;
-import org.springframework.kafka.support.serializer.SerializationUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -43,13 +41,15 @@ import static org.mockito.Mockito.verify;
  */
 class KafkaDeserializationErrorHandlingTest {
 
+    private static final String VALUE_DESERIALIZER_EXCEPTION_HEADER = "springDeserializerExceptionValue";
+
     @Test
     @DisplayName("1. ErrorHandlingDeserializer catches malformed JSON bytes, attaches exception header, and returns null")
     void errorHandlingDeserializerCatchesMalformedJson() {
         try (ErrorHandlingDeserializer<Object> deserializer = new ErrorHandlingDeserializer<>()) {
             Map<String, Object> configs = Map.of(
-                    ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName(),
-                    JsonDeserializer.TRUSTED_PACKAGES, "com.aagosh.dispatch.api"
+                    ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, "org.springframework.kafka.support.serializer.JsonDeserializer",
+                    "spring.json.trusted.packages", "com.aagosh.dispatch.api"
             );
             deserializer.configure(configs, false);
 
@@ -63,7 +63,7 @@ class KafkaDeserializationErrorHandlingTest {
             assertNull(result, "Malformed byte payload should produce null object");
 
             // Deserialization exception metadata header is attached
-            assertNotNull(headers.lastHeader(SerializationUtils.VALUE_DESERIALIZER_EXCEPTION_HEADER),
+            assertNotNull(headers.lastHeader(VALUE_DESERIALIZER_EXCEPTION_HEADER),
                     "Header must contain deserialization exception information");
         }
     }
@@ -80,7 +80,7 @@ class KafkaDeserializationErrorHandlingTest {
         Acknowledgment ack = mock(Acknowledgment.class);
 
         RecordHeaders headers = new RecordHeaders();
-        headers.add(SerializationUtils.VALUE_DESERIALIZER_EXCEPTION_HEADER, "corrupted-bytes".getBytes());
+        headers.add(VALUE_DESERIALIZER_EXCEPTION_HEADER, "corrupted-bytes".getBytes());
         ConsumerRecord<String, RideRequestDto> record = new ConsumerRecord<>(
                 KafkaTopics.RIDE_REQUESTS, 0, 100L, 0L, null, 0, 0, "KEY-1", null, headers, null
         );
@@ -102,7 +102,7 @@ class KafkaDeserializationErrorHandlingTest {
         Acknowledgment ack = mock(Acknowledgment.class);
 
         RecordHeaders headers = new RecordHeaders();
-        headers.add(SerializationUtils.VALUE_DESERIALIZER_EXCEPTION_HEADER, "corrupted-bytes".getBytes());
+        headers.add(VALUE_DESERIALIZER_EXCEPTION_HEADER, "corrupted-bytes".getBytes());
         ConsumerRecord<String, DriverPingRequest> record = new ConsumerRecord<>(
                 KafkaTopics.DRIVER_PINGS, 0, 100L, 0L, null, 0, 0, "KEY-2", null, headers, null
         );
@@ -130,9 +130,9 @@ class KafkaDeserializationErrorHandlingTest {
                 configurationProperties.get(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG));
         assertEquals(ErrorHandlingDeserializer.class,
                 configurationProperties.get(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG));
-        assertEquals(JsonDeserializer.class.getName(),
+        assertEquals("org.springframework.kafka.support.serializer.JsonDeserializer",
                 configurationProperties.get(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS));
         assertEquals("com.aagosh.dispatch.api",
-                configurationProperties.get(JsonDeserializer.TRUSTED_PACKAGES));
+                configurationProperties.get("spring.json.trusted.packages"));
     }
 }

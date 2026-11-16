@@ -36,7 +36,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
@@ -125,8 +125,8 @@ public class MassiveEndToEndLoadTest {
             new KafkaContainer("apache/kafka:3.7.0");
 
     @Container
-    static PostgreSQLContainer<?> postgresContainer =
-            new PostgreSQLContainer<>("postgres:16")
+    static PostgreSQLContainer postgresContainer =
+            new PostgreSQLContainer("postgres:16")
                     .withDatabaseName("dispatch_load_test")
                     .withUsername("load_user")
                     .withPassword("load_pass")
