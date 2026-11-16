@@ -75,7 +75,7 @@
 The following diagram details the active Kubernetes cloud-native deployment topology, messaging channels, and observability telemetry loops:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph K8sCluster["Kubernetes Cluster (Namespace: rendezvous)"]
         
         subgraph IngressTier["1. Ingress & Service Networking"]
@@ -89,8 +89,8 @@ graph TD
             HPA["HorizontalPodAutoscaler<br/>rendezvous-hpa — Min 2, Max 5 Pods<br/>Targets: 70% CPU, 80% RAM"]
             POD1["Pod: rendezvous-1<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness and Readiness Probes"]
             POD2["Pod: rendezvous-2<br/>Spring Boot 4.1.1 / Java 17<br/>Liveness and Readiness Probes"]
-            HPA -.->|Autoscale 2-5 Replicas| POD1
-            HPA -.->|Autoscale 2-5 Replicas| POD2
+            HPA -.->|"Autoscale 2-5 Replicas"| POD1
+            HPA -.->|"Autoscale 2-5 Replicas"| POD2
         end
 
         subgraph StatefulDataTier["3. Stateful Storage Tier — PersistentVolumeClaims"]
@@ -122,7 +122,7 @@ graph TD
             RUNBOOK["SRE Runbook<br/>ops/RUNBOOK.md — D.I.A. Procedures"]
             GRAF["Grafana Dashboards<br/>21 Live Telemetry Panels"]
             PROM --> ALERT
-            ALERT -.->|Alert Runbook URL| RUNBOOK
+            ALERT -.->|"Alert Runbook URL"| RUNBOOK
             PROM --> GRAF
         end
 
@@ -133,11 +133,11 @@ graph TD
     SVC_NODE --> POD2
     POD1 <--> T_PING
     POD1 <--> T_RIDE
-    POD1 -.->|Exhausted Failures after 3 Retries| T_DLQ
+    POD1 -.->|"Exhausted Failures after 3 Retries"| T_DLQ
     POD1 <--> PG_STS
     POD1 <--> REDIS_STS
-    PROM -->|Pull Metrics| POD1
-    PROM -->|Pull Metrics| POD2
+    PROM -->|"Pull Metrics"| POD1
+    PROM -->|"Pull Metrics"| POD2
 ```
 
 ---
@@ -149,15 +149,15 @@ Rendezvous decouples request ingestion from complex matching algorithms through 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Rider as Rider / API Client
+    actor Rider as Rider or API Client
     actor Driver as Driver Device
     participant API as Spring Boot Ingestion Layer
     participant Kafka as Apache Kafka Broker
     participant Consumer as Batch RideRequestConsumer
     participant Matching as QuadTree & Bertsekas Auction
-    participant Domain as DriverRegistry (CAS State)
-    participant DB as PostgreSQL 16 (ACID)
-    participant DLQ as Dead Letter Queue (DLQ)
+    participant Domain as DriverRegistry CAS State
+    participant DB as PostgreSQL 16 ACID
+    participant DLQ as Dead Letter Queue DLQ
 
     Driver->>API: POST /ping (GPS Telemetry)
     API->>Kafka: Publish to driver-pings
@@ -169,13 +169,13 @@ sequenceDiagram
 
     Kafka->>Consumer: Poll message batch
     Consumer->>DB: Check 2-tier idempotency (skip finalized requests)
-    Consumer->>Domain: Snapshot fresh active drivers (<60s staleness)
-    Consumer->>Matching: Execute QuadTree bounding-box prune & Auction match
+    Consumer->>Domain: Snapshot fresh active drivers (under 60s staleness)
+    Consumer->>Matching: Execute QuadTree bounding-box prune and Auction match
     
     alt Successful Assignment
         Matching->>Domain: Atomic CAS claim via DriverState.tryClaim()
         Domain-->>Matching: Claim granted (0 double-booking guarantee)
-        Consumer->>DB: Transactional commit: persist assignment & set MATCHED
+        Consumer->>DB: Transactional commit: persist assignment and set MATCHED
         Consumer->>Kafka: Acknowledge offset strictly post-commit
         Rider->>API: GET /api/requests/REQ-123
         API-->>Rider: 200 OK (MATCHED, Driver details, Execution trace)
