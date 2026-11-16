@@ -5,6 +5,7 @@ import com.aagosh.dispatch.api.RideRequestDto;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -132,6 +133,16 @@ public class KafkaConfig {
                 .configs(Map.of("retention.ms", "2592000000"));
     }
 
+    /**
+     * Standard Dead Letter Topic (DLT) for ride-requests.
+     * Retention is set to 30 days (2,592,000,000 ms) to allow forensic replay.
+     */
+    @Bean
+    public NewTopic rideRequestsDltTopic() {
+        return new NewTopic(KafkaTopics.RIDE_REQUESTS_DLT, TOPIC_PARTITIONS, TOPIC_REPLICATION)
+                .configs(Map.of("retention.ms", "2592000000"));
+    }
+
     // -------------------------------------------------------------------------
     // Producer configuration & templates
     // -------------------------------------------------------------------------
@@ -201,18 +212,36 @@ public class KafkaConfig {
      */
     @Bean
     public DefaultErrorHandler dlqErrorHandler(KafkaTemplate<String, Object> kafkaTemplate) {
-        // Route every exhausted failure to partition 0 of the DLQ, regardless of source topic.
+        // Route every exhausted failure to partition 0 of ride-requests.DLT for ride requests
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (record, exception) -> {
+                    String destinationTopic = KafkaTopics.RIDE_REQUESTS.equals(record.topic())
+                            ? KafkaTopics.RIDE_REQUESTS_DLT
+                            : KafkaTopics.DISPATCH_FAILURES_DLQ;
                     log.error(
                             "[DLQ] Routing failed record to '{}'. topic={}, partition={}, offset={}, key={}, cause={}",
-                            KafkaTopics.DISPATCH_FAILURES_DLQ,
+                            destinationTopic,
                             record.topic(), record.partition(), record.offset(), record.key(),
                             exception.getClass().getSimpleName() + ": " + exception.getMessage()
                     );
-                    return new TopicPartition(KafkaTopics.DISPATCH_FAILURES_DLQ, 0);
-                });
+                    return new TopicPartition(destinationTopic, 0);
+                }) {
+            @Override
+            public void accept(ConsumerRecord<?, ?> record, Exception exception) {
+                super.accept(record, exception);
+                // Mirror failed ride-requests to unified dispatch-failures-dlq for backward compatibility
+                if (KafkaTopics.RIDE_REQUESTS.equals(record.topic())) {
+                    try {
+                        kafkaTemplate.send(KafkaTopics.DISPATCH_FAILURES_DLQ,
+                                record.key() != null ? record.key().toString() : null,
+                                record.value());
+                    } catch (Exception e) {
+                        log.warn("Failed to mirror DLQ record to {}: {}", KafkaTopics.DISPATCH_FAILURES_DLQ, e.getMessage());
+                    }
+                }
+            }
+        };
 
         // Exponential backoff: 1s → 2s → 4s (3 attempts total, max 10s cap).
         ExponentialBackOff backOff = new ExponentialBackOff(DLQ_INITIAL_INTERVAL_MS, DLQ_MULTIPLIER);

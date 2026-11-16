@@ -48,13 +48,38 @@ public class AssignmentPersistenceService {
     private static final Logger log = LoggerFactory.getLogger(AssignmentPersistenceService.class);
 
     /** Status value written to {@code ride_requests.status} on initial pending state. */
-    public static final String STATUS_PENDING    = "PENDING";
+    public static final String STATUS_PENDING         = "PENDING";
     /** Status value written when a driver was successfully matched and persisted. */
-    public static final String STATUS_MATCHED    = "MATCHED";
+    public static final String STATUS_MATCHED         = "MATCHED";
+    /** Status value written when dispatched. */
+    public static final String STATUS_DISPATCHED      = "DISPATCHED";
+    /** Status value written when a trip is completed. */
+    public static final String STATUS_COMPLETED       = "COMPLETED";
+    /** Status value written when cancelled. */
+    public static final String STATUS_CANCELLED       = "CANCELLED";
+    /** Status value written when canceled (alternate spelling). */
+    public static final String STATUS_CANCELED        = "CANCELED";
+    /** Status value written when dispatch failed. */
+    public static final String STATUS_FAILED          = "FAILED";
+    /** Status value written when dispatch exhausted retries and landed in DLT. */
+    public static final String STATUS_FAILED_DISPATCH = "FAILED_DISPATCH";
     /** Status value written when no available driver was found at processing time. */
-    public static final String STATUS_NO_DRIVERS = "NO_DRIVERS";
+    public static final String STATUS_NO_DRIVERS      = "NO_DRIVERS";
     /** Alias for STATUS_NO_DRIVERS for compatibility with existing tests. */
-    public static final String STATUS_NO_DRIVER  = STATUS_NO_DRIVERS;
+    public static final String STATUS_NO_DRIVER       = STATUS_NO_DRIVERS;
+
+    /** Set of terminal and already-dispatched statuses that preclude duplicate matching. */
+    public static final List<String> TERMINAL_STATUSES = List.of(
+            STATUS_MATCHED,
+            STATUS_DISPATCHED,
+            STATUS_COMPLETED,
+            STATUS_CANCELLED,
+            STATUS_CANCELED,
+            STATUS_FAILED,
+            STATUS_FAILED_DISPATCH,
+            STATUS_NO_DRIVERS,
+            STATUS_NO_DRIVER
+    );
 
     private final RideRequestRepository rideRequestRepository;
     private final AssignmentRepository  assignmentRepository;
@@ -101,7 +126,7 @@ public class AssignmentPersistenceService {
     }
 
     /**
-     * Checks whether a request has already reached a durable terminal state (MATCHED or NO_DRIVERS).
+     * Checks whether a request has already reached a durable terminal state (MATCHED, DISPATCHED, COMPLETED, NO_DRIVERS, etc.).
      *
      * @param requestId the logical request identifier
      * @return {@code true} if already finalized, {@code false} otherwise
@@ -110,14 +135,12 @@ public class AssignmentPersistenceService {
     public boolean isRequestFinalized(String requestId) {
         Objects.requireNonNull(requestId, "requestId");
         return rideRequestRepository.findByRequestId(requestId)
-                .map(req -> STATUS_MATCHED.equals(req.getStatus())
-                         || STATUS_NO_DRIVERS.equals(req.getStatus())
-                         || "NO_DRIVER".equals(req.getStatus()))
+                .map(req -> TERMINAL_STATUSES.contains(req.getStatus()))
                 .orElse(false);
     }
 
     /**
-     * Batch lookup for request IDs that have already reached a durable terminal state (MATCHED or NO_DRIVERS).
+     * Batch lookup for request IDs that have already reached a durable terminal state.
      *
      * @param requestIds collection of logical request identifiers to query
      * @return a {@link Set} of request IDs that are already finalized in the database
@@ -133,8 +156,7 @@ public class AssignmentPersistenceService {
         if (nonNullIds.isEmpty()) {
             return Set.of();
         }
-        List<String> terminalStatuses = List.of(STATUS_MATCHED, STATUS_NO_DRIVERS, "NO_DRIVER");
-        List<String> found = rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(nonNullIds, terminalStatuses);
+        List<String> found = rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(nonNullIds, TERMINAL_STATUSES);
         return found != null ? Set.copyOf(found) : Set.of();
     }
 

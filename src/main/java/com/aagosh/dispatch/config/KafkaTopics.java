@@ -28,5 +28,11 @@ public final class KafkaTopics {
      */
     public static final String DISPATCH_FAILURES_DLQ = "dispatch-failures-dlq";
 
+    /**
+     * Standard Dead-Letter Topic (DLT) for ride-requests.
+     * Used by DeadLetterPublishingRecoverer and DeadLetterQueueConsumer.
+     */
+    public static final String RIDE_REQUESTS_DLT = "ride-requests.DLT";
+
     private KafkaTopics() {}
 }

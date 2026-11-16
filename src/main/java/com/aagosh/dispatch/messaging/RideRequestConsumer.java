@@ -274,6 +274,7 @@ public class RideRequestConsumer {
             log.warn("Failed to record batch telemetry in AdaptiveWindowController: {}", ex.getMessage());
         }
 
+        Set<String> seenInBatch = new HashSet<>();
         List<String> newlyReservedInFlight = new ArrayList<>();
         Map<String, RideRequest> candidateRequests = new LinkedHashMap<>();
 
@@ -299,6 +300,17 @@ public class RideRequestConsumer {
                         record.topic(), record.partition(), record.offset(), record.key(), ex.getMessage());
                 continue;
             }
+
+            // In-batch deduplication: filter duplicates within the same poll batch
+            if (seenInBatch.contains(requestId)) {
+                log.warn("[BatchDeduplication] Duplicate ride request ID '{}' detected within the same Kafka poll batch (offset={}); dropping duplicate before matching",
+                        requestId, record.offset());
+                if (dispatchMetrics != null) {
+                    dispatchMetrics.recordDuplicateSkipped(DispatchMetrics.DUP_IN_MEMORY);
+                }
+                continue;
+            }
+            seenInBatch.add(requestId);
 
             // In-memory idempotency check and in-flight reservation (fast path)
             if (!reserveInFlight(requestId)) {
@@ -351,7 +363,7 @@ public class RideRequestConsumer {
                 if (dispatchMetrics != null) {
                     dispatchMetrics.recordDuplicateSkipped(DispatchMetrics.DUP_DURABLE);
                 }
-                log.info("Ride request {} already durably finalized; acknowledging duplicate", reqId);
+                log.warn("[RedeliveryIdempotency] Ride request {} already durably finalized in database; safely ignoring redelivery without re-dispatching", reqId);
                 markProcessed(reqId);
                 newlyReservedInFlight.remove(reqId);
             } else {

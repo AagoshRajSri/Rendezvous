@@ -441,7 +441,7 @@ class AssignmentPersistenceServiceTest {
     void findFinalizedRequestIdsIn_queriesRepositoryWithTerminalStatuses() {
         when(rideRequestRepository.findRequestIdsByRequestIdInAndStatusIn(
                 Set.of("REQ-MATCHED", "REQ-NODRIVERS", "REQ-NEW"),
-                List.of(AssignmentPersistenceService.STATUS_MATCHED, AssignmentPersistenceService.STATUS_NO_DRIVERS, "NO_DRIVER")
+                AssignmentPersistenceService.TERMINAL_STATUSES
         )).thenReturn(List.of("REQ-MATCHED", "REQ-NODRIVERS"));
 
         Set<String> result = service.findFinalizedRequestIdsIn(List.of("REQ-MATCHED", "REQ-NODRIVERS", "REQ-NEW"));
